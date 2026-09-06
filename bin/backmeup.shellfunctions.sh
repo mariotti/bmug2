@@ -54,7 +54,7 @@ bmuSetIndirectVar(){
 bmuPromptyNexit() {
     msg="$1"
     echo "$msg"
-    read -e val
+    read val
     if [ -z "$val" ]; then
 	echo "Exiting ..."
 	exit 1
@@ -99,7 +99,7 @@ bmuPromptValue() {
     storevar="$2"
     ttest="$3"
     echo "$msg"
-    read -e val
+    read val
 
     #echo "debug Input >$1< >$2< >$3<"
     
