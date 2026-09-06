@@ -160,18 +160,33 @@ BMU_INDEXTYPE="locate"
 BMU_DATEFRMT="+%Y%m%d-%H%M%S"
 BMU_mydate=`date +%Y%m%d-%H%M%S`
 BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
-BMU_CMDUPDATEDB='updatedb -l 0'
-BMU_UPDBOPT='-U '
-BMU_CMDLOCATE='locate'
 BMU_CMDFILTER='sed'
 BMU_UNAME=`uname`
 #
-if [ "${BMU_UNAME}a" == "Darwina" ]; then
+# Index command detection (capability based, not uname based)
+# Keep in sync with backmeup.setup.sh.template
+BMU_CMDUPDATEDB=''
+BMU_UPDBOPT=''
+BMU_CMDLOCATE=''
+if command -v gupdatedb > /dev/null 2>&1; then
     BMU_CMDUPDATEDB='gupdatedb'
     BMU_UPDBOPT='--localpaths='
     BMU_CMDLOCATE='glocate'
-    BMU_CMDFILTER='bbe -e'
-    echo "MAC DARWIN detected: using gupdatedb, glocate and bbe"
+    echo "GNU findutils detected (gupdatedb/glocate)"
+elif command -v updatedb > /dev/null 2>&1; then
+    if updatedb --version 2>/dev/null | head -1 | grep -q 'GNU findutils'; then
+        BMU_CMDUPDATEDB='updatedb'
+        BMU_UPDBOPT='--localpaths='
+        echo "GNU findutils detected (updatedb/locate)"
+    else
+        BMU_CMDUPDATEDB='updatedb -l 0'
+        BMU_UPDBOPT='-U '
+        echo "mlocate/plocate style updatedb detected"
+    fi
+    BMU_CMDLOCATE='locate'
+else
+    echo "WARNING: no updatedb found, indexing will be skipped."
+    echo "  Install GNU findutils (macOS: brew install findutils)"
 fi;
 #
 #

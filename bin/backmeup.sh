@@ -59,7 +59,11 @@ fi;
 #
 # INDEXING
 # Add Eventual changed files
-if [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then
+if [ -z "${BMU_CMDUPDATEDB}" ]; then
+    echo "WARNING: no updatedb found, skipping indexing."
+    echo "  Search still works via the .filelist files."
+    echo "  Install GNU findutils (macOS: brew install findutils)"
+elif [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then
 #    ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate} --localpaths="${l_BMU_DIRBKUP}"  --netpaths="${l_BMU_DIRBKUP}"
     ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate} ${BMU_UPDBOPT}"${l_BMU_DIRBKUP}"
 fi

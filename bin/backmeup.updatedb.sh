@@ -39,6 +39,11 @@ BMU_PATH=${MY_PATH}
 # SETUP
 . ${BMU_PATH}/backmeup.setup.sh
 #
+if [ -z "${BMU_CMDUPDATEDB}" ]; then
+    echo "ERROR: no updatedb found, cannot build the index."
+    echo "  Install GNU findutils (macOS: brew install findutils)"
+    exit 1
+fi;
 #${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db --localpaths="${BMU_DIRRSYNC} ${BMU_DIRBACKUPS}"  --netpaths="${BMU_DIRRSYNC} ${BMU_DIRBACKUPS}"
 ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db ${BMU_UPDBOPT}"${BMU_DIRRSYNC}"
 ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.dbb ${BMU_UPDBOPT}"${BMU_DIRBACKUPS}"

@@ -55,6 +55,21 @@ What I propose is something between a backup, a time machine and close to versio
 
 # News
 
+## Fixed: indexing works again, "gnu or m?" resolved
+
+The old open question — GNU findutils vs mlocate — is now handled by capability
+detection instead of `uname` (which also had a `$UNAME`/`$BMU_UNAME` typo that
+disabled the macOS branch entirely). The setup probes for `gupdatedb` (Homebrew
+findutils on macOS), then `updatedb`, and picks the right dialect:
+GNU (`--localpaths=`) or mlocate/plocate (`-U`). Searching (`locate -i -d`) is
+identical across all of them. If no updatedb exists, `backmeup.sh` warns and
+skips indexing (the `.filelist` files still provide a zero-dependency search)
+while `backmeup.updatedb.sh` fails with instructions. The unused `bbe`
+dependency is gone.
+
+Verified end to end on macOS: backup, per-run index, full reindex, and
+`backmeup.locate.sh` finding both current and historical file versions.
+
 ## Fixed: deleted files were not archived (macOS/openrsync + rsync 3.4+ bug)
 
 Two stacked issues around the core "deleted files go to the backup dir" promise:
