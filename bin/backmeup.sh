@@ -29,11 +29,24 @@ fi;
 l_BMU_TOBACKUP=`dirname $1`/`basename $1`
 l_BMU_PRJDIR=`basename ${1}`
 
+#Refuse to run without a usable rsync (openrsync drops --delete with --backup)
+if [ -z "${BMU_CMDRSYNC}" ]; then
+    echo "ERROR: no usable rsync found. Apple's openrsync ignores --delete"
+    echo "when --backup is active, so deleted files would never be backed up."
+    echo "Install a real rsync, e.g.: brew install rsync"
+    exit 1
+fi;
+
 #Define a rsync backup dir. It is new at each time we run up to mydate granularity
 l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
 l_BMU_OPTBKUP=" --backup-dir=${l_BMU_DIRBKUP}"
+#Pre-create the project level: rsync (>=3.4) fails delete-phase backups with
+#"File exists" when the --backup-dir path has 2+ missing components. With the
+#project dir in place only B-${mydate} is missing, which rsync handles fine,
+#and the dir-exists checks below still tell whether anything was backed up.
+mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
 #
-rsync ${BMU_OPTRSYNC} ${l_BMU_OPTBKUP} ${l_BMU_TOBACKUP} ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}
+${BMU_CMDRSYNC} ${BMU_OPTRSYNC} ${l_BMU_OPTBKUP} ${l_BMU_TOBACKUP} ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}
 #
 # Create List Files
 if [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then

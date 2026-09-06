@@ -1,11 +1,23 @@
-[![Stories in Ready](https://badge.waffle.io/mariotti/bmu.png?label=ready&title=Ready)](https://waffle.io/mariotti/bmu)
 # WARNING this code is at GAMMA stage
 
 Wrong settings can ovewrite your data.
 
-# bmu
+# bmug2
 
-BackMeUp - A tool to make backups for personal use. Also system wide and embedded devices.
+BackMeUp generation 2 - A tool to make backups for personal use. Also system wide and embedded devices.
+
+This is the continuation of the historical [bmu](https://github.com/mariotti/bmu) project,
+which is preserved unchanged. bmug2 starts from the last bmu state and fixes the basic issues.
+
+## Requirements
+
+ - A **real rsync** (>= 3.x). On modern macOS Apple ships **openrsync** as
+   `/usr/bin/rsync`, which **silently ignores `--delete` when `--backup` is
+   active** — deleted files would never reach the backup dir. The setup now
+   auto-detects a usable rsync (`BMU_CMDRSYNC`) and `backmeup.sh` refuses to
+   run if only openrsync is found. Fix: `brew install rsync`.
+ - `updatedb`/`locate` (findutils) for indexing. On macOS: `brew install findutils`
+   (provides `gupdatedb`/`glocate`).
 
 ## How it currently works: we want to improve this
 
@@ -42,6 +54,20 @@ What I propose is something between a backup, a time machine and close to versio
  - An archive facility to compress very old data which will still include an indexing/search facility
 
 # News
+
+## Fixed: deleted files were not archived (macOS/openrsync + rsync 3.4+ bug)
+
+Two stacked issues around the core "deleted files go to the backup dir" promise:
+
+ - Apple's openrsync drops `--delete` when `--backup` is active. bmug2 now
+   detects it and requires a real rsync (see Requirements).
+ - Real rsync >= 3.4 fails delete-phase backups with `make_backup(...): File
+   exists` when the `--backup-dir` path has 2+ missing leading components —
+   exactly our `sync-BP/<project>/B-<timestamp>` layout. `backmeup.sh` now
+   pre-creates the project level so only the timestamped dir is left to rsync.
+
+Verified end to end in a sandbox: changed files and deleted files both land in
+`B-<timestamp>/`, and the mirror is a true mirror again.
 
 ## Tested on linux
 

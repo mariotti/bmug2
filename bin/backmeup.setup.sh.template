@@ -57,6 +57,22 @@ BMU_INDEXTYPE="locate"
 BMU_mydate=`date +%Y%m%d-%H%M%S`
 BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
 #
+# rsync detection
+# ---------------
+# Apple ships "openrsync" as /usr/bin/rsync (macOS >= 15). openrsync
+# silently ignores --delete when --backup is active, so deleted files
+# would stay in the sync dir forever and never reach the backup dir.
+# Pick the first real rsync we can find; stays empty if none is usable.
+BMU_CMDRSYNC=""
+for l_bmu_rsync in rsync /opt/homebrew/bin/rsync /usr/local/bin/rsync /usr/bin/rsync; do
+    command -v "${l_bmu_rsync}" > /dev/null 2>&1 || continue
+    if "${l_bmu_rsync}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
+        continue
+    fi
+    BMU_CMDRSYNC="${l_bmu_rsync}"
+    break
+done
+#
 BMU_CMDUPDATEDB='updatedb -l 0'
 BMU_UPDBOPT='-U '
 BMU_CMDLOCATE='locate'
