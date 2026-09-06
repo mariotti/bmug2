@@ -310,9 +310,15 @@ testArchiveSearchAndRestore() {
     assertNotNull "no snapshot created for archproj" "${l_bk}"
     l_name=`basename "${l_bk}"`
 
+    # the days=0 cutoff is "now" at second granularity: let the clock
+    # tick so the snapshot is strictly older than the cutoff
+    sleep 1
+
     # dry-run: reports but changes nothing
     "${SB}/bin/backmeup.archive.sh" -n archproj 0 > "${SB}/arch-dry.log" 2>&1
     assertEquals "archive dry-run failed" 0 $?
+    grep -q "would archive ${l_name}" "${SB}/arch-dry.log"
+    assertTrue "dry-run did not report the archivable snapshot" $?
     assertTrue "dry-run removed the snapshot dir" "[ -d '${l_bk}' ]"
     [ -f "${l_bk}.tar.gz" ]
     assertFalse "dry-run created a tarball" $?
