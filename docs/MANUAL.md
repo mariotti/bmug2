@@ -3,7 +3,9 @@
 Full command reference for bmug2. For what the project is and why, see
 the [README](../README.md). For real usage recipes (multiple projects,
 excluding files, cron, upgrading an old bmu disk), see
-[EXAMPLES.md](EXAMPLES.md).
+[EXAMPLES.md](EXAMPLES.md). For where SYNC/HISTORY can actually live
+(local disks, cloud-sync folders, S3), see
+[DESTINATIONS.md](DESTINATIONS.md).
 
 ## Contents
 
