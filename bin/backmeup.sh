@@ -73,6 +73,7 @@ fi;
 #${BMU_DIRRSYNC}/<project> instead of the old nested <project>/<project>
 ${BMU_CMDRSYNC} ${l_BMU_DRYRUN} ${BMU_OPTRSYNC} --backup-dir="${l_BMU_DIRBKUP}" \
     "${l_BMU_TOBACKUP}/" "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
+l_BMU_RSYNCRC=$?
 #
 #In a dry run rsync only reported what it would do: skip the filelist and
 #the indexing, which key off a backup dir that was never created.
@@ -80,6 +81,14 @@ if [ -n "${l_BMU_DRYRUN}" ]; then
     echo ""
     echo "DRY RUN: no files were copied, deleted, archived or indexed."
     exit 0
+fi;
+#
+#Record the last successful run for backmeup.status.sh. Kept outside the
+#mirror on purpose: anything inside it would be deleted (and archived!) by
+#the next --delete run. Written as text because reading a file's mtime
+#portably (BSD vs GNU date/stat) is not worth the trouble.
+if [ ${l_BMU_RSYNCRC} -eq 0 ]; then
+    date "+%Y-%m-%d %H:%M:%S" > "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/.bmulastrun"
 fi;
 #
 # Create List Files

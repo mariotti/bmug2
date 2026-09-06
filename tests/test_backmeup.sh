@@ -258,6 +258,28 @@ testWorksWithSpacesInPaths() {
     assertEquals "sp doomed" "`cat \"${l_bk}sub dir/gone file.txt\" 2>/dev/null`"
 }
 
+testStatusReport() {
+    # the real backup runs in oneTimeSetUp recorded a last-run stamp
+    assertTrue "no .bmulastrun stamp recorded by backmeup.sh" \
+        "[ -f '${SB}/sync-BP/myproject/.bmulastrun' ]"
+
+    l_out=`"${SB}/bin/backmeup.status.sh" 2>&1`
+    assertEquals "status script failed" 0 $?
+    echo "${l_out}" | grep -q "^myproject "
+    assertTrue "status misses the myproject row" $?
+    # last-change column shows the snapshot timestamp, humanized
+    l_stamp=`basename "${BKDIR}" | sed 's/^B-\(....\)\(..\)\(..\)-\(..\)\(..\)\(..\)$/\1-\2-\3 \4:\5:\6/'`
+    echo "${l_out}" | grep -q "${l_stamp}"
+    assertTrue "status misses last-change timestamp '${l_stamp}'" $?
+
+    # old-layout mirrors are flagged with the migration command
+    mkdir -p "${SB}/sync/legacyproj/legacyproj"
+    l_out=`"${SB}/bin/backmeup.status.sh" 2>&1`
+    echo "${l_out}" | grep -q "OLD LAYOUT: run backmeup.migrate.sh legacyproj"
+    assertTrue "old-layout project not flagged" $?
+    rm -rf "${SB}/sync/legacyproj"
+}
+
 testUpdatedbFailsCleanlyWithoutUpdatedb() {
     l_dir="${SHUNIT_TMPDIR}/bmu-noupdatedb"
     rm -rf "${l_dir}"

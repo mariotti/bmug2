@@ -36,6 +36,8 @@ skipped on machines without findutils.
  - backup: run backmeup.sh as many times as you need or set it on a cron job
  - index: run backmeup.updatedb.sh any now and then or setup a nightly cron job
  - search: run backmeup.locate.sh
+ - status: run backmeup.status.sh for a per-project overview (last run,
+   last archived change, snapshots, disk usage)
 
 ## Target Requirements
 
