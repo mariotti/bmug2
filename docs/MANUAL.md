@@ -202,3 +202,15 @@ work; install findutils to enable fast indexed search, or rely on
 history?** — check `HISTORY/<project>/B-<date>/` for the most recent
 snapshot (`backmeup.status.sh` shows the latest one), or
 `backmeup.locate.sh <name>` to search across all of them at once.
+
+**`glocate`/`locate` finds nothing, `gupdatedb`/`updatedb` prints
+errors about paths that don't exist** — GNU findutils' `updatedb
+--localpaths` treats its value as a **space-separated list of roots**,
+by design. If SYNC or HISTORY themselves live under a path containing
+a space (or, for a single run's incremental index, the project name
+does), GNU `updatedb` cannot index them — this is a limitation of
+GNU findutils, not something bmug2's own quoting can work around.
+Backup, migrate, archive and the `.filelist`-grep fallback for archived
+content are unaffected; only `locate`-backed search over such a path
+is. Avoid spaces in the SYNC/HISTORY root paths if you rely on indexed
+search.

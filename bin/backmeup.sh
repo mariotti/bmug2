@@ -110,3 +110,7 @@ elif [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then
     ${BMU_CMDUPDATEDB} --output="${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate}" ${BMU_UPDBOPT}"${l_BMU_DIRBKUP}"
 fi
 #
+#Exit with rsync's own status: a cron job checking $? should see a real
+#rsync failure, not the unrelated exit code of whichever "if" ran last
+#(POSIX: an if/elif with no branch taken exits 0, masking rsync's rc).
+exit ${l_BMU_RSYNCRC}
