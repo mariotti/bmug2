@@ -27,4 +27,34 @@ the fix.
 New behavior needs a test that would fail without the change. The
 suite (`tests/test_backmeup.sh`, using the bundled `shunit2`) replays
 real backup scenarios in a temporary sandbox rather than mocking
-`rsync`/`updatedb` — see existing tests for the pattern.
+`rsync`/`updatedb` — see existing tests for the pattern. The only
+things faked are a stub `rsync`/`updatedb`/`tar` on `PATH` for testing
+failure paths that are impractical to trigger for real (e.g. a full
+disk), and scripted stdin for the interactive install/configure flow.
+
+### What the suite covers
+
+One end-to-end test (`testUserJourneyEndToEnd`) drives a real install
+through `backmeup.install.sh` with scripted answers, then runs the
+full command set through the installed copy — this is the only test
+touching `backmeup.install.sh`/`backmeup.configure.sh` at all, and it
+exists because the two real bugs in `configure.sh` (fixed in commit
+`ba62b8a`) were found by hand-testing, not by CI, since nothing
+automated exercised that path before.
+
+Everything else targets one command's behavior or edge case: the core
+backup/mirror/history mechanics, each safety guard and refusal (no
+usable rsync, old layout, missing updatedb, non-numeric archive age,
+archiving/restoring a project or snapshot that doesn't exist), the
+tar-failure safety net for archive/unarchive (verified by shadowing
+`tar` on `PATH` with a stub that fails), and degraded-environment
+behavior (no findutils at all, search still working via the
+`.filelist` grep fallback).
+
+Known, accepted gaps (not covered, and not expected to be): rare I/O
+failures like a failed `mv`/`rmdir` mid-migration or a disk filling up
+mid-`rsync`; the non-numeric-days validation is tested but the
+tar-verification *count-mismatch* path (as opposed to `tar` outright
+failing) is not, since faking a tarball with a plausible-but-wrong
+entry count adds real complexity for the same code path already
+covered by the failure case.

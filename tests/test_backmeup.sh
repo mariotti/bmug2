@@ -4,16 +4,22 @@
 #
 #   sh tests/test_backmeup.sh
 #
-# The suite replays the scenario that caught the two big bugs fixed in
-# bmug2 (openrsync dropping --delete with --backup, and rsync >= 3.4
-# failing delete-phase backups into a deep --backup-dir):
+# Two kinds of tests:
 #
-#   run 1: back up a project with two files
-#   run 2: back up again after changing one file and deleting the other
+#  - testUserJourneyEndToEnd drives an install through backmeup.install.sh
+#    with scripted answers, then exercises the full command set (dry-run,
+#    backup, status, search, archive, unarchive) through the installed
+#    copy - the only test covering install.sh/configure.sh at all.
 #
-# then asserts on the mirror, the archived versions, the filelists and,
-# when an updatedb is available, on indexing and search. Index/search
-# tests are skipped (not failed) on machines without findutils.
+#  - Everything else targets one command's behavior or edge case against
+#    a shared sandbox (oneTimeSetUp), pre-populated by two real backup
+#    runs (one file changed, one deleted) that also caught the two big
+#    bugs fixed early in bmug2: openrsync dropping --delete with
+#    --backup, and rsync >= 3.4 failing delete-phase backups into a deep
+#    --backup-dir.
+#
+# Index/search tests are skipped (not failed) on machines without
+# findutils, except where a test explicitly simulates that case.
 #
 # Detect test path
 # ----------------
@@ -52,6 +58,132 @@ oneTimeSetUp() {
 
     # import the detected commands (BMU_CMDRSYNC, BMU_CMDUPDATEDB, ...)
     . "${SB}/bin/backmeup.setup.sh"
+}
+
+#
+# full user journey: install, configure, backup, search, archive, restore
+# -------------------------------------------------------------------------
+# Everything above and below reuses a sandbox pre-configured by
+# oneTimeSetUp with a hand-written setup file. This test instead drives
+# the actual entry point a new user runs: backmeup.install.sh, answering
+# its prompts exactly as a human would, then exercises the full command
+# set through the installed copy. It is the only test covering
+# install.sh/configure.sh/shellfunctions.sh at all, which matters: the
+# two real configure.sh bugs found earlier (BMU_CMDRSYNC never written
+# to the generated setup, and the "empy"/"empty" mkdir typo) were caught
+# by hand-testing, not by the suite - this closes that coverage hole.
+
+testUserJourneyEndToEnd() {
+    # a realistic space-free layout, like the README's Quick start.
+    # (Spaces in paths are covered separately by testWorksWithSpacesInPaths;
+    # keeping them out here avoids a real, unrelated limitation: GNU
+    # findutils' updatedb treats --localpaths as a space-*separated list*
+    # of roots by design, so it cannot index a root whose own path
+    # contains a space - confirmed independently of our scripts by
+    # calling gupdatedb directly. Backup, search-via-filelist, migrate
+    # and archive are unaffected; only glocate-backed search over such a
+    # path is. Noted in docs/MANUAL.md.)
+    l_home="${SHUNIT_TMPDIR}/journeyhome"
+    l_checkout="${SHUNIT_TMPDIR}/journeycheckout"
+    mkdir -p "${SHUNIT_TMPDIR}/journey" "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # Answers, in prompt order: SYNC (default, doesn't exist) -> y to
+    # create; BACKUP (default) -> y; INDEX (default) -> y; base INSTALL
+    # path (pre-created above, so accepted immediately, no create
+    # prompt); INSTALL dir (default, doesn't exist) -> y to create.
+    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/journey/install.log" 2>&1
+    assertEquals "install failed, see install.log" 0 $?
+
+    l_bmu="${l_home}/usr/bmu/bin"
+    assertTrue "install did not create ${l_bmu}/backmeup.sh" \
+        "[ -x '${l_bmu}/backmeup.sh' ]"
+
+    # regression guard for the two bugs found by hand: configure must
+    # detect and persist both tools into the generated setup file
+    grep -q 'BMU_CMDRSYNC="[^"]' "${l_bmu}/backmeup.setup.sh"
+    assertTrue "configure did not persist a detected rsync" $?
+    if [ -n "${BMU_CMDUPDATEDB}" ]; then
+        grep -q 'BMU_CMDUPDATEDB="[^"]' "${l_bmu}/backmeup.setup.sh"
+        assertTrue "configure did not persist a detected updatedb" $?
+    fi
+
+    l_src="${SHUNIT_TMPDIR}/journey/docs"
+    mkdir -p "${l_src}/reports"
+    echo "quarterly numbers v1" > "${l_src}/reports/report.pdf"
+    echo "scratch notes" > "${l_src}/notes.txt"
+
+    # preview first, like a cautious new user
+    "${l_bmu}/backmeup.sh" --dry-run "${l_src}" \
+        > "${SHUNIT_TMPDIR}/journey/dry.log" 2>&1
+    assertEquals "dry-run failed, see dry.log" 0 $?
+    grep -q "DRY RUN" "${SHUNIT_TMPDIR}/journey/dry.log"
+    assertTrue "dry-run did not announce itself" $?
+    assertFalse "dry-run already created the mirror" \
+        "[ -e '${l_home}/tmp/rsyncBackup/docs' ]"
+
+    # first real backup
+    "${l_bmu}/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/journey/backup1.log" 2>&1
+    assertEquals "first backup failed, see backup1.log" 0 $?
+
+    sleep 1
+    echo "quarterly numbers v2, corrected" > "${l_src}/reports/report.pdf"
+    rm "${l_src}/notes.txt"
+    "${l_bmu}/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/journey/backup2.log" 2>&1
+    assertEquals "second backup failed, see backup2.log" 0 $?
+
+    assertEquals "quarterly numbers v2, corrected" \
+        "`cat \"${l_home}/tmp/rsyncBackup/docs/reports/report.pdf\" 2>/dev/null`"
+    assertFalse "notes.txt still in the mirror after deletion" \
+        "[ -e '${l_home}/tmp/rsyncBackup/docs/notes.txt' ]"
+
+    l_snap=`ls -d "${l_home}/tmp/rsyncBackup-BP/docs"/B-*/ 2>/dev/null | head -1`
+    l_snap="${l_snap%/}"
+    assertNotNull "no snapshot recorded for the second backup" "${l_snap}"
+    l_snapname=`basename "${l_snap}"`
+
+    # status: a new user checking on things
+    l_status=`"${l_bmu}/backmeup.status.sh" 2>&1`
+    echo "${l_status}" | grep -q "^docs "
+    assertTrue "status does not list the docs project" $?
+
+    # index, then search for the current file and the deleted one. The
+    # full-index search only exists with findutils installed; without it
+    # there is no fallback for *live* files (only archived ones have a
+    # filelist), so skip just this part on a machine without updatedb.
+    "${l_bmu}/backmeup.updatedb.sh" > "${SHUNIT_TMPDIR}/journey/updatedb.log" 2>&1
+    if [ -n "${BMU_CMDUPDATEDB}" ]; then
+        assertEquals "updatedb failed, see updatedb.log" 0 $?
+        # one pattern per call: multi-pattern locate semantics differ
+        # across implementations (GNU/mlocate/plocate), and every other
+        # test in this suite already sticks to the portable single form
+        "${l_bmu}/backmeup.locate.sh" report.pdf 2>/dev/null \
+            | grep -q "rsyncBackup/docs/reports/report.pdf"
+        assertTrue "search misses the current report.pdf" $?
+        "${l_bmu}/backmeup.locate.sh" notes.txt 2>/dev/null \
+            | grep -q "rsyncBackup-BP/docs/B-.*/notes.txt"
+        assertTrue "search misses the deleted notes.txt in history" $?
+    fi
+
+    # archive the (now old enough) snapshot, confirm it stays searchable
+    sleep 1
+    "${l_bmu}/backmeup.archive.sh" docs 0 \
+        > "${SHUNIT_TMPDIR}/journey/archive.log" 2>&1
+    assertEquals "archive failed, see archive.log" 0 $?
+    assertTrue "archive did not produce a tarball" \
+        "[ -f '${l_snap}.tar.gz' ]"
+    "${l_bmu}/backmeup.locate.sh" notes.txt 2>/dev/null | grep -q "(archived)"
+    assertTrue "archived notes.txt not found by search" $?
+
+    # restore it back
+    "${l_bmu}/backmeup.unarchive.sh" docs "${l_snapname}" \
+        > "${SHUNIT_TMPDIR}/journey/unarchive.log" 2>&1
+    assertEquals "unarchive failed, see unarchive.log" 0 $?
+    assertTrue "snapshot not restored to a directory" "[ -d '${l_snap}' ]"
 }
 
 #
@@ -122,6 +254,61 @@ testRefusesWithoutUsableRsync() {
     assertTrue "no ERROR message shown to the user" $?
 }
 
+testBackupNoOpRunCreatesNoSnapshot() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/noopproj"
+    mkdir -p "${l_src}"
+    echo "steady" > "${l_src}/steady.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    # run again with nothing changed at all
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/noop.log" 2>&1
+    assertEquals "a no-op backup run must still exit 0" 0 $?
+    l_count=`ls -d "${SB}/sync-BP/noopproj"/B-*/ 2>/dev/null | wc -l`
+    assertEquals "a snapshot was created for a run that changed nothing" \
+        0 `expr ${l_count}`
+    assertTrue ".bmulastrun not written by a successful no-op run" \
+        "[ -f '${SB}/sync-BP/noopproj/.bmulastrun' ]"
+}
+
+testBackupPropagatesRsyncFailureExitCode() {
+    # a script wrapping rsync should surface rsync's own failure, not
+    # whichever unrelated "if" happened to run last in the script
+    l_dir="${SHUNIT_TMPDIR}/bmu-rsyncfail"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    l_fake="${SHUNIT_TMPDIR}/fake-failing-rsync"
+    mkdir -p "${l_fake}"
+    printf '#!/bin/sh\nexit 2\n' > "${l_fake}/fakersync"
+    chmod +x "${l_fake}/fakersync"
+    echo "BMU_CMDRSYNC=\"${l_fake}/fakersync\"" >> "${l_dir}/backmeup.setup.sh"
+
+    l_src="${SHUNIT_TMPDIR}/bmu/src/rsyncfailproj"
+    mkdir -p "${l_src}"
+    echo x > "${l_src}/x.txt"
+    "${l_dir}/backmeup.sh" "${l_src}" > "${l_dir}/run.log" 2>&1
+    assertEquals "script must exit with rsync's own failure code" 2 $?
+    assertFalse ".bmulastrun written despite rsync failing" \
+        "[ -f '${SB}/sync-BP/rsyncfailproj/.bmulastrun' ]"
+}
+
+testOldLayoutGuardIgnoresLegitimateSameNamedSubdir() {
+    # a project whose SOURCE legitimately contains a subdirectory with
+    # the same name as itself ends up looking exactly like the old
+    # double-nested layout by coincidence; the guard must not refuse it
+    l_src="${SHUNIT_TMPDIR}/bmu/src/legitproj"
+    mkdir -p "${l_src}/legitproj"
+    echo "nested legit file" > "${l_src}/legitproj/inner.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/legit1.log" 2>&1
+    assertEquals "first backup of legit same-named-subdir project failed" 0 $?
+    assertTrue "expected coincidental nesting in the mirror" \
+        "[ -d '${SB}/sync/legitproj/legitproj' ]"
+
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/legit2.log" 2>&1
+    assertEquals "legit same-named-subdir project was wrongly refused" 0 $?
+    grep -q "old bmu layout detected" "${SB}/legit2.log"
+    assertFalse "false positive: legit project flagged as old layout" $?
+}
+
 #
 # indexing and search (skipped when no updatedb is available)
 # -----------------------------------------------------------
@@ -148,6 +335,51 @@ testSearchFindsDeletedFile() {
     "${SB}/bin/backmeup.locate.sh" file2 2>/dev/null \
         | grep -q "sync-BP/myproject/B-.*/sub/file2.txt"
     assertTrue "search misses the deleted (archived) file2" $?
+}
+
+testUpdatedbClearsOldPartIndexes() {
+    [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
+    # a fresh, dedicated project so this test does not depend on whether
+    # some other test already ran a full reindex over myproject's index
+    l_src="${SHUNIT_TMPDIR}/bmu/src/partindexproj"
+    mkdir -p "${l_src}"
+    echo x > "${l_src}/x.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo y > "${l_src}/x.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.partindexproj.* 2>/dev/null | wc -l`
+    assertNotEquals "expected a per-run index to clear" 0 `expr ${l_count}`
+    "${SB}/bin/backmeup.updatedb.sh" > /dev/null 2>&1
+    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.partindexproj.* 2>/dev/null | wc -l`
+    assertEquals "a full reindex must clear old per-run indexes" \
+        0 `expr ${l_count}`
+}
+
+testLocateWorksWithoutLocateInstalled() {
+    # simulate a machine with no locate: the archived-filelist grep
+    # fallback must still work, with zero dependency on findutils
+    l_dir="${SHUNIT_TMPDIR}/bmu-nolocate"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    echo 'BMU_CMDLOCATE=""' >> "${l_dir}/backmeup.setup.sh"
+
+    l_src="${SHUNIT_TMPDIR}/bmu/src/nolocateproj"
+    mkdir -p "${l_src}"
+    echo "findable" > "${l_src}/needle.txt"
+    "${l_dir}/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    rm "${l_src}/needle.txt"
+    "${l_dir}/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    l_bk=`ls -d "${SB}/sync-BP/nolocateproj"/B-*/ 2>/dev/null | head -1`
+    l_bk="${l_bk%/}"
+    sleep 1
+    "${l_dir}/backmeup.archive.sh" nolocateproj 0 > /dev/null 2>&1
+
+    "${l_dir}/backmeup.locate.sh" needle 2>/dev/null \
+        | grep -q "`basename \"${l_bk}\"`/needle.txt (archived)"
+    assertTrue "grep fallback did not find the archived file without locate" $?
 }
 
 #
@@ -195,6 +427,18 @@ testMigrateRefusesAmbiguousLayout() {
     assertEquals "must refuse ambiguous layout" 1 $?
     assertTrue "ambiguous mirror was modified" \
         "[ -f '${l_dir}/extra.txt' -a -d '${l_dir}/ambiproj' ]"
+}
+
+testMigrateNothingToMigrate() {
+    # a normal, already-flat project: nothing to do, refuse and don't touch it
+    l_dir="${SB}/sync/flatproj"
+    mkdir -p "${l_dir}"
+    echo x > "${l_dir}/x.txt"
+    "${SB}/bin/backmeup.migrate.sh" flatproj > "${SB}/flatmigrate.log" 2>&1
+    assertEquals "must refuse when there is no old layout to migrate" 1 $?
+    grep -q "no old-layout nesting found" "${SB}/flatmigrate.log"
+    assertTrue "no explanation shown for nothing-to-migrate" $?
+    assertTrue "flat project was modified" "[ -f '${l_dir}/x.txt' ]"
 }
 
 testDryRunChangesNothing() {
@@ -280,6 +524,30 @@ testStatusReport() {
     rm -rf "${SB}/sync/legacyproj"
 }
 
+testStatusNoProjectsFound() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-emptystatus"
+    rm -rf "${l_dir}"
+    mkdir -p "${l_dir}/sync/.locate.dir" "${l_dir}/sync-BP"
+    cp -R "${SB}/bin" "${l_dir}/bin"
+    sed -e "s|${SB}/sync|${l_dir}/sync|" "${SB}/bin/backmeup.setup.sh" \
+        > "${l_dir}/bin/backmeup.setup.sh"
+    l_out=`"${l_dir}/bin/backmeup.status.sh" 2>&1`
+    assertEquals "status failed on an empty SYNC dir" 0 $?
+    echo "${l_out}" | grep -q "no projects found"
+    assertTrue "status did not report an empty SYNC dir" $?
+}
+
+testStatusHandlesMirrorOnlyProject() {
+    # a project dropped straight into SYNC by hand, never backed up via
+    # backmeup.sh: no history dir at all exists for it yet
+    mkdir -p "${SB}/sync/manualproj"
+    echo x > "${SB}/sync/manualproj/x.txt"
+    l_out=`"${SB}/bin/backmeup.status.sh" 2>&1`
+    echo "${l_out}" | grep -q "^manualproj *- *- *0"
+    assertTrue "mirror-only project not reported with '-' placeholders" $?
+    rm -rf "${SB}/sync/manualproj"
+}
+
 testUpdatedbFailsCleanlyWithoutUpdatedb() {
     l_dir="${SHUNIT_TMPDIR}/bmu-noupdatedb"
     rm -rf "${l_dir}"
@@ -355,6 +623,120 @@ testArchiveKeepsFreshSnapshots() {
     assertTrue "fresh snapshots were considered for archiving" $?
     l_count=`ls "${SB}/sync-BP/archproj"/B-*.tar.gz 2>/dev/null | wc -l`
     assertEquals "a fresh snapshot was archived" 0 `expr ${l_count}`
+}
+
+testArchiveRejectsNonNumericDays() {
+    "${SB}/bin/backmeup.archive.sh" archproj notanumber > "${SB}/arch-bad.log" 2>&1
+    assertEquals "must reject a non-numeric days argument" 1 $?
+    grep -q "ERROR" "${SB}/arch-bad.log"
+    assertTrue "no ERROR message for a non-numeric days argument" $?
+}
+
+testArchiveMissingProjectFails() {
+    "${SB}/bin/backmeup.archive.sh" doesnotexistproj \
+        > "${SB}/arch-noproj.log" 2>&1
+    assertEquals "must fail archiving a project with no history" 1 $?
+    grep -q "no history for" "${SB}/arch-noproj.log"
+    assertTrue "no explanation for the missing-history project" $?
+}
+
+testArchiveCreatesMissingFilelist() {
+    # a snapshot created without going through backmeup.sh (or one whose
+    # filelist was lost) must still get a filelist before being archived
+    l_bp="${SB}/sync-BP/barefilelistproj"
+    mkdir -p "${l_bp}/B-20200101-000000/sub"
+    echo "bare" > "${l_bp}/B-20200101-000000/sub/f.txt"
+    assertFalse "unexpected pre-existing filelist" \
+        "[ -f '${l_bp}/B-20200101-000000.filelist' ]"
+
+    "${SB}/bin/backmeup.archive.sh" barefilelistproj 0 \
+        > "${SB}/arch-nofilelist.log" 2>&1
+    assertEquals "archive failed, see arch-nofilelist.log" 0 $?
+    assertTrue "archive did not create the missing filelist" \
+        "[ -f '${l_bp}/B-20200101-000000.filelist' ]"
+    grep -q "sub/f.txt" "${l_bp}/B-20200101-000000.filelist"
+    assertTrue "created filelist does not mention the snapshot's content" $?
+}
+
+testArchiveLeavesSnapshotOnTarFailure() {
+    l_bp="${SB}/sync-BP/tarfailproj"
+    mkdir -p "${l_bp}/B-20200101-000000"
+    echo "precious" > "${l_bp}/B-20200101-000000/keep.txt"
+
+    l_dir="${SHUNIT_TMPDIR}/bmu-tarfail"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    l_faketar="${SHUNIT_TMPDIR}/faketar-archive"
+    mkdir -p "${l_faketar}"
+    printf '#!/bin/sh\nexit 1\n' > "${l_faketar}/tar"
+    chmod +x "${l_faketar}/tar"
+
+    PATH="${l_faketar}:${PATH}" "${l_dir}/backmeup.archive.sh" \
+        tarfailproj 0 > "${l_dir}/run.log" 2>&1
+    assertEquals "must fail when tar fails" 1 $?
+    grep -q "ERROR: tar failed" "${l_dir}/run.log"
+    assertTrue "no ERROR message when tar fails" $?
+    assertTrue "snapshot directory removed despite tar failing" \
+        "[ -d '${l_bp}/B-20200101-000000' ]"
+    [ -f "${l_bp}/B-20200101-000000.tar.gz" ]
+    assertFalse "a tarball was kept despite tar failing" $?
+    [ -f "${l_bp}/B-20200101-000000.tar.gz.part" ]
+    assertFalse "a partial tarball was left behind" $?
+}
+
+#
+# unarchive edge cases
+# ---------------------
+
+testUnarchiveMissingArchiveFails() {
+    mkdir -p "${SB}/sync-BP/nosucharchiveproj"
+    "${SB}/bin/backmeup.unarchive.sh" nosucharchiveproj B-20200101-000000 \
+        > "${SB}/unarch-missing.log" 2>&1
+    assertEquals "must fail restoring a nonexistent archive" 1 $?
+    grep -q "no archive found" "${SB}/unarch-missing.log"
+    assertTrue "no explanation for the missing archive" $?
+}
+
+testUnarchiveRefusesExistingDir() {
+    l_bp="${SB}/sync-BP/unarchclashproj"
+    mkdir -p "${l_bp}/B-20200101-000000"
+    echo "already here" > "${l_bp}/B-20200101-000000/x.txt"
+    # a tarball happens to exist too (e.g. a stale leftover from a prior,
+    # incomplete restore) - the directory clash must still win
+    ( cd "${l_bp}" && tar -czf B-20200101-000000.tar.gz B-20200101-000000 )
+
+    "${SB}/bin/backmeup.unarchive.sh" unarchclashproj B-20200101-000000 \
+        > "${SB}/unarch-clash.log" 2>&1
+    assertEquals "must refuse to overwrite an existing snapshot dir" 1 $?
+    grep -q "already exists as a directory" "${SB}/unarch-clash.log"
+    assertTrue "no explanation for the directory clash" $?
+    assertEquals "already here" "`cat \"${l_bp}/B-20200101-000000/x.txt\" 2>/dev/null`"
+    assertTrue "archive removed despite refusing to restore" \
+        "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
+}
+
+testUnarchiveLeavesArchiveOnExtractFailure() {
+    l_bp="${SB}/sync-BP/unarchfailproj"
+    mkdir -p "${l_bp}"
+    touch "${l_bp}/B-20200101-000000.tar.gz"
+
+    l_dir="${SHUNIT_TMPDIR}/bmu-unarchfail"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    l_faketar="${SHUNIT_TMPDIR}/faketar-unarchive"
+    mkdir -p "${l_faketar}"
+    printf '#!/bin/sh\nexit 1\n' > "${l_faketar}/tar"
+    chmod +x "${l_faketar}/tar"
+
+    PATH="${l_faketar}:${PATH}" "${l_dir}/backmeup.unarchive.sh" \
+        unarchfailproj B-20200101-000000 > "${l_dir}/run.log" 2>&1
+    assertEquals "must fail when extraction fails" 1 $?
+    grep -q "ERROR: extraction failed" "${l_dir}/run.log"
+    assertTrue "no ERROR message when extraction fails" $?
+    assertTrue "archive removed despite extraction failing" \
+        "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
+    [ -d "${l_bp}/B-20200101-000000" ]
+    assertFalse "a snapshot directory appeared despite extraction failing" $?
 }
 
 #
