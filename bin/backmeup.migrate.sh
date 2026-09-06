@@ -25,14 +25,14 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
-. ${BMU_PATH}/backmeup.setup.sh
+. "${BMU_PATH}/backmeup.setup.sh"
 #
 # Parsing the one option
-if [ -z $1 ]; then
+if [ -z "$1" ]; then
     echo "please give a project name (a directory under ${BMU_DIRRSYNC})."
     exit 1;
 fi;
-l_BMU_PRJDIR=`basename ${1}`
+l_BMU_PRJDIR=`basename "${1}"`
 l_BMU_DIR="${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
 l_BMU_NESTED="${l_BMU_DIR}/${l_BMU_PRJDIR}"
 #

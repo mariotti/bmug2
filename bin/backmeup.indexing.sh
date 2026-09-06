@@ -15,10 +15,10 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
-. ${BMU_PATH}/backmeup.setup.sh
+. "${BMU_PATH}/backmeup.setup.sh"
 #
 # Parsing the one option
-if [ -z $1 ]; then
+if [ -z "$1" ]; then
     echo "please give a project dir.date name."
     exit 1;
 fi;

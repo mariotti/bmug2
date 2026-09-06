@@ -15,19 +15,19 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
-. ${BMU_PATH}/backmeup.setup.sh
+. "${BMU_PATH}/backmeup.setup.sh"
 #
 # Set up the current date
 mydate=`date +%Y%m%d-%H%M%S`
 
 # Parsing the one option
-if [ -z $1 ]; then
+if [ -z "$1" ]; then
     echo "please give a dir name."
     exit 1;
 fi;
 #Remove trailing / It creates a project directory
-l_BMU_TOBACKUP=`dirname $1`/`basename $1`
-l_BMU_PRJDIR=`basename ${1}`
+l_BMU_TOBACKUP="`dirname \"$1\"`/`basename \"$1\"`"
+l_BMU_PRJDIR=`basename "${1}"`
 
 #Refuse to run without a usable rsync (openrsync drops --delete with --backup)
 if [ -z "${BMU_CMDRSYNC}" ]; then
@@ -54,7 +54,6 @@ fi;
 
 #Define a rsync backup dir. It is new at each time we run up to mydate granularity
 l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
-l_BMU_OPTBKUP=" --backup-dir=${l_BMU_DIRBKUP}"
 #Pre-create the project level: rsync (>=3.4) fails delete-phase backups with
 #"File exists" when the --backup-dir path has 2+ missing components. With the
 #project dir in place only B-${mydate} is missing, which rsync handles fine,
@@ -63,13 +62,14 @@ mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
 #
 #Trailing slash on the source: mirror the project content directly into
 #${BMU_DIRRSYNC}/<project> instead of the old nested <project>/<project>
-${BMU_CMDRSYNC} ${BMU_OPTRSYNC} ${l_BMU_OPTBKUP} ${l_BMU_TOBACKUP}/ ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}
+${BMU_CMDRSYNC} ${BMU_OPTRSYNC} --backup-dir="${l_BMU_DIRBKUP}" \
+    "${l_BMU_TOBACKUP}/" "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
 #
 # Create List Files
-if [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then
-  cd ${BMU_DIRBACKUPS}
-  find ${l_BMU_PRJDIR}/B-${mydate} > ${l_BMU_PRJDIR}/B-${mydate}.filelist
-  cd -
+if [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then
+  cd "${BMU_DIRBACKUPS}"
+  find "${l_BMU_PRJDIR}/B-${mydate}" > "${l_BMU_PRJDIR}/B-${mydate}.filelist"
+  cd - > /dev/null
 fi;
 #
 ### END OF RSYNC JOB ###
@@ -80,8 +80,7 @@ if [ -z "${BMU_CMDUPDATEDB}" ]; then
     echo "WARNING: no updatedb found, skipping indexing."
     echo "  Search still works via the .filelist files."
     echo "  Install GNU findutils (macOS: brew install findutils)"
-elif [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then
-#    ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate} --localpaths="${l_BMU_DIRBKUP}"  --netpaths="${l_BMU_DIRBKUP}"
-    ${BMU_CMDUPDATEDB} --output=${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate} ${BMU_UPDBOPT}"${l_BMU_DIRBKUP}"
+elif [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then
+    ${BMU_CMDUPDATEDB} --output="${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate}" ${BMU_UPDBOPT}"${l_BMU_DIRBKUP}"
 fi
 #

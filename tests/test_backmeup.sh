@@ -197,6 +197,34 @@ testMigrateRefusesAmbiguousLayout() {
         "[ -f '${l_dir}/extra.txt' -a -d '${l_dir}/ambiproj' ]"
 }
 
+testWorksWithSpacesInPaths() {
+    # everything spaced: install dir, sync dirs, project name, file names
+    l_sb="${SHUNIT_TMPDIR}/bmu sp"
+    mkdir -p "${l_sb}/src/my project/sub dir" \
+             "${l_sb}/sync/.locate.dir" "${l_sb}/sync-BP"
+    cp -R "${BMU_BIN_SRC}" "${l_sb}/bin"
+    sed -e "s|\${HOME}/tmp/rsyncBackup|${l_sb}/sync|" \
+        "${l_sb}/bin/backmeup.setup.sh.template" > "${l_sb}/bin/backmeup.setup.sh"
+
+    echo "sp v1" > "${l_sb}/src/my project/a file.txt"
+    echo "sp doomed" > "${l_sb}/src/my project/sub dir/gone file.txt"
+    "${l_sb}/bin/backmeup.sh" "${l_sb}/src/my project" > "${l_sb}/run1.log" 2>&1
+    assertEquals "run 1 with spaces failed, see run1.log" 0 $?
+    sleep 1
+    echo "sp v2 changed" > "${l_sb}/src/my project/a file.txt"
+    rm "${l_sb}/src/my project/sub dir/gone file.txt"
+    "${l_sb}/bin/backmeup.sh" "${l_sb}/src/my project" > "${l_sb}/run2.log" 2>&1
+    assertEquals "run 2 with spaces failed, see run2.log" 0 $?
+
+    assertEquals "sp v2 changed" \
+        "`cat \"${l_sb}/sync/my project/a file.txt\" 2>/dev/null`"
+    [ -e "${l_sb}/sync/my project/sub dir/gone file.txt" ]
+    assertFalse "deleted file still in mirror (spaced paths)" $?
+    l_bk=`ls -d "${l_sb}/sync-BP/my project"/B-*/ 2>/dev/null | head -1`
+    assertEquals "sp v1" "`cat \"${l_bk}a file.txt\" 2>/dev/null`"
+    assertEquals "sp doomed" "`cat \"${l_bk}sub dir/gone file.txt\" 2>/dev/null`"
+}
+
 testUpdatedbFailsCleanlyWithoutUpdatedb() {
     l_dir="${SHUNIT_TMPDIR}/bmu-noupdatedb"
     rm -rf "${l_dir}"

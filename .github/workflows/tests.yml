@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        # plocate provides the mlocate-style updatedb/locate dialect,
+        # exercising the non-GNU branch of the capability detection
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate
+      - name: Run test suite
+        run: sh tests/test_backmeup.sh
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        # real rsync (Apple ships openrsync) and GNU findutils
+        # (gupdatedb/glocate), exercising the GNU branch
+        run: brew install rsync findutils
+      - name: Run test suite
+        run: sh tests/test_backmeup.sh

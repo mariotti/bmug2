@@ -64,6 +64,15 @@ What I propose is something between a backup, a time machine and close to versio
 
 # News
 
+## Fixed: paths with spaces; CI moved to GitHub Actions
+
+All runtime scripts now quote their paths, so projects, backup
+destinations and file names containing spaces work (covered by a
+dedicated test). The dead Travis CI setup is replaced by a GitHub
+Actions workflow that runs the suite on Linux (rsync + plocate,
+exercising the mlocate-style updatedb dialect) and macOS (Homebrew
+rsync + findutils, exercising the GNU dialect).
+
 ## Fixed: double-nested mirror layout (migration required for old backups)
 
 The mirror now lives directly in `SYNC/<project>/` instead of the accidental
