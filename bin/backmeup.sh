@@ -37,6 +37,21 @@ if [ -z "${BMU_CMDRSYNC}" ]; then
     exit 1
 fi;
 
+#Old (pre-bmug2) layout detection: the mirror used to live one level deeper
+#(sync/<project>/<project>). Running the fixed layout against it would archive
+#the whole old mirror into today's B- dir and re-transfer everything, so
+#refuse and point to the migration script instead. If the source project
+#really contains a same-named subdirectory we cannot tell the layouts apart;
+#that legitimate case also has ${l_BMU_TOBACKUP}/${l_BMU_PRJDIR} and passes.
+if [ -d "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}/${l_BMU_PRJDIR}" ] && \
+   [ ! -e "${l_BMU_TOBACKUP}/${l_BMU_PRJDIR}" ]; then
+    echo "ERROR: old bmu layout detected: ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}/${l_BMU_PRJDIR}"
+    echo "bmug2 mirrors the project directly in ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}."
+    echo "Migrate once (instant rename, no re-transfer):"
+    echo "  ${BMU_PATH}/backmeup.migrate.sh ${l_BMU_PRJDIR}"
+    exit 1
+fi;
+
 #Define a rsync backup dir. It is new at each time we run up to mydate granularity
 l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
 l_BMU_OPTBKUP=" --backup-dir=${l_BMU_DIRBKUP}"
@@ -46,7 +61,9 @@ l_BMU_OPTBKUP=" --backup-dir=${l_BMU_DIRBKUP}"
 #and the dir-exists checks below still tell whether anything was backed up.
 mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
 #
-${BMU_CMDRSYNC} ${BMU_OPTRSYNC} ${l_BMU_OPTBKUP} ${l_BMU_TOBACKUP} ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}
+#Trailing slash on the source: mirror the project content directly into
+#${BMU_DIRRSYNC}/<project> instead of the old nested <project>/<project>
+${BMU_CMDRSYNC} ${BMU_OPTRSYNC} ${l_BMU_OPTBKUP} ${l_BMU_TOBACKUP}/ ${BMU_DIRRSYNC}/${l_BMU_PRJDIR}
 #
 # Create List Files
 if [ -d ${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate} ]; then

@@ -64,6 +64,24 @@ What I propose is something between a backup, a time machine and close to versio
 
 # News
 
+## Fixed: double-nested mirror layout (migration required for old backups)
+
+The mirror now lives directly in `SYNC/<project>/` instead of the accidental
+`SYNC/<project>/<project>/` of the original bmu. New `B-<date>` snapshots are
+flatter too (`B-<date>/file` instead of `B-<date>/<project>/file`).
+
+**Compatibility:** running against an old-layout mirror would archive the
+whole old tree and re-transfer everything, so `backmeup.sh` detects the old
+layout and refuses. Migrate once per project with:
+
+    backmeup.migrate.sh <project>
+
+It is an instant same-filesystem rename that preserves mtimes: the next
+backup transfers nothing. Historical `B-<date>` snapshots are left untouched
+(they keep the extra level; search still finds everything in them). The
+migration script refuses ambiguous cases (a project legitimately containing
+a same-named subdirectory) instead of guessing.
+
 ## Fixed: indexing works again, "gnu or m?" resolved
 
 The old open question — GNU findutils vs mlocate — is now handled by capability

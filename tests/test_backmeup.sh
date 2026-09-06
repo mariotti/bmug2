@@ -71,28 +71,35 @@ testBackupRunsExitZero() {
 }
 
 testMirrorHasCurrentVersion() {
+    # bmug2 layout: the mirror lives directly in sync/<project>, without
+    # the old <project>/<project> double nesting
     assertEquals "hello v2 with different length" \
-        "`cat \"${SB}/sync/myproject/myproject/file1.txt\" 2>/dev/null`"
+        "`cat \"${SB}/sync/myproject/file1.txt\" 2>/dev/null`"
+}
+
+testMirrorIsNotDoubleNested() {
+    [ -d "${SB}/sync/myproject/myproject" ]
+    assertFalse "old double-nested layout was created" $?
 }
 
 testMirrorDropsDeletedFile() {
     # openrsync regression: with --backup active it ignores --delete and
     # the deleted file stays in the mirror forever
-    [ -e "${SB}/sync/myproject/myproject/sub/file2.txt" ]
+    [ -e "${SB}/sync/myproject/sub/file2.txt" ]
     assertFalse "deleted file still present in the mirror" $?
 }
 
 testChangedFileOldVersionArchived() {
     assertNotNull "no B-<date> backup dir was created" "${BKDIR}"
     assertEquals "hello v1" \
-        "`cat \"${BKDIR}/myproject/file1.txt\" 2>/dev/null`"
+        "`cat \"${BKDIR}/file1.txt\" 2>/dev/null`"
 }
 
 testDeletedFileArchived() {
     # rsync >= 3.4 regression: delete-phase make_backup failed with
     # "File exists" when the backup dir path had 2+ missing components
     assertEquals "doomed file" \
-        "`cat \"${BKDIR}/myproject/sub/file2.txt\" 2>/dev/null`"
+        "`cat \"${BKDIR}/sub/file2.txt\" 2>/dev/null`"
 }
 
 testFilelistCreated() {
@@ -130,17 +137,64 @@ testSearchFindsCurrentAndHistory() {
     "${SB}/bin/backmeup.updatedb.sh" > "${SB}/updatedb.log" 2>&1
     assertEquals "backmeup.updatedb.sh failed, see updatedb.log" 0 $?
     l_out=`"${SB}/bin/backmeup.locate.sh" file1 2>/dev/null`
-    echo "${l_out}" | grep -q "sync/myproject/myproject/file1.txt"
+    echo "${l_out}" | grep -q "sync/myproject/file1.txt"
     assertTrue "search misses the current version of file1" $?
-    echo "${l_out}" | grep -q "sync-BP/myproject/B-.*/myproject/file1.txt"
+    echo "${l_out}" | grep -q "sync-BP/myproject/B-.*/file1.txt"
     assertTrue "search misses the archived version of file1" $?
 }
 
 testSearchFindsDeletedFile() {
     [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
     "${SB}/bin/backmeup.locate.sh" file2 2>/dev/null \
-        | grep -q "sync-BP/myproject/B-.*/myproject/sub/file2.txt"
+        | grep -q "sync-BP/myproject/B-.*/sub/file2.txt"
     assertTrue "search misses the deleted (archived) file2" $?
+}
+
+#
+# old-layout compatibility: detection, migration, no re-transfer
+# --------------------------------------------------------------
+
+testOldLayoutRefusedAndMigrated() {
+    # build a fake old-layout mirror for a second project
+    l_src="${SHUNIT_TMPDIR}/bmu/src/oldproj"
+    mkdir -p "${l_src}/sub"
+    echo "old data" > "${l_src}/keep.txt"
+    echo "old deep" > "${l_src}/sub/deep.txt"
+    mkdir -p "${SB}/sync/oldproj"
+    cp -Rp "${l_src}" "${SB}/sync/oldproj/oldproj"
+
+    # 1. backmeup.sh must refuse, not churn the old mirror
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/oldrun.log" 2>&1
+    assertEquals "must refuse to run on an old-layout mirror" 1 $?
+    grep -q "old bmu layout detected" "${SB}/oldrun.log"
+    assertTrue "no old-layout explanation shown" $?
+    assertTrue "old mirror was modified by the refused run" \
+        "[ -f '${SB}/sync/oldproj/oldproj/keep.txt' ]"
+
+    # 2. migration is an instant rename to the new layout
+    "${SB}/bin/backmeup.migrate.sh" oldproj > "${SB}/migrate.log" 2>&1
+    assertEquals "migration failed, see migrate.log" 0 $?
+    assertTrue "[ -f '${SB}/sync/oldproj/keep.txt' ]"
+    [ -d "${SB}/sync/oldproj/oldproj" ]
+    assertFalse "nested dir still present after migration" $?
+
+    # 3. the next backup runs clean and re-transfers nothing
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/oldrun2.log" 2>&1
+    assertEquals "backup after migration failed" 0 $?
+    grep -q "keep.txt\|deep.txt" "${SB}/oldrun2.log"
+    assertFalse "files were re-transferred after migration" $?
+}
+
+testMigrateRefusesAmbiguousLayout() {
+    # a project dir with more than the nested mirror inside could be a
+    # new-layout project containing a same-named subdirectory: hands off
+    l_dir="${SB}/sync/ambiproj"
+    mkdir -p "${l_dir}/ambiproj"
+    echo x > "${l_dir}/extra.txt"
+    "${SB}/bin/backmeup.migrate.sh" ambiproj > "${SB}/ambi.log" 2>&1
+    assertEquals "must refuse ambiguous layout" 1 $?
+    assertTrue "ambiguous mirror was modified" \
+        "[ -f '${l_dir}/extra.txt' -a -d '${l_dir}/ambiproj' ]"
 }
 
 testUpdatedbFailsCleanlyWithoutUpdatedb() {
