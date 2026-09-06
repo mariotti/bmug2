@@ -1,9 +1,4 @@
 #!/bin/sh
-# See: http://stackoverflow.com/questions/20449707/using-travis-ci-for-testing-on-unix-shell-scripts
-
-testEquality() {
-	assertEquals 1 1
-}
-
-. ./tests/shunit2
-
+# CI entry point: run the bmu regression test suite.
+# (Kept under the historical name referenced by .travis.yml.)
+sh "`dirname \"$0\"`/tests/test_backmeup.sh"

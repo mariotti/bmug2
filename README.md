@@ -19,6 +19,15 @@ which is preserved unchanged. bmug2 starts from the last bmu state and fixes the
  - `updatedb`/`locate` (findutils) for indexing. On macOS: `brew install findutils`
    (provides `gupdatedb`/`glocate`).
 
+## Tests
+
+    sh tests/test_backmeup.sh
+
+Runs the regression suite (bundled shunit2): two real backup runs in a
+temporary sandbox, then asserts on the mirror, the archived old/deleted
+versions, the filelists, indexing and search. Index/search tests are
+skipped on machines without findutils.
+
 ## How it currently works: we want to improve this
 
  - install: run backmeup.install.sh
