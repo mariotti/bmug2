@@ -158,10 +158,14 @@ testUserJourneyEndToEnd() {
     "${l_bmu}/backmeup.updatedb.sh" > "${SHUNIT_TMPDIR}/journey/updatedb.log" 2>&1
     if [ -n "${BMU_CMDUPDATEDB}" ]; then
         assertEquals "updatedb failed, see updatedb.log" 0 $?
-        l_found=`"${l_bmu}/backmeup.locate.sh" report.pdf notes.txt 2>/dev/null`
-        echo "${l_found}" | grep -q "rsyncBackup/docs/reports/report.pdf"
+        # one pattern per call: multi-pattern locate semantics differ
+        # across implementations (GNU/mlocate/plocate), and every other
+        # test in this suite already sticks to the portable single form
+        "${l_bmu}/backmeup.locate.sh" report.pdf 2>/dev/null \
+            | grep -q "rsyncBackup/docs/reports/report.pdf"
         assertTrue "search misses the current report.pdf" $?
-        echo "${l_found}" | grep -q "rsyncBackup-BP/docs/B-.*/notes.txt"
+        "${l_bmu}/backmeup.locate.sh" notes.txt 2>/dev/null \
+            | grep -q "rsyncBackup-BP/docs/B-.*/notes.txt"
         assertTrue "search misses the deleted notes.txt in history" $?
     fi
 
