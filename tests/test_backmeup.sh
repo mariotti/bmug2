@@ -292,6 +292,66 @@ testUpdatedbFailsCleanlyWithoutUpdatedb() {
 }
 
 #
+# archive facility: compress old snapshots, keep them searchable, restore
+# ------------------------------------------------------------------------
+
+testArchiveSearchAndRestore() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/archproj"
+    mkdir -p "${l_src}/sub"
+    echo "arch v1" > "${l_src}/keep.txt"
+    echo "arch bye" > "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "arch v2" > "${l_src}/keep.txt"
+    rm "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    l_bk=`ls -d "${SB}/sync-BP/archproj"/B-*/ 2>/dev/null | head -1`
+    l_bk="${l_bk%/}"
+    assertNotNull "no snapshot created for archproj" "${l_bk}"
+    l_name=`basename "${l_bk}"`
+
+    # dry-run: reports but changes nothing
+    "${SB}/bin/backmeup.archive.sh" -n archproj 0 > "${SB}/arch-dry.log" 2>&1
+    assertEquals "archive dry-run failed" 0 $?
+    assertTrue "dry-run removed the snapshot dir" "[ -d '${l_bk}' ]"
+    [ -f "${l_bk}.tar.gz" ]
+    assertFalse "dry-run created a tarball" $?
+
+    # real archive, days=0 so every existing snapshot is "old"
+    "${SB}/bin/backmeup.archive.sh" archproj 0 > "${SB}/arch.log" 2>&1
+    assertEquals "archive failed, see arch.log" 0 $?
+    assertTrue "tarball missing after archive" "[ -f '${l_bk}.tar.gz' ]"
+    [ -d "${l_bk}" ]
+    assertFalse "snapshot dir still on disk after archive" $?
+    assertTrue "searchable filelist was lost" "[ -f '${l_bk}.filelist' ]"
+    tar -tzf "${l_bk}.tar.gz" | grep -q "sub/vanish.txt"
+    assertTrue "archived tar misses the deleted file" $?
+
+    # archived snapshots stay searchable via plain grep of the filelist,
+    # marked as archived - works even with no locate installed
+    "${SB}/bin/backmeup.locate.sh" vanish 2>/dev/null \
+        | grep -q "archproj/${l_name}/sub/vanish.txt (archived)"
+    assertTrue "archived file not found by backmeup.locate.sh" $?
+
+    # restore brings back the exact content and removes the tarball
+    "${SB}/bin/backmeup.unarchive.sh" archproj "${l_name}" > "${SB}/unarch.log" 2>&1
+    assertEquals "unarchive failed, see unarch.log" 0 $?
+    assertEquals "arch bye" "`cat \"${l_bk}/sub/vanish.txt\" 2>/dev/null`"
+    [ -f "${l_bk}.tar.gz" ]
+    assertFalse "tarball still present after restore" $?
+}
+
+testArchiveKeepsFreshSnapshots() {
+    # with the default age (no days argument) nothing here is old enough
+    "${SB}/bin/backmeup.archive.sh" archproj > "${SB}/arch-fresh.log" 2>&1
+    assertEquals "archive with default age failed" 0 $?
+    grep -q "No snapshots older than" "${SB}/arch-fresh.log"
+    assertTrue "fresh snapshots were considered for archiving" $?
+    l_count=`ls "${SB}/sync-BP/archproj"/B-*.tar.gz 2>/dev/null | wc -l`
+    assertEquals "a fresh snapshot was archived" 0 `expr ${l_count}`
+}
+
+#
 # load shunit2
 # ------------
 . "${TESTS_PATH}/shunit2"
