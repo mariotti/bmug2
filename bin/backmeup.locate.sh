@@ -18,8 +18,24 @@ BMU_PATH=${MY_PATH}
 . "${BMU_PATH}/backmeup.setup.sh"
 #
 #
-${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@"
-${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@"
+if [ -n "${BMU_CMDLOCATE}" ]; then
+    ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@"
+    ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@"
+fi;
+#
+# Archived snapshots (backmeup.archive.sh): their files are no longer on
+# disk for locate, but every archived snapshot keeps its .filelist. Grep
+# the filelists whose snapshot directory is gone - plain grep, so this
+# works with no locate installed at all.
+for l_fl in "${BMU_DIRBACKUPS}"/*/B-*.filelist; do
+    [ -f "${l_fl}" ] || continue
+    l_bdir="${l_fl%.filelist}"
+    [ -d "${l_bdir}" ] && continue
+    for l_pat in "$@"; do
+        grep -i -- "${l_pat}" "${l_fl}" | \
+            sed "s|^|${BMU_DIRBACKUPS}/|; s|\$| (archived)|"
+    done
+done
 #
 # NOTES
 #

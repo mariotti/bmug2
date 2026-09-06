@@ -38,6 +38,9 @@ skipped on machines without findutils.
  - search: run backmeup.locate.sh
  - status: run backmeup.status.sh for a per-project overview (last run,
    last archived change, snapshots, disk usage)
+ - archive: run backmeup.archive.sh <project> to compress snapshots older
+   than 180 days (or pass a day count) into .tar.gz; they stay searchable.
+   Restore one with backmeup.unarchive.sh <project> <snapshot>
 
 ## Target Requirements
 
@@ -62,9 +65,8 @@ What I propose is something between a backup, a time machine and close to versio
 
 ## Future directions
 
- - The first is indeed to make it stable and generally usable.
  - A GUI
- - An archive facility to compress very old data which will still include an indexing/search facility
+ - Content indexing (codesearch/zindex) on top of the filename index
 
 # News
 
