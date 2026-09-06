@@ -19,17 +19,17 @@ BMU_CONFIGURE_ROLLBACK=""
 #
 # Source BMU functions
 # --------------------
-. ${BMU_PATH}/backmeup.shellfunctions.sh 
+. "${BMU_PATH}/backmeup.shellfunctions.sh"
 #
 # SETUP
-if [ -f ${BMU_PATH}/backmeup.setup.sh ];
+if [ -f "${BMU_PATH}/backmeup.setup.sh" ];
 then
-    . ${BMU_PATH}/backmeup.setup.sh
+    . "${BMU_PATH}/backmeup.setup.sh"
     echo "Previous setup file. Using: ${BMU_PATH}/backmeup.setup.sh"
 else
-    . ${BMU_PATH}/backmeup.setup.sh.template
+    . "${BMU_PATH}/backmeup.setup.sh.template"
     echo "No previous setup file. Using template."
-fi    
+fi
 #
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
@@ -54,7 +54,7 @@ do
     fi
     bmuPromptyNexit "Shall I create the directory for you (y/N)?"
     export BMU_DIRRSYNC=${BMU_DIRRSYNC_TMP}
-    if bmuMkDir ${BMU_DIRRSYNC} "empty"; then
+    if bmuMkDir "${BMU_DIRRSYNC}" "empty"; then
 	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRRSYNC};"
 	break
     else
@@ -76,7 +76,7 @@ do
     fi
     bmuPromptyNexit "Shall I create the directory for you (y/N)?"
     export BMU_DIRBACKUPS=${BMU_DIRBACKUPS_TMP}
-    if bmuMkDir ${BMU_DIRBACKUPS} "empty"; then
+    if bmuMkDir "${BMU_DIRBACKUPS}" "empty"; then
 	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRBACKUPS};"
 	break
     else
@@ -99,7 +99,7 @@ do
     fi
     bmuPromptyNexit "Shall I create the directory for you (y/N)?"
     export BMU_DIRDBLOCATE=${BMU_DIRDBLOCATE_TMP}
-    if bmuMkDir ${BMU_DIRDBLOCATE} "empty"; then
+    if bmuMkDir "${BMU_DIRDBLOCATE}" "empty"; then
 	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRDBLOCATE};"
 	break
     else
@@ -141,7 +141,7 @@ do
     fi
     bmuPromptyNexit "Shall I create the directory for you (y/N)?"
     export BMU_INSTDIR=${BMU_INSTDIR_TMP}
-    if bmuMkDir ${BMU_INSTDIR} "empty"; then
+    if bmuMkDir "${BMU_INSTDIR}" "empty"; then
 	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_INSTDIR};"
 	break
     else
@@ -162,6 +162,24 @@ BMU_mydate=`date +%Y%m%d-%H%M%S`
 BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
 BMU_CMDFILTER='sed'
 BMU_UNAME=`uname`
+#
+# rsync detection (skip Apple's openrsync: it drops --delete with --backup)
+# Keep in sync with backmeup.setup.sh.template
+BMU_CMDRSYNC=""
+for l_bmu_rsync in rsync /opt/homebrew/bin/rsync /usr/local/bin/rsync /usr/bin/rsync; do
+    command -v "${l_bmu_rsync}" > /dev/null 2>&1 || continue
+    if "${l_bmu_rsync}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
+        continue
+    fi
+    BMU_CMDRSYNC="${l_bmu_rsync}"
+    break
+done
+if [ -z "${BMU_CMDRSYNC}" ]; then
+    echo "WARNING: no usable rsync found (only Apple openrsync?)."
+    echo "  backmeup.sh will refuse to run. Install one: brew install rsync"
+else
+    echo "usable rsync detected: ${BMU_CMDRSYNC}"
+fi;
 #
 # Index command detection (capability based, not uname based)
 # Keep in sync with backmeup.setup.sh.template
@@ -203,7 +221,7 @@ BMU_PARTINDEXDIR=${DIRRSYNC}/.locate.db.part
 #
 # WRITING THE SETUP FILE
 #-----------------------
-rm -rf ${MY_PATH}/backmeup.setup.sh.new
+rm -rf "${MY_PATH}/backmeup.setup.sh.new"
 for curvar in \
  BMU_DIRRSYNC \
  BMU_DIRBACKUPS \
@@ -216,6 +234,7 @@ for curvar in \
  BMU_DATEFRMT \
  BMU_mydate \
  BMU_OPTRSYNC \
+ BMU_CMDRSYNC \
  BMU_CMDUPDATEDB \
  BMU_UPDBOPT \
  BMU_CMDLOCATE \
@@ -226,12 +245,12 @@ for curvar in \
 do
     val=""
     bmuSetIndirectVar "val" "$curvar"
-    echo "${curvar}=\"$val\"" >> ${MY_PATH}/backmeup.setup.sh.new
+    echo "${curvar}=\"$val\"" >> "${MY_PATH}/backmeup.setup.sh.new"
 done
 #
-if [ -f ${MY_PATH}/backmeup.setup.sh ];
+if [ -f "${MY_PATH}/backmeup.setup.sh" ];
 then
-    cp ${MY_PATH}/backmeup.setup.sh ${MY_PATH}/backmeup.setup.sh.old
+    cp "${MY_PATH}/backmeup.setup.sh" "${MY_PATH}/backmeup.setup.sh.old"
 fi
-cp ${MY_PATH}/backmeup.setup.sh.new ${MY_PATH}/backmeup.setup.sh
+cp "${MY_PATH}/backmeup.setup.sh.new" "${MY_PATH}/backmeup.setup.sh"
 #

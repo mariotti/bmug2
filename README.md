@@ -66,9 +66,12 @@ What I propose is something between a backup, a time machine and close to versio
 
 ## Fixed: paths with spaces; CI moved to GitHub Actions
 
-All runtime scripts now quote their paths, so projects, backup
-destinations and file names containing spaces work (covered by a
-dedicated test). The dead Travis CI setup is replaced by a GitHub
+All scripts (runtime and the interactive install/configure) now quote
+their paths, so projects, backup destinations and file names containing
+spaces work (covered by a dedicated test). The configure script also
+detects and stores the usable rsync, and its directory creation works
+again (an old `"empy"` typo made the "empty" mkdir mode fall through
+to `mkdir` without `-p`). The dead Travis CI setup is replaced by a GitHub
 Actions workflow that runs the suite on Linux (rsync + plocate,
 exercising the mlocate-style updatedb dialect) and macOS (Homebrew
 rsync + findutils, exercising the GNU dialect).

@@ -13,14 +13,14 @@ bmuMkDir() {
     force=$2
     case ${force} in
 	"y" | "Y" | "yes" | "YES" | "Yes")
-	    mkdir -p $newdir; return $?
+	    mkdir -p "$newdir"; return $?
 	    ;;
-	"empy" | "EMPTY" | "Empty")
-	    mkdir -p $newdir
-	    [ "$(ls -A $newdir)" ] && return 1 || return 0
+	"empy" | "empty" | "EMPTY" | "Empty")
+	    mkdir -p "$newdir"
+	    [ "$(ls -A "$newdir")" ] && return 1 || return 0
 	    ;;
 	* | "n" | "N" | "no" | "NO" | "No")
-	    mkdir $newdir; return $?
+	    mkdir "$newdir"; return $?
 	    ;;
     esac
 }
@@ -55,7 +55,7 @@ bmuPromptyNexit() {
     msg="$1"
     echo "$msg"
     read -e val
-    if [ -z $val ]; then
+    if [ -z "$val" ]; then
 	echo "Exiting ..."
 	exit 1
     fi
@@ -103,50 +103,50 @@ bmuPromptValue() {
 
     #echo "debug Input >$1< >$2< >$3<"
     
-    if [ -z $val ]; then
+    if [ -z "$val" ]; then
 	bmuSetIndirectVar "val" "$storevar"
 	#echo "debug storevar: >$val<>$storevar<"
 	#echo "debug val >${val}<"
     fi
-    
-    export $storevar=$val
-    
+
+    export $storevar="$val"
+
     case $ttest in
         "-f" | "f" | "file" | "FILE" | "File")
-            if [ -z $val ]; then
+            if [ -z "$val" ]; then
                 echo "Input is empty for file test"
                 return 0
             fi
-            if [ ! -f $val ]; then
+            if [ ! -f "$val" ]; then
                 echo "Input is not a file"
                 return 0
             fi
             ;;
         "-d" | "d" | "dir" | "DIR" | "Dir" | "directory" | "DIRECTORY" | "Directory")
-            if [ -z $val ]; then
+            if [ -z "$val" ]; then
                 echo "Input is empty for dir test"
                 return 0
             fi
-            if [ ! -d $val ]; then
+            if [ ! -d "$val" ]; then
                 echo "Input is not a dir"
                 return 0
             fi
             ;;
         "-n" | "n" | "notzero" | "not-zero" | "NotZero" | "NOTZERO")
-            if [ -z $val ]; then
+            if [ -z "$val" ]; then
                 echo "Input is empty"
                 return 0
             fi
             ;;
         "-z" | "z" | "zero" | "zerolen" | "Zero" | "ZERO")
-            if [ ! -z $val ]; then
+            if [ ! -z "$val" ]; then
                 echo "Input is not empty"
                 return 0
             fi
             ;;
         *)
     esac
-    export $storevar=$val
+    export $storevar="$val"
     return 1
 }
 
