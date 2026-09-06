@@ -1,7 +1,9 @@
 # bmug2 manual
 
 Full command reference for bmug2. For what the project is and why, see
-the [README](../README.md).
+the [README](../README.md). For real usage recipes (multiple projects,
+excluding files, cron, upgrading an old bmu disk), see
+[EXAMPLES.md](EXAMPLES.md).
 
 ## Contents
 

@@ -54,7 +54,9 @@ cd bmug2
 ```
 
 Full command reference, directory layout, and troubleshooting:
-**[docs/MANUAL.md](docs/MANUAL.md)**.
+**[docs/MANUAL.md](docs/MANUAL.md)**. Real usage recipes — multiple
+projects, excluding files, external drives, cron, upgrading an old bmu
+disk: **[docs/EXAMPLES.md](docs/EXAMPLES.md)**.
 
 ## Design goals
 
