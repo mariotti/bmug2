@@ -20,9 +20,16 @@ BMU_PATH=${MY_PATH}
 # Set up the current date
 mydate=`date +%Y%m%d-%H%M%S`
 
-# Parsing the one option
+# Parsing options
+l_BMU_DRYRUN=""
+if [ "$1" = "-n" ] || [ "$1" = "--dry-run" ]; then
+    l_BMU_DRYRUN="--dry-run"
+    shift
+fi;
 if [ -z "$1" ]; then
-    echo "please give a dir name."
+    echo "usage: backmeup.sh [-n|--dry-run] <dir>"
+    echo "  -n, --dry-run   show what would be copied, deleted and archived"
+    echo "                  without changing anything"
     exit 1;
 fi;
 #Remove trailing / It creates a project directory
@@ -58,12 +65,22 @@ l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
 #"File exists" when the --backup-dir path has 2+ missing components. With the
 #project dir in place only B-${mydate} is missing, which rsync handles fine,
 #and the dir-exists checks below still tell whether anything was backed up.
-mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
+if [ -z "${l_BMU_DRYRUN}" ]; then
+    mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
+fi;
 #
 #Trailing slash on the source: mirror the project content directly into
 #${BMU_DIRRSYNC}/<project> instead of the old nested <project>/<project>
-${BMU_CMDRSYNC} ${BMU_OPTRSYNC} --backup-dir="${l_BMU_DIRBKUP}" \
+${BMU_CMDRSYNC} ${l_BMU_DRYRUN} ${BMU_OPTRSYNC} --backup-dir="${l_BMU_DIRBKUP}" \
     "${l_BMU_TOBACKUP}/" "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
+#
+#In a dry run rsync only reported what it would do: skip the filelist and
+#the indexing, which key off a backup dir that was never created.
+if [ -n "${l_BMU_DRYRUN}" ]; then
+    echo ""
+    echo "DRY RUN: no files were copied, deleted, archived or indexed."
+    exit 0
+fi;
 #
 # Create List Files
 if [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then

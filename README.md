@@ -31,6 +31,8 @@ skipped on machines without findutils.
 ## How it currently works: we want to improve this
 
  - install: run backmeup.install.sh
+ - preview: run backmeup.sh --dry-run (or -n) to see what a backup would
+   copy, delete and archive, without changing anything
  - backup: run backmeup.sh as many times as you need or set it on a cron job
  - index: run backmeup.updatedb.sh any now and then or setup a nightly cron job
  - search: run backmeup.locate.sh

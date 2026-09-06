@@ -197,6 +197,39 @@ testMigrateRefusesAmbiguousLayout() {
         "[ -f '${l_dir}/extra.txt' -a -d '${l_dir}/ambiproj' ]"
 }
 
+testDryRunChangesNothing() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/dryproj"
+    mkdir -p "${l_src}"
+    echo "dry data" > "${l_src}/d1.txt"
+
+    # phase 1: dry-run on a project never backed up -> nothing created
+    "${SB}/bin/backmeup.sh" --dry-run "${l_src}" > "${SB}/dry1.log" 2>&1
+    assertEquals "dry-run failed, see dry1.log" 0 $?
+    grep -q "d1.txt" "${SB}/dry1.log"
+    assertTrue "dry-run does not preview the transfer" $?
+    grep -q "DRY RUN" "${SB}/dry1.log"
+    assertTrue "dry-run does not announce itself" $?
+    [ -e "${SB}/sync/dryproj" ]
+    assertFalse "dry-run created the mirror" $?
+    [ -e "${SB}/sync-BP/dryproj" ]
+    assertFalse "dry-run created the backup project dir" $?
+    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.dryproj.* 2>/dev/null | wc -l`
+    assertEquals "dry-run created an index" 0 `expr ${l_count}`
+
+    # phase 2: real backup, delete a file, dry-run (-n alias) must preview
+    # the deletion but leave the mirror untouched
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    rm "${l_src}/d1.txt"
+    "${SB}/bin/backmeup.sh" -n "${l_src}" > "${SB}/dry2.log" 2>&1
+    assertEquals "-n dry-run failed, see dry2.log" 0 $?
+    grep -q "deleting d1.txt" "${SB}/dry2.log"
+    assertTrue "dry-run does not preview the deletion" $?
+    assertTrue "dry-run removed the file from the mirror" \
+        "[ -f '${SB}/sync/dryproj/d1.txt' ]"
+    # restore so the deletion cannot leak into later tests
+    echo "dry data" > "${l_src}/d1.txt"
+}
+
 testWorksWithSpacesInPaths() {
     # everything spaced: install dir, sync dirs, project name, file names
     l_sb="${SHUNIT_TMPDIR}/bmu sp"
