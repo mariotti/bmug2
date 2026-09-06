@@ -158,7 +158,9 @@ rsync`.
 
 `backmeup.configure.sh` just asks for a directory; it can be anywhere
 your system can write to, including a mounted external disk or a
-network share:
+network share. For the fuller picture — cloud-sync folders like
+Dropbox/Google Drive, and why S3 needs a different approach entirely —
+see [DESTINATIONS.md](DESTINATIONS.md).
 
 ```
 Please type the SYNC directory: (/Users/alex/tmp/rsyncBackup)

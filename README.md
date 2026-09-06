@@ -56,7 +56,9 @@ cd bmug2
 Full command reference, directory layout, and troubleshooting:
 **[docs/MANUAL.md](docs/MANUAL.md)**. Real usage recipes — multiple
 projects, excluding files, external drives, cron, upgrading an old bmu
-disk: **[docs/EXAMPLES.md](docs/EXAMPLES.md)**.
+disk: **[docs/EXAMPLES.md](docs/EXAMPLES.md)**. Choosing where SYNC and
+HISTORY actually live — local disks, Dropbox/Google Drive, and why S3
+needs a different approach: **[docs/DESTINATIONS.md](docs/DESTINATIONS.md)**.
 
 ## Design goals
 
