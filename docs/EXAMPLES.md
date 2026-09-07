@@ -24,7 +24,7 @@ a cron job. The project name is just the directory's own name.
 ```
 $ backmeup.sh ~/Documents
 sending incremental file list
-created directory /Users/alex/tmp/rsyncBackup/Documents
+created directory /Users/alex/Backups/rsyncBackup/Documents
 ./
 scratch.txt
 reports/
@@ -60,7 +60,7 @@ whatever you actually want backed up:
 $ backmeup.sh ~/Documents
 $ backmeup.sh ~/Pictures
 sending incremental file list
-created directory /Users/alex/tmp/rsyncBackup/Pictures
+created directory /Users/alex/Backups/rsyncBackup/Pictures
 ./
 2026-holiday/
 2026-holiday/beach.jpg
@@ -70,7 +70,7 @@ sent 275 bytes  received 138 bytes  826.00 bytes/sec
 total size is 38  speedup is 0.09
 $ backmeup.sh ~/code/hobby-site
 sending incremental file list
-created directory /Users/alex/tmp/rsyncBackup/hobby-site
+created directory /Users/alex/Backups/rsyncBackup/hobby-site
 ./
 .git/
 .git/HEAD
@@ -86,8 +86,8 @@ total size is 36  speedup is 0.08
 ```
 $ backmeup.status.sh
 BMU backup status
-  SYNC:    /Users/alex/tmp/rsyncBackup
-  HISTORY: /Users/alex/tmp/rsyncBackup-BP
+  SYNC:    /Users/alex/Backups/rsyncBackup
+  HISTORY: /Users/alex/Backups/rsyncBackup-BP
 
 PROJECT                  LAST RUN             LAST CHANGE           SNAPSHOTS   MIRROR  HISTORY
 Documents                2026-09-07 00:54:57  2026-09-07 00:54:57           1     4.0K      16K
@@ -138,9 +138,9 @@ sending incremental file list
 
 sent 160 bytes  received 28 bytes  376.00 bytes/sec
 total size is 36  speedup is 0.19
-$ find ~/tmp/rsyncBackup/hobby-site -type f
-/Users/alex/tmp/rsyncBackup/hobby-site/.git/HEAD
-/Users/alex/tmp/rsyncBackup/hobby-site/src/app.py
+$ find ~/Backups/rsyncBackup/hobby-site -type f
+/Users/alex/Backups/rsyncBackup/hobby-site/.git/HEAD
+/Users/alex/Backups/rsyncBackup/hobby-site/src/app.py
 ```
 
 Only `.git/HEAD` and `src/app.py` made it in. Don't remove `-av
@@ -163,7 +163,7 @@ Dropbox/Google Drive, and why S3 needs a different approach entirely —
 see [DESTINATIONS.md](DESTINATIONS.md).
 
 ```
-Please type the SYNC directory: (/Users/alex/tmp/rsyncBackup)
+Please type the SYNC directory: (/Users/alex/Backups/rsyncBackup)
 /Volumes/BackupDrive/rsyncBackup
 Please type the BackUp directory: (/Volumes/BackupDrive/rsyncBackup-BP)
 
@@ -225,7 +225,7 @@ new, or after editing `BMU_OPTRSYNC`:
 ```
 $ backmeup.sh --dry-run ~/Documents
 sending incremental file list
-created directory /Users/alex/tmp/rsyncBackup/Documents
+created directory /Users/alex/Backups/rsyncBackup/Documents
 ./
 scratch.txt
 reports/
@@ -247,7 +247,7 @@ was in:
 ```
 $ backmeup.updatedb.sh
 $ backmeup.locate.sh scratch.txt
-/Users/alex/tmp/rsyncBackup-BP/Documents/B-20260907-005457/scratch.txt
+/Users/alex/Backups/rsyncBackup-BP/Documents/B-20260907-005457/scratch.txt
 ```
 
 That's the deleted `scratch.txt` from the "edit and delete" example
@@ -261,8 +261,8 @@ run it after setting up cron, or any time you're unsure:
 ```
 $ backmeup.status.sh
 BMU backup status
-  SYNC:    /Users/alex/tmp/rsyncBackup
-  HISTORY: /Users/alex/tmp/rsyncBackup-BP
+  SYNC:    /Users/alex/Backups/rsyncBackup
+  HISTORY: /Users/alex/Backups/rsyncBackup-BP
 
 PROJECT                  LAST RUN             LAST CHANGE           SNAPSHOTS   MIRROR  HISTORY
 Documents                2026-09-07 00:54:57  2026-09-07 00:54:57           1     4.0K      16K
@@ -278,7 +278,7 @@ Archiving Documents snapshots older than 0 days (before 20260907-005516)
 archived B-20260907-005457 -> B-20260907-005457.tar.gz (4 entries verified)
 1 snapshot(s) archived.
 $ backmeup.locate.sh scratch.txt
-/Users/alex/tmp/rsyncBackup-BP/Documents/B-20260907-005457/scratch.txt (archived)
+/Users/alex/Backups/rsyncBackup-BP/Documents/B-20260907-005457/scratch.txt (archived)
 ```
 
 (`0` days is used here only to make an example snapshot archivable
@@ -304,8 +304,8 @@ backup:
 
 ```
 $ backmeup.sh ~/OldStuff
-ERROR: old bmu layout detected: /Users/alex/tmp/rsyncBackup/OldStuff/OldStuff
-bmug2 mirrors the project directly in /Users/alex/tmp/rsyncBackup/OldStuff.
+ERROR: old bmu layout detected: /Users/alex/Backups/rsyncBackup/OldStuff/OldStuff
+bmug2 mirrors the project directly in /Users/alex/Backups/rsyncBackup/OldStuff.
 Migrate once (instant rename, no re-transfer):
   /Users/alex/usr/bmu/bin/backmeup.migrate.sh OldStuff
 ```
@@ -315,7 +315,7 @@ rename, effectively instant regardless of how large the project is:
 
 ```
 $ backmeup.migrate.sh OldStuff
-Migrated: /Users/alex/tmp/rsyncBackup/OldStuff now mirrors the project directly.
+Migrated: /Users/alex/Backups/rsyncBackup/OldStuff now mirrors the project directly.
 The next backmeup.sh run should transfer (almost) nothing.
 $ backmeup.sh ~/OldStuff
 sending incremental file list

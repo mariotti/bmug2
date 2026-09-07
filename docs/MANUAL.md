@@ -26,9 +26,9 @@ excluding files, cron, upgrading an old bmu disk), see
 Three directories, set during configuration (defaults shown):
 
 ```
-~/tmp/rsyncBackup            SYNC: the current mirror, one subdir per project
-~/tmp/rsyncBackup-BP         HISTORY: old and deleted versions, per project
-~/tmp/rsyncBackup/.locate.dir   the search index
+~/Backups/rsyncBackup              SYNC: the current mirror, one subdir per project
+~/Backups/rsyncBackup-BP           HISTORY: old and deleted versions, per project
+~/Backups/rsyncBackup/.locate.dir  the search index
 ```
 
 Inside SYNC, a project is a plain mirror of its source directory:
@@ -66,15 +66,25 @@ you can `tar`/`grep`/`ls` into by hand).
 ## Install and configure
 
 ```
-./bin/backmeup.install.sh
+./install.sh
 ```
+
+(a thin wrapper around `bin/backmeup.install.sh`, kept at the repo
+root so a fresh clone doesn't need to know where it actually lives)
 
 Copies the scripts to an install directory and runs
 `backmeup.configure.sh`, which asks for the SYNC, HISTORY, index and
 install directories, offers to create them, and detects a usable
-`rsync` and `updatedb`/`locate`. Re-run `backmeup.configure.sh` alone
-later to change settings — it preserves the previous
-`backmeup.setup.sh` as `backmeup.setup.sh.old`.
+`rsync` and `updatedb`/`locate`. Along the way it explains what each
+question is for: SYNC/HISTORY/IndexDB are your **data** and should
+point at your actual backup destination (external drive, NAS, etc. —
+see [DESTINATIONS.md](DESTINATIONS.md)), while the two install-location
+questions are about where the **program** itself lives and should stay
+on your regular system disk. The generated `backmeup.setup.sh` also
+carries a short comment explaining what it is, since it's meant to be
+sourced by the other scripts, not run directly. Re-run
+`backmeup.configure.sh` alone later to change settings — it preserves
+the previous `backmeup.setup.sh` as `backmeup.setup.sh.old`.
 
 Note: the install directory is *not* currently added to `PATH` (a
 leftover `BMU_LINKTO` setting from the original bmu is defined but not
