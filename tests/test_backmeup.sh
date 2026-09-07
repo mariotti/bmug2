@@ -237,6 +237,32 @@ testInstallAbortsCleanlyWhenConfigureFails() {
         "[ -f '${l_checkout}/backmeup.setup.sh' ]"
 }
 
+testConfigureRejectsNonAbsoluteDirectoryAnswer() {
+    # Real corruption found in the wild: a user copy-pasted a shown
+    # default including its surrounding parens, typing "(/some/path" as
+    # their answer. The old behavior accepted it as if it were "not a dir
+    # yet", offered to create it, and mkdir -p happily created a literal
+    # directory named "(/some/path" (interpreted as relative, since it
+    # doesn't start with /) - then persisted that garbage into
+    # backmeup.setup.sh forever, corrupting every later run that reads it
+    # back. A plain relative path has the same problem and would also
+    # silently break later under cron (different working directory).
+    l_home="${SHUNIT_TMPDIR}/rejectbadpathhome"
+    l_checkout="${SHUNIT_TMPDIR}/rejectbadpathcheckout"
+    mkdir -p "${l_home}" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # Answer the SYNC directory prompt with a corrupted-looking value.
+    printf '(/Users/nobody/rsyncBackup\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/rejectbadpath-install.log" 2>&1
+    assertEquals "must reject a non-absolute directory answer" 1 $?
+    grep -q "must be an absolute path" "${SHUNIT_TMPDIR}/rejectbadpath-install.log"
+    assertTrue "no clear message rejecting the bad path" $?
+    assertFalse "backmeup.setup.sh written despite the rejected answer" \
+        "[ -f '${l_checkout}/backmeup.setup.sh' ]"
+}
+
 #
 # rsync detection and core backup behaviour
 # -----------------------------------------
