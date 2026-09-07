@@ -11,7 +11,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .models import ArchivePreviewResult, BackupPreviewResult
+from .models import (
+    ArchivePreviewResult,
+    ArchiveResult,
+    BackupPreviewResult,
+    BackupResult,
+    MigrateResult,
+    UnarchiveResult,
+)
 
 
 def run_backup_preview(bin_dir: Path, path: str) -> BackupPreviewResult:
@@ -47,6 +54,81 @@ def run_archive_preview(bin_dir: Path, project: str, days: int = 180) -> Archive
         project=project,
         days=days,
         message="Dry run completed." if success else f"Dry run failed (exit {result.returncode}).",
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def run_backup(bin_dir: Path, path: str) -> BackupResult:
+    project = Path(path).name
+    result = subprocess.run(
+        [str(bin_dir / "backmeup.sh"), path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    success = result.returncode == 0
+    return BackupResult(
+        success=success,
+        exit_code=result.returncode,
+        project=project,
+        message="Backup completed." if success else f"Backup failed (exit {result.returncode}).",
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def run_archive(bin_dir: Path, project: str, days: int = 180) -> ArchiveResult:
+    result = subprocess.run(
+        [str(bin_dir / "backmeup.archive.sh"), project, str(days)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    success = result.returncode == 0
+    return ArchiveResult(
+        success=success,
+        exit_code=result.returncode,
+        project=project,
+        days=days,
+        message="Archive completed." if success else f"Archive failed (exit {result.returncode}).",
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def run_unarchive(bin_dir: Path, project: str, snapshot: str) -> UnarchiveResult:
+    result = subprocess.run(
+        [str(bin_dir / "backmeup.unarchive.sh"), project, snapshot],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    success = result.returncode == 0
+    return UnarchiveResult(
+        success=success,
+        exit_code=result.returncode,
+        project=project,
+        snapshot=snapshot,
+        message="Restore completed." if success else f"Restore failed (exit {result.returncode}).",
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def run_migrate(bin_dir: Path, project: str) -> MigrateResult:
+    result = subprocess.run(
+        [str(bin_dir / "backmeup.migrate.sh"), project],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    success = result.returncode == 0
+    return MigrateResult(
+        success=success,
+        exit_code=result.returncode,
+        project=project,
+        message="Migration completed." if success else f"Migration failed (exit {result.returncode}).",
         stdout=result.stdout,
         stderr=result.stderr,
     )

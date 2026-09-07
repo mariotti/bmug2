@@ -1,9 +1,12 @@
-"""MCP server exposing bmug2's read-only operations as tools.
+"""MCP server exposing bmug2's operations as tools.
 
-v1 (this file) ships only read-only tools: status, locate, and dry-run
-previews of backup/archive. Mutating tools (real backup, archive,
-unarchive, migrate) land in a follow-up once these have seen real use -
-see docs/CONTRIBUTING.md and the project README for the rest of bmug2.
+Read-only tools (status, locate, dry-run previews) carry
+read_only_hint=true and never touch disk. Mutating tools (real backup,
+archive, unarchive, migrate) carry destructive_hint=true so a
+well-behaved client gates them behind confirmation; their descriptions
+open with "MUTATING:" too, since not every client surfaces annotations
+in its own consent UI yet. The server itself never enforces
+preview-before-mutate sequencing - that's the client's job.
 """
 
 from __future__ import annotations
@@ -16,9 +19,22 @@ from mcp.types import ToolAnnotations
 
 from . import commands, locate, status
 from .config import Config, ConfigError, load_config, resolve_bin_dir
-from .models import ArchivePreviewResult, BackupPreviewResult, LocateResult, StatusResult
+from .models import (
+    ArchivePreviewResult,
+    ArchiveResult,
+    BackupPreviewResult,
+    BackupResult,
+    LocateResult,
+    MigrateResult,
+    StatusResult,
+    UnarchiveResult,
+)
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True)
+_MUTATING_BACKUP = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
+_MUTATING_ARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True)
+_MUTATING_UNARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
+_MUTATING_MIGRATE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
 
 
 def create_server(config: Config) -> MCPServer:
@@ -47,6 +63,35 @@ def create_server(config: Config) -> MCPServer:
         """Read-only. Preview which snapshots of `project` older than
         `days` (default 180) would be archived, without changing anything."""
         return commands.run_archive_preview(config.bin_dir, project, days)
+
+    @server.tool(annotations=_MUTATING_BACKUP)
+    def bmug2_backup(path: str) -> BackupResult:
+        """MUTATING: backs up `path`, copying new/changed files into the
+        mirror and moving changed/deleted files into a dated snapshot.
+        Consider calling bmug2_backup_preview first."""
+        return commands.run_backup(config.bin_dir, path)
+
+    @server.tool(annotations=_MUTATING_ARCHIVE)
+    def bmug2_archive(project: str, days: int = 180) -> ArchiveResult:
+        """MUTATING: compresses `project`'s snapshots older than `days`
+        (default 180) into .tar.gz files, verified against their contents
+        before the original directory is removed. Consider calling
+        bmug2_archive_preview first."""
+        return commands.run_archive(config.bin_dir, project, days)
+
+    @server.tool(annotations=_MUTATING_UNARCHIVE)
+    def bmug2_unarchive(project: str, snapshot: str) -> UnarchiveResult:
+        """MUTATING: restores an archived snapshot of `project` back to a
+        live directory and removes the archive. `snapshot` may be given
+        with or without its "B-" prefix."""
+        return commands.run_unarchive(config.bin_dir, project, snapshot)
+
+    @server.tool(annotations=_MUTATING_MIGRATE)
+    def bmug2_migrate(project: str) -> MigrateResult:
+        """MUTATING: one-time fix for a project still in the pre-bmug2
+        nested mirror layout. An instant rename; refuses if there's
+        nothing to migrate or the layout is ambiguous."""
+        return commands.run_migrate(config.bin_dir, project)
 
     return server
 

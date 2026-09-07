@@ -71,9 +71,11 @@ needs a different approach: **[docs/DESTINATIONS.md](docs/DESTINATIONS.md)**.
 ## MCP server
 
 [`mcp/`](mcp/README.md) exposes bmug2 as tools an LLM assistant can call
-— "what's my backup status", "find that file", "preview backing this
-up" as natural language. v1 ships read-only tools only (status, search,
-and dry-run previews); mutating tools are a deliberate follow-up.
+— "back this up", "find that file", "what's my backup status" as
+natural language. Read-only tools (status, search, dry-run previews)
+and mutating ones (backup, archive, unarchive, migrate) are both
+implemented; the mutating tools are clearly flagged as such in both
+their MCP annotations and their descriptions.
 
 ## Future directions
 

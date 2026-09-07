@@ -4,14 +4,12 @@ An MCP (Model Context Protocol) server exposing [bmug2](../README.md) as
 tools for an LLM assistant — "back this up", "find that file", "what's
 my backup status" as natural language instead of shell commands.
 
-## Status: v1, read-only tools only
+## Status
 
-This first version exposes only tools that cannot change anything on
-disk: `bmug2_status`, `bmug2_locate`, `bmug2_backup_preview`, and
-`bmug2_archive_preview` (the last two run bmug2's own `--dry-run` mode).
-Real backup/archive/unarchive/migrate tools are a deliberate follow-up —
-see `docs/CONTRIBUTING.md` in the main repo for why, and the plan behind
-this component in general.
+All 8 tools are implemented: 4 read-only, 4 mutating. Not yet exposed
+at all: `backmeup.install.sh`/`configure.sh` (interactive-only by
+design) and `backmeup.updatedb.sh` (a multi-minute reindex doesn't fit
+a blocking tool call) — see Non-goals below.
 
 ## Requirements
 
@@ -62,9 +60,34 @@ current need for a network-exposed server.
 | `bmug2_locate` | No | Search current mirror, history, and archived snapshots for one or more patterns. |
 | `bmug2_backup_preview` | No | Preview (`--dry-run`) what backing up a directory would do. |
 | `bmug2_archive_preview` | No | Preview (`--dry-run`) which snapshots of a project would be archived. |
+| `bmug2_backup` | **Yes** | Back up a directory: copy new/changed files, move changed/deleted files into a dated snapshot. |
+| `bmug2_archive` | **Yes** | Compress a project's old snapshots into `.tar.gz`, verified before the original directory is removed. |
+| `bmug2_unarchive` | **Yes** | Restore an archived snapshot back to a live directory. |
+| `bmug2_migrate` | **Yes** | One-time fix for a project still in the pre-bmug2 nested layout. |
 
-All four are marked read-only in their MCP tool annotations, so a
-well-behaved client shouldn't gate them behind a confirmation prompt.
+The read-only tools carry `readOnlyHint: true` in their MCP annotations
+so a well-behaved client can call them without a confirmation prompt.
+The mutating tools carry `destructiveHint: true` — and, since not every
+client surfaces annotations in its own consent UI yet, their
+descriptions also open with `"MUTATING:"` in plain text.
+
+## Safety
+
+- These tools genuinely change files on your backup destination.
+  `bmug2_backup`/`bmug2_archive` have preview counterparts
+  (`bmug2_backup_preview`/`bmug2_archive_preview`) that run bmug2's own
+  `--dry-run` — an assistant (or you) can and should use those first.
+- The server never enforces preview-before-mutate sequencing itself;
+  that's your MCP client's permission system's job. If your client
+  doesn't gate destructive tools by default, treat every mutating call
+  here the same way you'd treat typing the equivalent shell command.
+- `bmug2_unarchive` refuses to overwrite an existing snapshot
+  directory, and `bmug2_migrate` refuses ambiguous or already-flat
+  layouts — both mirror the underlying scripts' own safety checks
+  exactly (see `docs/MANUAL.md`), the MCP layer adds no new leniency.
+- Every tool call returns the real `success`/`exit_code` from the
+  underlying script, never a result silently coerced to look
+  successful — a failed operation is reported as failed.
 
 ## Development
 
