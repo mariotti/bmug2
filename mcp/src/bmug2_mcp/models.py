@@ -1,0 +1,85 @@
+"""Pydantic models for MCP tool inputs/outputs.
+
+Returned directly from tool functions - MCPServer serializes a BaseModel
+return value to the tool call's structured content automatically.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class StatusProject(BaseModel):
+    name: str
+    last_run: str | None = Field(
+        description="ISO 8601 timestamp of the last successful backmeup.sh run, "
+        "or null if this project was never backed up through it."
+    )
+    last_change: str | None = Field(
+        description="ISO 8601 timestamp of the newest snapshot, or null if no "
+        "run has ever changed anything for this project."
+    )
+    snapshot_count: int = Field(description="Number of B-<date> snapshot directories.")
+    mirror_size_bytes: int = Field(
+        description="Total apparent size of the live mirror, in bytes. Note: "
+        "this is a plain sum of file sizes, not `du`'s disk-block usage, so "
+        "it can differ slightly from `du -sh` for the same directory."
+    )
+    history_size_bytes: int | None = Field(
+        description="Total apparent size of this project's history, in bytes, "
+        "or null if it has no history directory yet."
+    )
+    old_layout: bool = Field(
+        description="True if this project's mirror is still in the pre-bmug2 "
+        "nested layout and needs backmeup.migrate.sh."
+    )
+
+
+class StatusResult(BaseModel):
+    sync_dir: str
+    history_dir: str
+    projects: list[StatusProject]
+
+
+class LocateHit(BaseModel):
+    path: str
+    source: Literal["index", "archived_filelist"] = Field(
+        description="'index' = found via the locate database; "
+        "'archived_filelist' = found by grepping a kept snapshot filelist "
+        "after archiving. The same path can legitimately appear from both "
+        "sources for different snapshot generations - not deduplicated."
+    )
+
+
+class LocateCounts(BaseModel):
+    index: int
+    archived_filelist: int
+
+
+class LocateResult(BaseModel):
+    patterns: list[str]
+    indexed: bool = Field(
+        description="Whether a locate binary was available at all. When "
+        "false, results can only come from the archived-filelist fallback."
+    )
+    counts: LocateCounts
+    results: list[LocateHit]
+
+
+class CommandResult(BaseModel):
+    success: bool
+    exit_code: int
+    message: str
+    stdout: str
+    stderr: str
+
+
+class BackupPreviewResult(CommandResult):
+    project: str
+
+
+class ArchivePreviewResult(CommandResult):
+    project: str
+    days: int

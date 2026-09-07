@@ -68,6 +68,13 @@ needs a different approach: **[docs/DESTINATIONS.md](docs/DESTINATIONS.md)**.
  - Indexed search that still works with nothing but `grep`, even
    without `locate` installed or the backup disk offline.
 
+## MCP server
+
+[`mcp/`](mcp/README.md) exposes bmug2 as tools an LLM assistant can call
+— "what's my backup status", "find that file", "preview backing this
+up" as natural language. v1 ships read-only tools only (status, search,
+and dry-run previews); mutating tools are a deliberate follow-up.
+
 ## Future directions
 
  - A GUI
