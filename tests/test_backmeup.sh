@@ -320,7 +320,7 @@ testConfigureExplainsDestinationsAndDefaultIsNotNamedTmp() {
         > "${SHUNIT_TMPDIR}/tips-install.log" 2>&1
     assertEquals "install failed, see tips-install.log" 0 $?
 
-    grep -q "actual backup destination" "${SHUNIT_TMPDIR}/tips-install.log"
+    grep -q "readily available" "${SHUNIT_TMPDIR}/tips-install.log"
     assertTrue "no tip explaining where the data directories should live" $?
     grep -q "PROGRAM itself lives, not your data" "${SHUNIT_TMPDIR}/tips-install.log"
     assertTrue "no tip distinguishing the install dir from the data dirs" $?
