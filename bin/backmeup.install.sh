@@ -34,20 +34,26 @@ echo "You are installing BMU from: ${BMU_PATH}"
 #
 echo "${BMU_PATH}/backmeup.configure.sh will run and ask you few questions for installation."
 "${BMU_PATH}/backmeup.configure.sh"
+if [ $? -ne 0 ]; then
+    echo "ERROR: configuration did not complete, installation aborted."
+    exit 1
+fi;
 #
-# Copy command files
-cp -rp "${BMU_PATH}/" "${BMU_INSTDIR}/bin"
-#
-# Reread setup file
+# Reread the setup file configure.sh just wrote. It ran as a subprocess,
+# so whatever it interactively chose (including a custom BMU_INSTDIR)
+# never propagates back to this shell on its own - without this re-read,
+# the cp below would silently use the stale default sourced at the top
+# of this script instead of what the user actually just chose.
 if [ -f "${BMU_PATH}/backmeup.setup.sh" ];
 then
     . "${BMU_PATH}/backmeup.setup.sh"
-    echo "Reread existing setup file. All fine"
 else
-    . "${BMU_PATH}/backmeup.setup.sh.template"
-    echo "ERROR: Reading template. Something went wrong!"
-fi
-
+    echo "ERROR: backmeup.setup.sh was not created by configure.sh."
+    exit 1
+fi;
+#
+# Copy command files
+cp -rp "${BMU_PATH}/" "${BMU_INSTDIR}/bin"
 #
 # Create check file
 touch "${BMU_DIRRSYNC}/.bmumeta"

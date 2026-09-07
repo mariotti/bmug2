@@ -186,6 +186,57 @@ testUserJourneyEndToEnd() {
     assertTrue "snapshot not restored to a directory" "[ -d '${l_snap}' ]"
 }
 
+testInstallOffersToCreateCustomInstpath() {
+    # The base INSTALL directory prompt used to be the only one of the
+    # four directory prompts that didn't offer to create a missing
+    # directory - it just printed "not existing installation path." and
+    # exited, which only went unnoticed because every other test (and the
+    # journey test above) pre-creates the default path or accepts an
+    # already-existing default. Typing a custom, nonexistent path is the
+    # scenario that actually exposed it.
+    l_home="${SHUNIT_TMPDIR}/custominstpathhome"
+    l_checkout="${SHUNIT_TMPDIR}/custominstpathcheckout"
+    mkdir -p "${l_home}" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # Answers: SYNC (default) -> y; BACKUP (default) -> y; INDEX
+    # (default) -> y; base INSTALL path -> a custom, nonexistent path,
+    # then y to create it; INSTALL dir (default under that custom
+    # path) -> y to create.
+    printf '\ny\n\ny\n\ny\n%s\ny\n\ny\n' "${l_home}/custom-instpath" | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/custominstpath-install.log" 2>&1
+    assertEquals "install with a custom INSTPATH failed, see custominstpath-install.log" \
+        0 $?
+    assertTrue "custom INSTPATH was not created" \
+        "[ -d '${l_home}/custom-instpath' ]"
+    assertTrue "install did not create backmeup.sh under the custom INSTPATH" \
+        "[ -x '${l_home}/custom-instpath/bmu/bin/backmeup.sh' ]"
+}
+
+testInstallAbortsCleanlyWhenConfigureFails() {
+    # configure.sh can fail for any reason (declining to create a
+    # directory, in this case); install.sh must abort immediately rather
+    # than pressing on into `cp` with stale defaults from the template
+    # and only noticing something was wrong several steps later.
+    l_home="${SHUNIT_TMPDIR}/abortcleanlyhome"
+    l_checkout="${SHUNIT_TMPDIR}/abortcleanlycheckout"
+    mkdir -p "${l_home}" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # Decline to create the SYNC directory (default, doesn't exist).
+    printf '\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/abortcleanly-install.log" 2>&1
+    assertEquals "install must fail when configure.sh fails" 1 $?
+    grep -q "configuration did not complete" "${SHUNIT_TMPDIR}/abortcleanly-install.log"
+    assertTrue "no clear abort message when configure.sh fails" $?
+    grep -q "^cp:" "${SHUNIT_TMPDIR}/abortcleanly-install.log"
+    assertFalse "install attempted cp after configure.sh failed" $?
+    assertFalse "backmeup.setup.sh written despite the failed configure run" \
+        "[ -f '${l_checkout}/backmeup.setup.sh' ]"
+}
+
 #
 # rsync detection and core backup behaviour
 # -----------------------------------------

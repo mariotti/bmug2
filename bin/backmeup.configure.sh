@@ -122,8 +122,19 @@ echo "IndexDB Directory is: ${BMU_DIRDBLOCATE}"
 BMU_INSTPATH_TMP=${BMU_INSTPATH}
 while bmuPromptValue "Please type the base INSTALL directory: (${BMU_INSTPATH_TMP})" "BMU_INSTPATH_TMP" "d"
 do
-    echo "not existing installation path."
-    exit 1
+    echo "not valid or not existing installation path: ${BMU_INSTPATH_TMP}"
+    if [ -z "$BMU_INSTPATH_TMP" ] ; then
+	echo "Empty input value: Exiting the configuration ..."
+	exit 1
+    fi
+    bmuPromptyNexit "Shall I create the directory for you (y/N)?"
+    export BMU_INSTPATH=${BMU_INSTPATH_TMP}
+    if bmuMkDir "${BMU_INSTPATH}" "empty"; then
+	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_INSTPATH};"
+	break
+    else
+	echo "cannot create the directory."
+    fi
 done
 BMU_INSTPATH=${BMU_INSTPATH_TMP}
 echo "Install on: ${BMU_INSTPATH}"
@@ -131,7 +142,11 @@ echo "Install on: ${BMU_INSTPATH}"
 
 #
 # BMU_INSTDIR
-BMU_INSTDIR_TMP=${BMU_INSTDIR}
+# Recompute the suggested default from the just-chosen BMU_INSTPATH,
+# rather than reusing the value the template originally expanded before
+# BMU_INSTPATH was overridden - otherwise a custom install path is
+# silently ignored here and the old default location is suggested again.
+BMU_INSTDIR_TMP="${BMU_INSTPATH}${BMU_INSTDIRNAME}"
 while bmuPromptValue "Please type the BMU install directory: (${BMU_INSTDIR_TMP})" "BMU_INSTDIR_TMP" "d"
 do
     echo "not valid or not existing BMU install directory: ${BMU_INSTDIR_TMP}"
