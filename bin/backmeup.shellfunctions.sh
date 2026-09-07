@@ -121,6 +121,11 @@ bmuPromptValue() {
     msg="$1"
     storevar="$2"
     ttest="$3"
+    # Capture the caller's original default before anything below can
+    # overwrite $storevar - the dir-test retry loop further down needs
+    # the true, pristine default to fall back to on a blank re-answer,
+    # not whatever (possibly invalid) value the first read just stored.
+    bmuSetIndirectVar "origval" "$storevar"
     echo "$msg"
     read val
 
@@ -146,26 +151,36 @@ bmuPromptValue() {
             fi
             ;;
         "-d" | "d" | "dir" | "DIR" | "Dir" | "directory" | "DIRECTORY" | "Directory")
-            if [ -z "$val" ]; then
-                echo "Input is empty for dir test"
-                return 0
-            fi
-            case "$val" in
-                /*) ;;
-                *)
-                    # Hard failure, not a re-prompt: the caller's own loop
-                    # always offers to mkdir -p whatever comes back here,
-                    # and a bad value like "(/some/path" (a real case seen
-                    # from a copy-paste of a shown default that included
-                    # its surrounding parens) or a plain relative path
-                    # would otherwise get silently created and persisted
-                    # into backmeup.setup.sh - and a relative path would
-                    # also break later whenever the scripts run from a
-                    # different working directory, e.g. under cron.
-                    echo "Input must be an absolute path (starting with /): $val"
-                    exit 1
-                    ;;
-            esac
+            # Loop here (re-prompt), rather than returning to the caller
+            # or exiting: the caller's own while-loop always offers to
+            # mkdir -p whatever comes back as non-empty, so a bad value
+            # like "(/some/path" (a real case seen from a copy-paste of a
+            # shown default that included its surrounding parens) or a
+            # plain relative path - or, seen in the wild, a stray "y"
+            # typed out of habit from the previous prompt's y/N answer -
+            # must never reach that flow, since a relative path would also
+            # break later whenever the scripts run from a different
+            # working directory, e.g. under cron. Exiting outright on a
+            # single bad keystroke is needlessly harsh: it aborted the
+            # whole multi-question configure run, forcing a full restart.
+            while : ; do
+                if [ -z "$val" ]; then
+                    echo "Input is empty for dir test"
+                    return 0
+                fi
+                case "$val" in
+                    /*) break ;;
+                    *)
+                        echo "Input must be an absolute path (starting with /): $val"
+                        echo "$msg"
+                        read val
+                        if [ -z "$val" ]; then
+                            val="$origval"
+                        fi
+                        export $storevar="$val"
+                        ;;
+                esac
+            done
             if [ ! -d "$val" ]; then
                 echo "Input is not a dir"
                 return 0
