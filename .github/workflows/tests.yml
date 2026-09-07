@@ -26,3 +26,31 @@ jobs:
         run: brew install rsync findutils
       - name: Run test suite
         run: sh tests/test_backmeup.sh
+
+  mcp-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate
+      - name: Install bmug2-mcp
+        run: pip install -e "./mcp[dev]"
+      - name: Run test suite
+        run: pytest mcp/tests
+
+  mcp-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: brew install rsync findutils
+      - name: Install bmug2-mcp
+        run: pip install -e "./mcp[dev]"
+      - name: Run test suite
+        run: pytest mcp/tests

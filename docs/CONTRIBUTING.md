@@ -32,6 +32,15 @@ things faked are a stub `rsync`/`updatedb`/`tar` on `PATH` for testing
 failure paths that are impractical to trigger for real (e.g. a full
 disk), and scripted stdin for the interactive install/configure flow.
 
+`mcp/` (the MCP server exposing bmug2 as LLM-callable tools) has its
+own `pytest` suite under `mcp/tests`, following the same philosophy:
+real sandboxes built through the actual `backmeup.install.sh`/
+`configure.sh` (not the shell suite's sed-on-template shortcut, which
+leaves unresolved shell syntax the Python config parser correctly
+rejects), real subprocess calls, and a small subset that drives the
+actual MCP stdio protocol rather than calling Python functions
+directly. Run it with `pip install -e "./mcp[dev]" && pytest mcp/tests`.
+
 ### What the suite covers
 
 One end-to-end test (`testUserJourneyEndToEnd`) drives a real install
