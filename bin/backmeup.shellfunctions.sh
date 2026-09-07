@@ -128,6 +128,13 @@ bmuPromptValue() {
     bmuSetIndirectVar "origval" "$storevar"
     echo "$msg"
     read val
+    # POSIX `read` returns nonzero on real end-of-input (distinct from a
+    # blank line, which is empty $val but a zero exit) - the "-n"/notzero
+    # test below has no default to fall back to, so without this a caller
+    # looping on it (e.g. a required free-text answer, first exercised by
+    # backmeup.configure.sh's replication prompt) would spin forever once
+    # stdin runs out, exactly as a scripted/non-interactive run can.
+    l_bmu_read_rc=$?
 
     #echo "debug Input >$1< >$2< >$3<"
     
@@ -188,6 +195,10 @@ bmuPromptValue() {
             ;;
         "-n" | "n" | "notzero" | "not-zero" | "NotZero" | "NOTZERO")
             if [ -z "$val" ]; then
+                if [ ${l_bmu_read_rc} -ne 0 ]; then
+                    echo "ERROR: no input received, exiting."
+                    exit 1
+                fi
                 echo "Input is empty"
                 return 0
             fi

@@ -258,6 +258,41 @@ fi;
 BMU_MAININDEXDIR=${DIRRSYNC}
 BMU_PARTINDEXDIR=${DIRRSYNC}/.locate.db.part
 #
+# OFF-SITE REPLICATION (optional)
+# --------------------------------
+# A separate hop on top of the local SYNC/HISTORY versioning above: copy
+# the whole tree to wherever the actual backup disk is (external drive,
+# NAS, cloud) - see docs/DESTINATIONS.md. Opt-in, skipped entirely if
+# rclone isn't installed; re-run backmeup.configure.sh later to enable
+# it once rclone is available.
+echo ""
+echo "Optional: bmug2 can automate copying SYNC/HISTORY to an off-site"
+echo "destination (S3, Google Drive, a remote host, etc.) via rclone,"
+echo "on top of the local versioning above - see docs/DESTINATIONS.md"
+echo "for the full picture."
+echo ""
+BMU_CMDREPLICATE=""
+BMU_REPLICATE_REMOTE_SYNC=""
+BMU_REPLICATE_REMOTE_BACKUPS=""
+if ! command -v rclone > /dev/null 2>&1; then
+    echo "No rclone detected - skipping replication setup."
+    echo "  Install it later (e.g. brew/apt install rclone) and re-run"
+    echo "  backmeup.configure.sh to enable this."
+elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
+    BMU_CMDREPLICATE="rclone sync"
+    while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
+    do
+        echo "Empty input: replication needs a destination."
+    done
+    while bmuPromptValue "Please type the remote BackUp destination (e.g. remote:bucket/path-BP):" "BMU_REPLICATE_REMOTE_BACKUPS" "n"
+    do
+        echo "Empty input: replication needs a destination."
+    done
+    echo "Off-site replication configured. Run backmeup.replicate.sh to sync."
+else
+    echo "Skipped. Re-run backmeup.configure.sh later to enable it."
+fi
+#
 # WRITING THE SETUP FILE
 #-----------------------
 rm -rf "${MY_PATH}/backmeup.setup.sh.new"
@@ -286,7 +321,10 @@ for curvar in \
  BMU_CMDFILTER \
  BMU_UNAME \
  BMU_MAININDEXDIR \
- BMU_PARTINDEXDIR;
+ BMU_PARTINDEXDIR \
+ BMU_CMDREPLICATE \
+ BMU_REPLICATE_REMOTE_SYNC \
+ BMU_REPLICATE_REMOTE_BACKUPS;
 do
     val=""
     bmuSetIndirectVar "val" "$curvar"

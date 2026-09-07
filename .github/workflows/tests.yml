@@ -11,8 +11,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install dependencies
         # plocate provides the mlocate-style updatedb/locate dialect,
-        # exercising the non-GNU branch of the capability detection
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate
+        # exercising the non-GNU branch of the capability detection;
+        # rclone exercises backmeup.replicate.sh for real
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate rclone
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 
@@ -21,9 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install dependencies
-        # real rsync (Apple ships openrsync) and GNU findutils
-        # (gupdatedb/glocate), exercising the GNU branch
-        run: brew install rsync findutils
+        # real rsync (Apple ships openrsync), GNU findutils
+        # (gupdatedb/glocate), and rclone for backmeup.replicate.sh
+        run: brew install rsync findutils rclone
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 

@@ -113,4 +113,15 @@ fi;
 # backup search when the backup disk is off-line.
 BMU_MAININDEXDIR=${BMU_DIRRSYNC}
 BMU_PARTINDEXDIR=${BMU_DIRRSYNC}/.locate.db.part
+#
+# Off-site replication (optional)
+# --------------------------------
+# BMU_CMDREPLICATE: the sync tool + base flags, e.g. "rclone sync".
+#                    Empty means replication is not configured;
+#                    backmeup.replicate.sh refuses to run.
+# BMU_REPLICATE_REMOTE_SYNC/_BACKUPS: destination for each tree, e.g.
+#                    "remote:bucket/path". Set by backmeup.configure.sh.
+BMU_CMDREPLICATE=""
+BMU_REPLICATE_REMOTE_SYNC=""
+BMU_REPLICATE_REMOTE_BACKUPS=""
 
