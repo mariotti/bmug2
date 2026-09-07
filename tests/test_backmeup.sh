@@ -263,6 +263,46 @@ testConfigureRejectsNonAbsoluteDirectoryAnswer() {
         "[ -f '${l_checkout}/backmeup.setup.sh' ]"
 }
 
+testInstallCopiesOnlyRealFilesNoHousekeepingCruft() {
+    # configure.sh's own write-out leaves a backmeup.setup.sh.old backup
+    # of the previous config in the SOURCE checkout by design (run it
+    # twice to actually produce one) - install.sh copying the whole
+    # source directory used to bring .old (and .template, and any stray
+    # hand-made backup file) along into the installed copy too, none of
+    # which have any purpose there. Also checks the new explanatory
+    # header lands in the generated setup.sh, answering the "why can't I
+    # just run this file" confusion directly in the file itself.
+    l_home="${SHUNIT_TMPDIR}/cleaninstallhome"
+    l_checkout="${SHUNIT_TMPDIR}/cleaninstallcheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    # a stray hand-made backup, the kind a manual edit can leave behind
+    echo "leftover" > "${l_checkout}/backmeup.setup.sh.bak"
+
+    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    assertEquals "first install failed" 0 $?
+    # reconfigure once more so backmeup.setup.sh.old actually gets created
+    printf '\n\n\n\n\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.configure.sh" > /dev/null 2>&1
+    assertTrue "expected backmeup.setup.sh.old to exist after reconfiguring" \
+        "[ -f '${l_checkout}/backmeup.setup.sh.old' ]"
+    assertFalse "backmeup.setup.sh.new left behind after configure.sh finished" \
+        "[ -f '${l_checkout}/backmeup.setup.sh.new' ]"
+
+    l_bmu="${l_home}/usr/bmu/bin"
+    assertTrue "install did not create backmeup.sh" "[ -x '${l_bmu}/backmeup.sh' ]"
+    assertTrue "install did not copy the live setup file" \
+        "[ -f '${l_bmu}/backmeup.setup.sh' ]"
+    assertFalse "install copied backmeup.setup.sh.old into the install dir" \
+        "[ -f '${l_bmu}/backmeup.setup.sh.old' ]"
+    assertFalse "install copied a stray .bak file into the install dir" \
+        "[ -f '${l_bmu}/backmeup.setup.sh.bak' ]"
+
+    grep -q "do not run this file directly" "${l_bmu}/backmeup.setup.sh"
+    assertTrue "generated setup.sh is missing the explanatory header" $?
+}
+
 #
 # rsync detection and core backup behaviour
 # -----------------------------------------

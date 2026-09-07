@@ -52,8 +52,15 @@ else
     exit 1
 fi;
 #
-# Copy command files
-cp -rp "${BMU_PATH}/" "${BMU_INSTDIR}/bin"
+# Copy command files. Only the real *.sh scripts, the resolved
+# backmeup.setup.sh (which also ends in .sh), and the template (kept in
+# case the installed setup.sh is ever deleted and configure.sh needs a
+# starting point) - not backmeup.setup.sh.old (configure.sh's own backup
+# of the previous config) or any stray backup file a hand edit might
+# have left lying around. Those have no purpose in a fresh install;
+# copying the whole source directory used to bring them along regardless.
+mkdir -p "${BMU_INSTDIR}/bin"
+cp -p "${BMU_PATH}"/*.sh "${BMU_PATH}"/*.template "${BMU_INSTDIR}/bin/"
 #
 # Create check file
 touch "${BMU_DIRRSYNC}/.bmumeta"
