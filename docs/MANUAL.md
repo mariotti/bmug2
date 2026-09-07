@@ -18,6 +18,7 @@ excluding files, cron, upgrading an old bmu disk), see
    - [backmeup.updatedb.sh](#backmeupupdatedbsh)
    - [backmeup.archive.sh](#backmeuparchivesh)
    - [backmeup.unarchive.sh](#backmeupunarchivesh)
+   - [backmeup.replicate.sh](#backmeupreplicatesh)
    - [backmeup.migrate.sh](#backmeupmigratesh)
  - [Troubleshooting](#troubleshooting)
 
@@ -76,11 +77,15 @@ Copies the scripts to an install directory and runs
 `backmeup.configure.sh`, which asks for the SYNC, HISTORY, index and
 install directories, offers to create them, and detects a usable
 `rsync` and `updatedb`/`locate`. Along the way it explains what each
-question is for: SYNC/HISTORY/IndexDB are your **data** and should
-point at your actual backup destination (external drive, NAS, etc. —
-see [DESTINATIONS.md](DESTINATIONS.md)), while the two install-location
-questions are about where the **program** itself lives and should stay
-on your regular system disk. The generated `backmeup.setup.sh` also
+question is for: SYNC/HISTORY/IndexDB are your **data**, and should
+live somewhere safe from casual deletion — but SYNC and IndexDB in
+particular are meant to stay readily available, so a local disk (even
+the internal one) is often the right call, not necessarily an external
+drive or NAS. An off-site copy is a separate replication step layered
+on top, not a replacement destination for these — see
+[DESTINATIONS.md](DESTINATIONS.md). The two install-location questions
+are a different thing entirely: where the **program** itself lives,
+which should stay on your regular system disk. The generated `backmeup.setup.sh` also
 carries a short comment explaining what it is, since it's meant to be
 sourced by the other scripts, not run directly. Re-run
 `backmeup.configure.sh` alone later to change settings — it preserves
@@ -101,6 +106,10 @@ line in your rc file) to point at the new location — this one-time
 recheck isn't automatic. A leftover `BMU_LINKTO` setting from the
 original bmu is still defined but unused; `backmeup_shrc` is the
 supported way to get bmug2 onto `PATH` now.
+
+If `rclone` is installed, configuration also offers (optional, y/N) to
+set up off-site replication — see
+[backmeup.replicate.sh](#backmeupreplicatesh).
 
 ## Commands
 
@@ -187,6 +196,26 @@ snapshot name with or without its `B-` prefix) back into
 `HISTORY/<project>/`, then removes the tarball. Refuses to overwrite an
 existing snapshot directory.
 
+### backmeup.replicate.sh
+
+```
+backmeup.replicate.sh [-n|--dry-run]
+```
+
+Copies the whole SYNC and HISTORY trees to an off-site destination via
+`rclone sync` — the actual backup disk (external drive, NAS, cloud;
+see [DESTINATIONS.md](DESTINATIONS.md)), layered on top of the local
+versioning above, not a replacement for it. Run it as often as you can
+tolerate losing — the gap between replication runs is how much work a
+local-disk failure could cost, not a fixed "nightly is enough" default.
+
+`-n`/`--dry-run` previews what would be copied without changing the
+destination.
+
+Refuses to run (exit 1) when:
+ - replication hasn't been configured — re-run `backmeup.configure.sh`
+   (only offered if `rclone` is installed)
+
 ### backmeup.migrate.sh
 
 ```
@@ -222,6 +251,10 @@ installed; `brew install rsync` (or your distro's real rsync package).
 **`WARNING: no updatedb found, skipping indexing`** — backups still
 work; install findutils to enable fast indexed search, or rely on
 `backmeup.locate.sh`'s filelist fallback.
+
+**`ERROR: replication is not configured`** — re-run
+`backmeup.configure.sh` and accept the off-site replication prompt
+(needs `rclone` installed first if it wasn't offered).
 
 **A deleted file isn't in the mirror after `--delete`, but is it in
 history?** — check `HISTORY/<project>/B-<date>/` for the most recent
