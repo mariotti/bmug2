@@ -83,3 +83,21 @@ class BackupPreviewResult(CommandResult):
 class ArchivePreviewResult(CommandResult):
     project: str
     days: int
+
+
+class BackupResult(CommandResult):
+    project: str
+
+
+class ArchiveResult(CommandResult):
+    project: str
+    days: int
+
+
+class UnarchiveResult(CommandResult):
+    project: str
+    snapshot: str
+
+
+class MigrateResult(CommandResult):
+    project: str
