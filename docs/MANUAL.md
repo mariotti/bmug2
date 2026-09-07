@@ -18,6 +18,7 @@ excluding files, cron, upgrading an old bmu disk), see
    - [backmeup.updatedb.sh](#backmeupupdatedbsh)
    - [backmeup.archive.sh](#backmeuparchivesh)
    - [backmeup.unarchive.sh](#backmeupunarchivesh)
+   - [backmeup.replicate.sh](#backmeupreplicatesh)
    - [backmeup.migrate.sh](#backmeupmigratesh)
  - [Troubleshooting](#troubleshooting)
 
@@ -106,6 +107,10 @@ recheck isn't automatic. A leftover `BMU_LINKTO` setting from the
 original bmu is still defined but unused; `backmeup_shrc` is the
 supported way to get bmug2 onto `PATH` now.
 
+If `rclone` is installed, configuration also offers (optional, y/N) to
+set up off-site replication — see
+[backmeup.replicate.sh](#backmeupreplicatesh).
+
 ## Commands
 
 ### backmeup.sh
@@ -191,6 +196,26 @@ snapshot name with or without its `B-` prefix) back into
 `HISTORY/<project>/`, then removes the tarball. Refuses to overwrite an
 existing snapshot directory.
 
+### backmeup.replicate.sh
+
+```
+backmeup.replicate.sh [-n|--dry-run]
+```
+
+Copies the whole SYNC and HISTORY trees to an off-site destination via
+`rclone sync` — the actual backup disk (external drive, NAS, cloud;
+see [DESTINATIONS.md](DESTINATIONS.md)), layered on top of the local
+versioning above, not a replacement for it. Run it as often as you can
+tolerate losing — the gap between replication runs is how much work a
+local-disk failure could cost, not a fixed "nightly is enough" default.
+
+`-n`/`--dry-run` previews what would be copied without changing the
+destination.
+
+Refuses to run (exit 1) when:
+ - replication hasn't been configured — re-run `backmeup.configure.sh`
+   (only offered if `rclone` is installed)
+
 ### backmeup.migrate.sh
 
 ```
@@ -226,6 +251,10 @@ installed; `brew install rsync` (or your distro's real rsync package).
 **`WARNING: no updatedb found, skipping indexing`** — backups still
 work; install findutils to enable fast indexed search, or rely on
 `backmeup.locate.sh`'s filelist fallback.
+
+**`ERROR: replication is not configured`** — re-run
+`backmeup.configure.sh` and accept the off-site replication prompt
+(needs `rclone` installed first if it wasn't offered).
 
 **A deleted file isn't in the mirror after `--delete`, but is it in
 history?** — check `HISTORY/<project>/B-<date>/` for the most recent

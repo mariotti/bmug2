@@ -380,7 +380,7 @@ testBackmeupShrcGeneratedIdempotentPath() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     l_bmu="${l_home}/usr/bmu"
     assertTrue "backmeup_shrc was not generated" "[ -f '${l_bmu}/backmeup_shrc' ]"
@@ -400,7 +400,7 @@ testInstallOffersRcIntegrationAndAppendsOnce() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcappend-install.log" 2>&1
     assertEquals "install failed, see rcappend-install.log" 0 $?
@@ -422,7 +422,7 @@ testInstallRcIntegrationDeclineDoesNotFailInstall() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     assertEquals "declining rc integration must not fail the install" 0 $?
     unset SHELL
@@ -440,11 +440,11 @@ testInstallRcIntegrationIdempotentOnRerun() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     # second run: all directories already exist (blank accepts default),
-    # answer y again to the rc prompt too
-    printf '\n\n\n\n\ny\n' | \
+    # decline replication again, answer y again to the rc prompt too
+    printf '\n\n\n\n\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcrerun-install.log" 2>&1
     assertEquals "second install run failed" 0 $?
@@ -455,6 +455,47 @@ testInstallRcIntegrationIdempotentOnRerun() {
     assertEquals "rc line must still appear exactly once after rerun" 1 `expr ${l_count}`
     grep -q "already present" "${SHUNIT_TMPDIR}/rcrerun-install.log"
     assertTrue "rerun did not report the rc line as already present" $?
+}
+
+testConfigureOffersReplicationSetupAndPersistsIt() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/replicatesetuphome"
+    l_checkout="${SHUNIT_TMPDIR}/replicatesetupcheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\n\ny\ny\nremote:bucket/sync\nremote:bucket/sync-BP\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/replicatesetup-install.log" 2>&1
+    assertEquals "install failed, see replicatesetup-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_CMDREPLICATE="rclone sync"' "${l_setup}"
+    assertTrue "replication command was not persisted" $?
+    grep -q 'BMU_REPLICATE_REMOTE_SYNC="remote:bucket/sync"' "${l_setup}"
+    assertTrue "remote SYNC destination was not persisted" $?
+    grep -q 'BMU_REPLICATE_REMOTE_BACKUPS="remote:bucket/sync-BP"' "${l_setup}"
+    assertTrue "remote BackUp destination was not persisted" $?
+}
+
+testConfigureSkipsReplicationSetupWhenDeclined() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/replicatedeclinehome"
+    l_checkout="${SHUNIT_TMPDIR}/replicatedeclinecheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/replicatedecline-install.log" 2>&1
+    assertEquals "install failed, see replicatedecline-install.log" 0 $?
+
+    grep -q 'BMU_CMDREPLICATE=""' "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    assertTrue "replication was configured despite declining" $?
 }
 
 #
@@ -828,6 +869,66 @@ testUpdatedbFailsCleanlyWithoutUpdatedb() {
     assertEquals "must fail without an updatedb" 1 $?
     grep -q "ERROR" "${l_dir}/run.log"
     assertTrue "no ERROR message shown to the user" $?
+}
+
+#
+# off-site replication: copy SYNC/HISTORY to a remote (rclone) on top of
+# the local versioning already covered above
+# --------------------------------------------------------------------
+
+testReplicateFailsCleanlyWhenNotConfigured() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-noreplicate"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "must fail without replication configured" 1 $?
+    grep -q "ERROR" "${l_dir}/run.log"
+    assertTrue "no ERROR message shown to the user" $?
+}
+
+testReplicateSyncsSyncAndHistoryToLocalStandInRemote() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-real"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-real-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-real-remote-bp"
+    rm -rf "${l_dir}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    {
+        echo "BMU_CMDREPLICATE=\"rclone sync\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "replicate failed, see run.log" 0 $?
+    grep -q "Replication complete" "${l_dir}/run.log"
+    assertTrue "replicate did not announce completion" $?
+
+    assertEquals "hello v2 with different length" \
+        "`cat \"${l_remotesync}/myproject/file1.txt\" 2>/dev/null`"
+    l_bkfile=`ls "${l_remotebp}/myproject"/B-*/sub/file2.txt 2>/dev/null | head -1`
+    assertEquals "doomed file" "`cat \"${l_bkfile}\" 2>/dev/null`"
+}
+
+testReplicateDryRunChangesNothing() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-dry"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-dry-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-dry-remote-bp"
+    rm -rf "${l_dir}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    {
+        echo "BMU_CMDREPLICATE=\"rclone sync\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" --dry-run > "${l_dir}/run.log" 2>&1
+    assertEquals "dry-run replicate failed, see run.log" 0 $?
+    grep -q "DRY RUN" "${l_dir}/run.log"
+    assertTrue "dry-run did not announce itself" $?
+    l_count=`find "${l_remotesync}" "${l_remotebp}" -type f | wc -l | tr -d ' '`
+    assertEquals "dry-run copied real files to the stand-in remote" 0 "${l_count}"
 }
 
 #

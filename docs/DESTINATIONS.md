@@ -126,6 +126,12 @@ purpose-built sync tool does that hop, and it's good at it in a way a
 FUSE mount isn't — because it's transferring finished files once, not
 simulating a live filesystem underneath rsync's rename-heavy workload.
 
+[`backmeup.replicate.sh`](MANUAL.md#backmeupreplicatesh) automates
+exactly this `rclone sync` hop for you (offered during
+`backmeup.configure.sh` if `rclone` is installed) — the manual recipe
+below still works as-is if you want finer control, a different tool, or
+a backend it doesn't wire in.
+
 Verified for real (standing in for a cloud remote with a second local
 directory — the command is identical against a real remote, only the
 destination argument changes):
@@ -160,7 +166,9 @@ generally want from an off-site *copy* of the backup rather than an
 ever-growing pile.
 
 A cron layout that puts this together — backmeup runs first, the cloud
-replication only sees a finished, consistent tree:
+replication only sees a finished, consistent tree (or use
+[`backmeup.replicate.sh`](MANUAL.md#backmeupreplicatesh) in place of
+the two `rclone sync` lines, if you configured it):
 
 ```
 0  2  *  *  *   /Users/alex/usr/bmu/bin/backmeup.sh /Users/alex/Documents
@@ -168,6 +176,12 @@ replication only sees a finished, consistent tree:
 0  3  *  *  *   rclone sync /Users/alex/Backups/rsyncBackup remote:my-bucket/rsyncBackup
 5  3  *  *  *   rclone sync /Users/alex/Backups/rsyncBackup-BP remote:my-bucket/rsyncBackup-BP
 ```
+
+Once a day is the minimum, not a recommendation: the gap between
+replication runs is how much work a local-disk failure could cost, so
+if a day of `Documents` changes is worth losing sleep over, run
+`backmeup.sh` and `backmeup.replicate.sh` several times a day instead —
+both are cheap incremental syncs when little has changed.
 
 One more reason this pairs well with
 [`backmeup.archive.sh`](EXAMPLES.md#housekeeping-status-and-archiving-old-snapshots):
