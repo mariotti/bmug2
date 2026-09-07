@@ -131,7 +131,7 @@ directory — the command is identical against a real remote, only the
 destination argument changes):
 
 ```
-$ rclone sync /Users/alex/tmp/rsyncBackup remote:my-bucket/rsyncBackup --progress
+$ rclone sync /Users/alex/Backups/rsyncBackup remote:my-bucket/rsyncBackup --progress
 Transferred:   	        446 B / 446 B, 100%, 0 B/s, ETA -
 Checks:                 0 / 0, -, Listed 20
 Transferred:           10 / 10, 100%
@@ -142,8 +142,8 @@ Elapsed time:         0.0s
 Run it again after a real bmug2 backup and only the changed file moves:
 
 ```
-$ echo "changed again" >> ~/tmp/rsyncBackup/Documents/reports/summary.txt
-$ rclone sync /Users/alex/tmp/rsyncBackup remote:my-bucket/rsyncBackup
+$ echo "changed again" >> ~/Backups/rsyncBackup/Documents/reports/summary.txt
+$ rclone sync /Users/alex/Backups/rsyncBackup remote:my-bucket/rsyncBackup
 ```
 
 `aws s3 sync` does the same job directly against S3 without `rclone` in
@@ -151,8 +151,8 @@ the middle, if you're already using the AWS CLI (flag names confirmed
 against `aws s3 sync help` from a real install):
 
 ```
-aws s3 sync ~/tmp/rsyncBackup s3://my-bucket/rsyncBackup --delete
-aws s3 sync ~/tmp/rsyncBackup-BP s3://my-bucket/rsyncBackup-BP --delete
+aws s3 sync ~/Backups/rsyncBackup s3://my-bucket/rsyncBackup --delete
+aws s3 sync ~/Backups/rsyncBackup-BP s3://my-bucket/rsyncBackup-BP --delete
 ```
 
 `--delete` mirrors deletions on the replica too, matching what you'd
@@ -165,8 +165,8 @@ replication only sees a finished, consistent tree:
 ```
 0  2  *  *  *   /Users/alex/usr/bmu/bin/backmeup.sh /Users/alex/Documents
 30 2  *  *  *   /Users/alex/usr/bmu/bin/backmeup.updatedb.sh
-0  3  *  *  *   rclone sync /Users/alex/tmp/rsyncBackup remote:my-bucket/rsyncBackup
-5  3  *  *  *   rclone sync /Users/alex/tmp/rsyncBackup-BP remote:my-bucket/rsyncBackup-BP
+0  3  *  *  *   rclone sync /Users/alex/Backups/rsyncBackup remote:my-bucket/rsyncBackup
+5  3  *  *  *   rclone sync /Users/alex/Backups/rsyncBackup-BP remote:my-bucket/rsyncBackup-BP
 ```
 
 One more reason this pairs well with

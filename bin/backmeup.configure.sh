@@ -33,6 +33,20 @@ fi
 #
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
+echo ""
+echo "The next three questions are about where your DATA goes:"
+echo ""
+echo "  SYNC     the live mirror - a current copy of what you back up"
+echo "  BackUp   old and deleted versions, kept as your history"
+echo "  IndexDB  the search index (lives inside SYNC by default)"
+echo ""
+echo "Point these at your actual backup destination - an external"
+echo "drive, a NAS, or similar (see docs/DESTINATIONS.md for what's"
+echo "supported) - not a directory you might casually delete later."
+echo "The suggested default is just a starting point to edit or accept,"
+echo "not a recommendation."
+echo ""
+#
 #
 # LOCAL/USER DEFINED OPTIONS
 # --------------------------
@@ -117,6 +131,13 @@ echo "IndexDB Directory is: ${BMU_DIRDBLOCATE}"
 #BMU_INSTDIRNAME="/bmu"
 #BMU_INSTDIR="${BMU_INSTPATH}${BMU_INSTDIRNAME}"
 #BMU_LINKTO="/usr/local/bin/backmeup"
+#
+echo ""
+echo "The next two questions are different: this is where the bmug2"
+echo "PROGRAM itself lives, not your data. Keep it on your regular"
+echo "system disk (not the backup destination above), so it still"
+echo "works even when that drive isn't connected."
+echo ""
 #
 # BMU_INSTPATH
 BMU_INSTPATH_TMP=${BMU_INSTPATH}

@@ -34,7 +34,7 @@ oneTimeSetUp() {
     SB="${SHUNIT_TMPDIR}/bmu"
     mkdir -p "${SB}/src/myproject/sub" "${SB}/sync/.locate.dir" "${SB}/sync-BP"
     cp -R "${BMU_BIN_SRC}" "${SB}/bin"
-    sed -e "s|\${HOME}/tmp/rsyncBackup|${SB}/sync|" \
+    sed -e "s|\${HOME}/Backups/rsyncBackup|${SB}/sync|" \
         "${SB}/bin/backmeup.setup.sh.template" > "${SB}/bin/backmeup.setup.sh"
 
     # run 1: initial backup
@@ -122,7 +122,7 @@ testUserJourneyEndToEnd() {
     grep -q "DRY RUN" "${SHUNIT_TMPDIR}/journey/dry.log"
     assertTrue "dry-run did not announce itself" $?
     assertFalse "dry-run already created the mirror" \
-        "[ -e '${l_home}/tmp/rsyncBackup/docs' ]"
+        "[ -e '${l_home}/Backups/rsyncBackup/docs' ]"
 
     # first real backup
     "${l_bmu}/backmeup.sh" "${l_src}" \
@@ -137,11 +137,11 @@ testUserJourneyEndToEnd() {
     assertEquals "second backup failed, see backup2.log" 0 $?
 
     assertEquals "quarterly numbers v2, corrected" \
-        "`cat \"${l_home}/tmp/rsyncBackup/docs/reports/report.pdf\" 2>/dev/null`"
+        "`cat \"${l_home}/Backups/rsyncBackup/docs/reports/report.pdf\" 2>/dev/null`"
     assertFalse "notes.txt still in the mirror after deletion" \
-        "[ -e '${l_home}/tmp/rsyncBackup/docs/notes.txt' ]"
+        "[ -e '${l_home}/Backups/rsyncBackup/docs/notes.txt' ]"
 
-    l_snap=`ls -d "${l_home}/tmp/rsyncBackup-BP/docs"/B-*/ 2>/dev/null | head -1`
+    l_snap=`ls -d "${l_home}/Backups/rsyncBackup-BP/docs"/B-*/ 2>/dev/null | head -1`
     l_snap="${l_snap%/}"
     assertNotNull "no snapshot recorded for the second backup" "${l_snap}"
     l_snapname=`basename "${l_snap}"`
@@ -301,6 +301,35 @@ testInstallCopiesOnlyRealFilesNoHousekeepingCruft() {
 
     grep -q "do not run this file directly" "${l_bmu}/backmeup.setup.sh"
     assertTrue "generated setup.sh is missing the explanatory header" $?
+}
+
+testConfigureExplainsDestinationsAndDefaultIsNotNamedTmp() {
+    # The default used to be "${HOME}/tmp/rsyncBackup" - not literally
+    # /tmp (not auto-cleared by the OS), but the name alone reads as
+    # "disposable" to anyone glancing at the prompt and hitting enter.
+    # Also checks the explanatory tips actually appear, so a user is
+    # told what each directory is for and where the two kinds (data vs.
+    # the program itself) should live, not just handed bare prompts.
+    l_home="${SHUNIT_TMPDIR}/tipshome"
+    l_checkout="${SHUNIT_TMPDIR}/tipscheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/tips-install.log" 2>&1
+    assertEquals "install failed, see tips-install.log" 0 $?
+
+    grep -q "actual backup destination" "${SHUNIT_TMPDIR}/tips-install.log"
+    assertTrue "no tip explaining where the data directories should live" $?
+    grep -q "PROGRAM itself lives, not your data" "${SHUNIT_TMPDIR}/tips-install.log"
+    assertTrue "no tip distinguishing the install dir from the data dirs" $?
+
+    grep -q "Please type the SYNC directory: (${l_home}/Backups/rsyncBackup)" \
+        "${SHUNIT_TMPDIR}/tips-install.log"
+    assertTrue "default SYNC directory is not under Backups/" $?
+    grep -q "tmp/rsyncBackup" "${SHUNIT_TMPDIR}/tips-install.log"
+    assertFalse "default SYNC directory still suggests a tmp/ path" $?
 }
 
 #
@@ -597,7 +626,7 @@ testWorksWithSpacesInPaths() {
     mkdir -p "${l_sb}/src/my project/sub dir" \
              "${l_sb}/sync/.locate.dir" "${l_sb}/sync-BP"
     cp -R "${BMU_BIN_SRC}" "${l_sb}/bin"
-    sed -e "s|\${HOME}/tmp/rsyncBackup|${l_sb}/sync|" \
+    sed -e "s|\${HOME}/Backups/rsyncBackup|${l_sb}/sync|" \
         "${l_sb}/bin/backmeup.setup.sh.template" > "${l_sb}/bin/backmeup.setup.sh"
 
     echo "sp v1" > "${l_sb}/src/my project/a file.txt"

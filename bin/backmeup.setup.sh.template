@@ -35,7 +35,7 @@
 # --------------------------
 # See also below INDEXING OPTIONS
 #
-BMU_DIRRSYNC="${HOME}/tmp/rsyncBackup"
+BMU_DIRRSYNC="${HOME}/Backups/rsyncBackup"
 BMU_DIRBACKUPS="${BMU_DIRRSYNC}-BP"
 BMU_DIRDBLOCATE="${BMU_DIRRSYNC}/.locate.dir"
 #

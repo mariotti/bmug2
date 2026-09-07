@@ -46,7 +46,7 @@ the destination filesystem, not on bmug2 itself.
 ```
 git clone https://github.com/mariotti/bmug2
 cd bmug2
-./bin/backmeup.install.sh              # answers a few questions, see the manual
+./install.sh                            # answers a few questions, see the manual
 ./bin/backmeup.sh --dry-run ~/Documents   # preview
 ./bin/backmeup.sh ~/Documents             # back it up
 ./bin/backmeup.locate.sh report.pdf       # find it, current or historical
