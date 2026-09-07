@@ -332,6 +332,89 @@ testConfigureExplainsDestinationsAndDefaultIsNotNamedTmp() {
     assertFalse "default SYNC directory still suggests a tmp/ path" $?
 }
 
+testBackmeupShrcGeneratedIdempotentPath() {
+    l_home="${SHUNIT_TMPDIR}/shrcpathhome"
+    l_checkout="${SHUNIT_TMPDIR}/shrcpathcheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    l_bmu="${l_home}/usr/bmu"
+    assertTrue "backmeup_shrc was not generated" "[ -f '${l_bmu}/backmeup_shrc' ]"
+
+    # sourcing it twice must not add the bin dir to PATH twice
+    l_pathcount=`sh -c ". '${l_bmu}/backmeup_shrc'; . '${l_bmu}/backmeup_shrc'; echo \\"\\$PATH\\"" \
+        | tr ':' '\n' | grep -c "^${l_bmu}/bin$"`
+    assertEquals "install bin dir must appear exactly once in PATH" 1 `expr ${l_pathcount}`
+}
+
+testInstallOffersRcIntegrationAndAppendsOnce() {
+    l_home="${SHUNIT_TMPDIR}/rcappendhome"
+    l_checkout="${SHUNIT_TMPDIR}/rcappendcheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/rcappend-install.log" 2>&1
+    assertEquals "install failed, see rcappend-install.log" 0 $?
+    unset SHELL
+
+    l_rcline=". \"${l_home}/usr/bmu/backmeup_shrc\""
+    l_count=`grep -Fc "${l_rcline}" "${l_home}/.zshrc"`
+    assertEquals "rc line must appear exactly once" 1 `expr ${l_count}`
+    grep -qF "${l_rcline}" "${SHUNIT_TMPDIR}/rcappend-install.log"
+    assertTrue "the proposed line was not shown before confirming" $?
+}
+
+testInstallRcIntegrationDeclineDoesNotFailInstall() {
+    l_home="${SHUNIT_TMPDIR}/rcdeclinehome"
+    l_checkout="${SHUNIT_TMPDIR}/rcdeclinecheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    assertEquals "declining rc integration must not fail the install" 0 $?
+    unset SHELL
+
+    assertFalse "rc file was modified despite declining" \
+        "[ -s '${l_home}/.zshrc' ]"
+}
+
+testInstallRcIntegrationIdempotentOnRerun() {
+    l_home="${SHUNIT_TMPDIR}/rcrerunhome"
+    l_checkout="${SHUNIT_TMPDIR}/rcreruncheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    # second run: all directories already exist (blank accepts default),
+    # answer y again to the rc prompt too
+    printf '\n\n\n\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/rcrerun-install.log" 2>&1
+    assertEquals "second install run failed" 0 $?
+    unset SHELL
+
+    l_rcline=". \"${l_home}/usr/bmu/backmeup_shrc\""
+    l_count=`grep -Fc "${l_rcline}" "${l_home}/.zshrc"`
+    assertEquals "rc line must still appear exactly once after rerun" 1 `expr ${l_count}`
+    grep -q "already present" "${SHUNIT_TMPDIR}/rcrerun-install.log"
+    assertTrue "rerun did not report the rc line as already present" $?
+}
+
 #
 # rsync detection and core backup behaviour
 # -----------------------------------------

@@ -86,10 +86,21 @@ sourced by the other scripts, not run directly. Re-run
 `backmeup.configure.sh` alone later to change settings — it preserves
 the previous `backmeup.setup.sh` as `backmeup.setup.sh.old`.
 
-Note: the install directory is *not* currently added to `PATH` (a
-leftover `BMU_LINKTO` setting from the original bmu is defined but not
-wired up yet) — call the scripts by full path, from the install
-directory or straight from a clone, as in the Quick start above.
+`backmeup.configure.sh` also generates `${BMU_INSTDIR}/backmeup_shrc` —
+a small, pure-POSIX-sh file that puts the install directory's `bin/` on
+`PATH` (idempotent: safe to source more than once). At the end of
+`install.sh`, you're offered (y/N, never done silently) to add one line
+sourcing it to your shell rc file (`~/.zshrc`, `~/.bash_profile`/
+`~/.bashrc`, or `~/.profile`, detected from `$SHELL`). Decline and you
+can still call every script by full path, from the install directory or
+straight from a clone; add the line yourself later if you change your
+mind — the exact line to add is shown either way. `backmeup_shrc` is
+regenerated on every `backmeup.configure.sh` run, so if you ever move
+`BMU_INSTDIR` you'll need to re-run `install.sh` (or manually update the
+line in your rc file) to point at the new location — this one-time
+recheck isn't automatic. A leftover `BMU_LINKTO` setting from the
+original bmu is still defined but unused; `backmeup_shrc` is the
+supported way to get bmug2 onto `PATH` now.
 
 ## Commands
 
