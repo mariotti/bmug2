@@ -76,11 +76,15 @@ Copies the scripts to an install directory and runs
 `backmeup.configure.sh`, which asks for the SYNC, HISTORY, index and
 install directories, offers to create them, and detects a usable
 `rsync` and `updatedb`/`locate`. Along the way it explains what each
-question is for: SYNC/HISTORY/IndexDB are your **data** and should
-point at your actual backup destination (external drive, NAS, etc. —
-see [DESTINATIONS.md](DESTINATIONS.md)), while the two install-location
-questions are about where the **program** itself lives and should stay
-on your regular system disk. The generated `backmeup.setup.sh` also
+question is for: SYNC/HISTORY/IndexDB are your **data**, and should
+live somewhere safe from casual deletion — but SYNC and IndexDB in
+particular are meant to stay readily available, so a local disk (even
+the internal one) is often the right call, not necessarily an external
+drive or NAS. An off-site copy is a separate replication step layered
+on top, not a replacement destination for these — see
+[DESTINATIONS.md](DESTINATIONS.md). The two install-location questions
+are a different thing entirely: where the **program** itself lives,
+which should stay on your regular system disk. The generated `backmeup.setup.sh` also
 carries a short comment explaining what it is, since it's meant to be
 sourced by the other scripts, not run directly. Re-run
 `backmeup.configure.sh` alone later to change settings — it preserves
