@@ -79,6 +79,29 @@ bmuPromptyNexit_Example() {
     bmuPromptyNexit "Shall I create the directory for you (y/N)?"
 }
 #
+# bmuPromptyN()
+# Same y/N convention as bmuPromptyNexit, but for a decline that should
+# NOT abort the caller - returns 1 instead of exiting. Use this when
+# declining is a shrug ("skip this optional step"), not a fatal input;
+# use bmuPromptyNexit when declining really should stop the script.
+# EOF/empty input also falls through to "no" rather than hanging or
+# erroring (POSIX `read` on EOF sets the target variable empty and
+# returns nonzero, which this function doesn't need to check itself -
+# an empty $val already lands in the wildcard case below).
+bmuPromptyN() {
+    msg="$1"
+    echo "$msg"
+    read val
+    case ${val} in
+	"y" | "Y" | "yes" | "YES" | "Yes")
+	    return 0
+	    ;;
+	*)
+	    return 1
+	    ;;
+    esac
+}
+#
 # bmuPromptValue()
 # - Get user prompt using the read function
 #   Use it inside a while loop like:

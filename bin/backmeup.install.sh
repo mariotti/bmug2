@@ -66,4 +66,40 @@ cp -p "${BMU_PATH}"/*.sh "${BMU_PATH}"/*.template "${BMU_INSTDIR}/bin/"
 touch "${BMU_DIRRSYNC}/.bmumeta"
 touch "${BMU_DIRBACKUPS}/.bmumeta"
 #
+# Optional: offer to wire bmug2 onto PATH via the shell rc file. Never
+# edits silently, never touches more than one line, safe to decline
+# (does not affect this script's own exit code) and safe to run again
+# later (idempotent: skips if the line is already there).
+case "${SHELL}" in
+    */zsh)
+	l_bmu_rcfile="${HOME}/.zshrc"
+	;;
+    */bash)
+	if [ -f "${HOME}/.bash_profile" ]; then
+	    l_bmu_rcfile="${HOME}/.bash_profile"
+	else
+	    l_bmu_rcfile="${HOME}/.bashrc"
+	fi
+	;;
+    *)
+	l_bmu_rcfile="${HOME}/.profile"
+	;;
+esac
+l_bmu_rcline=". \"${BMU_INSTDIR}/backmeup_shrc\""
+if [ -f "${l_bmu_rcfile}" ] && grep -qF "${l_bmu_rcline}" "${l_bmu_rcfile}"; then
+    echo "Shell integration already present in ${l_bmu_rcfile}, nothing to do."
+else
+    echo ""
+    echo "bmug2 can add itself to your PATH by appending one line to:"
+    echo "  ${l_bmu_rcfile}"
+    echo "  ${l_bmu_rcline}"
+    if bmuPromptyN "Shall I append it for you (y/N)?"; then
+	printf '%s\n' "${l_bmu_rcline}" >> "${l_bmu_rcfile}"
+	echo "Added. Restart your shell (or run: ${l_bmu_rcline}) to pick it up."
+    else
+	echo "Skipped. Add it yourself later if you want it:"
+	echo "  ${l_bmu_rcline}"
+    fi
+fi
+#
 # END
