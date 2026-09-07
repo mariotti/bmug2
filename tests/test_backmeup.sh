@@ -247,6 +247,14 @@ testConfigureRejectsNonAbsoluteDirectoryAnswer() {
     # backmeup.setup.sh forever, corrupting every later run that reads it
     # back. A plain relative path has the same problem and would also
     # silently break later under cron (different working directory).
+    #
+    # The rejection itself now re-prompts (see
+    # testConfigureRepromptsOnNonAbsoluteAnswerInsteadOfAborting) rather
+    # than exiting outright, so this test's bad answer is followed by
+    # nothing else on stdin: EOF makes the re-prompt fall back to the
+    # true default, which then hits the ordinary "not a dir yet, shall I
+    # create it?" flow and - with no more input available - declines and
+    # exits, same end state (reject, don't persist) via a friendlier path.
     l_home="${SHUNIT_TMPDIR}/rejectbadpathhome"
     l_checkout="${SHUNIT_TMPDIR}/rejectbadpathcheckout"
     mkdir -p "${l_home}" "${l_checkout}"
@@ -261,6 +269,40 @@ testConfigureRejectsNonAbsoluteDirectoryAnswer() {
     assertTrue "no clear message rejecting the bad path" $?
     assertFalse "backmeup.setup.sh written despite the rejected answer" \
         "[ -f '${l_checkout}/backmeup.setup.sh' ]"
+}
+
+testConfigureRepromptsOnNonAbsoluteAnswerInsteadOfAborting() {
+    # Real report from a live run: after answering SYNC and BackUp with
+    # the usual "blank to accept default, y to confirm creation"
+    # two-step, the user typed a lone "y" at the IndexDB prompt itself -
+    # muscle memory from the two prior y/N confirmations - which isn't an
+    # absolute path. The previous behavior (a hard `exit 1` from inside
+    # bmuPromptValue) aborted the *entire* configure run on that single
+    # stray keystroke, forcing a full restart even though SYNC and BackUp
+    # had already been answered correctly. It must instead re-prompt the
+    # same question and let the install continue to a normal success.
+    l_home="${SHUNIT_TMPDIR}/repromptbadanswerhome"
+    l_checkout="${SHUNIT_TMPDIR}/repromptbadanswercheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # SYNC: blank+y: BackUp: blank+y; IndexDB: "y" (mistake) -> rejected,
+    # re-prompted -> blank+y; INSTPATH: blank (pre-created above, no
+    # create prompt); INSTDIR: blank+y.
+    printf '\ny\n\ny\ny\n\ny\n\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/repromptbadanswer-install.log" 2>&1
+    assertEquals "install should recover and succeed, see repromptbadanswer-install.log" \
+        0 $?
+    grep -q "must be an absolute path (starting with /): y" \
+        "${SHUNIT_TMPDIR}/repromptbadanswer-install.log"
+    assertTrue "the bad IndexDB answer was not caught and rejected" $?
+    l_reprompts=`grep -c "Please type the IndexDB directory:" \
+        "${SHUNIT_TMPDIR}/repromptbadanswer-install.log"`
+    assertEquals "IndexDB question should be shown twice (reject, then retry)" \
+        2 "${l_reprompts}"
+    assertTrue "install did not create ${l_home}/usr/bmu/bin/backmeup.sh" \
+        "[ -x '${l_home}/usr/bmu/bin/backmeup.sh' ]"
 }
 
 testInstallCopiesOnlyRealFilesNoHousekeepingCruft() {
