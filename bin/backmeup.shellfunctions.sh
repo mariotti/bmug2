@@ -127,6 +127,22 @@ bmuPromptValue() {
                 echo "Input is empty for dir test"
                 return 0
             fi
+            case "$val" in
+                /*) ;;
+                *)
+                    # Hard failure, not a re-prompt: the caller's own loop
+                    # always offers to mkdir -p whatever comes back here,
+                    # and a bad value like "(/some/path" (a real case seen
+                    # from a copy-paste of a shown default that included
+                    # its surrounding parens) or a plain relative path
+                    # would otherwise get silently created and persisted
+                    # into backmeup.setup.sh - and a relative path would
+                    # also break later whenever the scripts run from a
+                    # different working directory, e.g. under cron.
+                    echo "Input must be an absolute path (starting with /): $val"
+                    exit 1
+                    ;;
+            esac
             if [ ! -d "$val" ]; then
                 echo "Input is not a dir"
                 return 0
