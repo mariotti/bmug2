@@ -79,9 +79,13 @@ and mutating ones (backup, archive, unarchive, migrate) are both
 implemented; the mutating tools are clearly flagged as such in both
 their MCP annotations and their descriptions.
 
+## Desktop GUI
+
+[`gui/`](gui/README.md) is a native Tauri app — skeleton stage only,
+see its README for what's built so far and what isn't yet.
+
 ## Future directions
 
- - A GUI
  - Content indexing (codesearch/zindex) on top of the filename index
 
 ## Contributing
