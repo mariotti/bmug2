@@ -9,14 +9,18 @@ are independent consumers of the same core.
 
 ## Status
 
-Skeleton only. The Rust↔JS bridge works (`bridge_check` command,
-`npm run tauri dev` to see it), nothing else is built yet:
+First-run install screen is built. On launch, the app checks a small
+config it owns (`app_data_dir()/config.json` — no auto-discovery of an
+existing CLI install, matching `mcp/`'s own stance); if nothing's
+installed yet, it offers two paths: download the latest bmug2 release
+and run its `install.sh` non-interactively (`gui/src-tauri/src/install.rs`),
+or point at a bin directory that's already set up. Still missing:
 
-- No first-run setup screen — install bmug2 with `../install.sh` on the
-  command line for now.
-- No status dashboard or search UI — use `backmeup.status.sh`/
+- No status dashboard or search UI yet — use `backmeup.status.sh`/
   `backmeup.locate.sh` (plain or `--json`, see `../docs/MANUAL.md`)
-  directly.
+  directly once installed.
+- No reconfigure/move-install UI — re-run `backmeup.configure.sh`
+  directly for that, same as the CLI-only flow.
 - No packaging/release pipeline yet.
 
 ## Why native Rust, not the `mcp/` Python server

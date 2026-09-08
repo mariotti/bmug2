@@ -37,6 +37,87 @@ h1 {
   text-align: center;
 }
 
+.container {
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+  padding-inline: 1.5em;
+  box-sizing: border-box;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 1em;
+  justify-content: center;
+}
+
+.tab {
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  background-color: #ffffff;
+  cursor: pointer;
+}
+
+.tab.active {
+  border-color: #396cd8;
+  color: #396cd8;
+  font-weight: 600;
+}
+
+form {
+  text-align: left;
+}
+
+.field {
+  margin-bottom: 0.9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.field label {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.field input,
+form button {
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  padding: 0.5em 0.7em;
+  font-size: 0.95em;
+  font-family: inherit;
+}
+
+form button[type="submit"] {
+  margin-top: 0.5em;
+  cursor: pointer;
+  background-color: #396cd8;
+  color: #ffffff;
+  border-color: #396cd8;
+}
+
+.error-heading {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.log {
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8em;
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.8em;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -45,5 +126,14 @@ h1 {
 
   a:hover {
     color: #24c8db;
+  }
+
+  .tab,
+  .field input,
+  form button,
+  .log {
+    background-color: #1f1f1f98;
+    color: #f6f6f6;
+    border-color: #444;
   }
 }
