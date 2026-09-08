@@ -1,6 +1,8 @@
 mod config;
+mod dashboard;
 mod install;
 
+use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome};
 use serde::Deserialize;
 use tauri::AppHandle;
@@ -57,6 +59,16 @@ fn install_bmug2(app: AppHandle, request: InstallRequest) -> Result<InstallOutco
     }
 }
 
+#[tauri::command]
+fn get_status(bin_dir: String) -> Result<StatusResult, String> {
+    dashboard::get_status(&bin_dir)
+}
+
+#[tauri::command]
+fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, String> {
+    dashboard::search(&bin_dir, &patterns)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -64,7 +76,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_existing_install,
             get_default_paths,
-            install_bmug2
+            install_bmug2,
+            get_status,
+            search
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

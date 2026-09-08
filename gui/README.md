@@ -9,16 +9,24 @@ are independent consumers of the same core.
 
 ## Status
 
-First-run install screen is built. On launch, the app checks a small
-config it owns (`app_data_dir()/config.json` — no auto-discovery of an
-existing CLI install, matching `mcp/`'s own stance); if nothing's
-installed yet, it offers two paths: download the latest bmug2 release
-and run its `install.sh` non-interactively (`gui/src-tauri/src/install.rs`),
-or point at a bin directory that's already set up. Still missing:
+v1's scope (read-only: status + search, no mutating actions) is
+built. On launch, the app checks a small config it owns
+(`app_data_dir()/config.json` — no auto-discovery of an existing CLI
+install, matching `mcp/`'s own stance):
 
-- No status dashboard or search UI yet — use `backmeup.status.sh`/
-  `backmeup.locate.sh` (plain or `--json`, see `../docs/MANUAL.md`)
-  directly once installed.
+- Nothing installed yet → a setup screen offers to download the latest
+  bmug2 release and run its `install.sh` non-interactively
+  (`gui/src-tauri/src/install.rs`), or point at a bin directory
+  that's already set up.
+- Installed → a dashboard (`gui/src-tauri/src/dashboard.rs`): a
+  per-project status table (`backmeup.status.sh --json`) with a
+  Refresh button, and a search box (`backmeup.locate.sh --json`)
+  tagging results by source (indexed vs. archived-snapshot fallback).
+
+Still missing:
+
+- No mutating actions (backup/archive/unarchive/migrate buttons) —
+  by design for v1; use the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`
   directly for that, same as the CLI-only flow.
 - No packaging/release pipeline yet.

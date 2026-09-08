@@ -18,6 +18,34 @@ interface InstallOutcome {
   log: string;
 }
 
+interface StatusProject {
+  name: string;
+  last_run: string | null;
+  last_change: string | null;
+  snapshot_count: number;
+  mirror_size_kb: number;
+  history_size_kb: number | null;
+  old_layout: boolean;
+}
+
+interface StatusResult {
+  sync_dir: string;
+  history_dir: string;
+  projects: StatusProject[];
+}
+
+interface LocateHit {
+  path: string;
+  source: string;
+}
+
+interface LocateResult {
+  patterns: string[];
+  indexed: boolean;
+  counts: { index: number; archived_filelist: number };
+  results: LocateHit[];
+}
+
 type InstallRequest =
   | ({ mode: "new" } & DefaultPaths)
   | { mode: "existing"; bin_dir: string };
@@ -39,17 +67,155 @@ function renderLoading() {
   app.replaceChildren(el("p", {}, ["Loading…"]));
 }
 
-function renderInstalled(binDir: string) {
+function formatKb(kb: number | null): string {
+  if (kb === null) return "-";
+  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${kb} KB`;
+}
+
+function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
+  const refreshBtn = el("button", { type: "button" }, ["Refresh"]);
+  refreshBtn.addEventListener("click", () => void renderDashboard(binDir));
+
+  const header = el("div", { class: "dashboard-header" }, [
+    el("p", {}, [
+      el("strong", {}, ["SYNC: "]),
+      el("code", {}, [status.sync_dir]),
+    ]),
+    el("p", {}, [
+      el("strong", {}, ["HISTORY: "]),
+      el("code", {}, [status.history_dir]),
+    ]),
+    refreshBtn,
+  ]);
+
+  if (status.projects.length === 0) {
+    return el("section", {}, [
+      header,
+      el("p", {}, [`(no projects found in ${status.sync_dir})`]),
+    ]);
+  }
+
+  const rows = status.projects.map((p) =>
+    el("tr", {}, [
+      el("td", {}, [
+        p.old_layout ? el("span", { class: "badge-old-layout" }, ["⚠"]) : "",
+        p.name,
+      ]),
+      el("td", {}, [p.last_run ?? "-"]),
+      el("td", {}, [p.last_change ?? "-"]),
+      el("td", {}, [String(p.snapshot_count)]),
+      el("td", {}, [formatKb(p.mirror_size_kb)]),
+      el("td", {}, [formatKb(p.history_size_kb)]),
+    ]),
+  );
+
+  const oldLayoutNotes = status.projects
+    .filter((p) => p.old_layout)
+    .map((p) =>
+      el("p", { class: "note-old-layout" }, [
+        `${p.name}: old layout, run backmeup.migrate.sh ${p.name} on the command line.`,
+      ]),
+    );
+
+  const table = el("table", { class: "status-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", {}, ["Project"]),
+        el("th", {}, ["Last run"]),
+        el("th", {}, ["Last change"]),
+        el("th", {}, ["Snapshots"]),
+        el("th", {}, ["Mirror"]),
+        el("th", {}, ["History"]),
+      ]),
+    ]),
+    el("tbody", {}, rows),
+  ]);
+
+  return el("section", {}, [header, table, ...oldLayoutNotes]);
+}
+
+function buildSearchSection(binDir: string): HTMLElement {
+  const [searchField, searchInput] = field(
+    "Search (space-separated patterns)",
+    "search-patterns",
+    "",
+  );
+  const submit = el("button", { type: "submit" }, ["Search"]);
+  const resultsBox = el("div", { class: "search-results" }, []);
+
+  const form = el("form", { class: "search-form" }, [searchField, submit]);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const patterns = searchInput.value.trim().split(/\s+/).filter(Boolean);
+    if (patterns.length === 0) return;
+    void runSearch(binDir, patterns, resultsBox);
+  });
+
+  return el("section", {}, [
+    el("h2", {}, ["Search"]),
+    form,
+    resultsBox,
+  ]);
+}
+
+async function runSearch(
+  binDir: string,
+  patterns: string[],
+  resultsBox: HTMLElement,
+) {
+  resultsBox.replaceChildren(el("p", {}, ["Searching…"]));
+  try {
+    const result = await invoke<LocateResult>("search", { binDir, patterns });
+    renderSearchResults(result, resultsBox);
+  } catch (err) {
+    resultsBox.replaceChildren(el("p", { class: "error-heading" }, [String(err)]));
+  }
+}
+
+function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
+  const children: (Node | string)[] = [];
+  if (!result.indexed) {
+    children.push(
+      el("p", { class: "note-not-indexed" }, [
+        "No locate installed — results are from archived snapshots only.",
+      ]),
+    );
+  }
+  if (result.results.length === 0) {
+    children.push(el("p", {}, ["No matches."]));
+  } else {
+    children.push(
+      el(
+        "ul",
+        { class: "search-result-list" },
+        result.results.map((hit) =>
+          el("li", {}, [
+            el("span", { class: `source-tag source-${hit.source}` }, [
+              hit.source === "index" ? "index" : "archived",
+            ]),
+            hit.path,
+          ]),
+        ),
+      ),
+    );
+  }
+  resultsBox.replaceChildren(...children);
+}
+
+async function renderDashboard(binDir: string) {
+  app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, ["Loading status…"]));
+  let status: StatusResult;
+  try {
+    status = await invoke<StatusResult>("get_status", { binDir });
+  } catch (err) {
+    renderError(String(err), () => void renderDashboard(binDir));
+    return;
+  }
   app.replaceChildren(
     el("h1", {}, ["bmug2"]),
-    el("p", {}, [`Installed at `, el("code", {}, [binDir]), "."]),
-    el("p", {}, [
-      "Status and search screens aren't built yet — use ",
-      el("code", {}, ["backmeup.status.sh"]),
-      " / ",
-      el("code", {}, ["backmeup.locate.sh"]),
-      " on the command line for now.",
-    ]),
+    buildStatusSection(status, binDir),
+    buildSearchSection(binDir),
   );
 }
 
@@ -59,7 +225,7 @@ function renderError(message: string, retry: () => void) {
   backBtn.addEventListener("click", retry);
   app.replaceChildren(
     el("h1", {}, ["bmug2"]),
-    el("p", { class: "error-heading" }, ["Setup failed:"]),
+    el("p", { class: "error-heading" }, ["Error:"]),
     pre,
     backBtn,
   );
@@ -223,7 +389,7 @@ async function runInstall(request: InstallRequest) {
   );
   try {
     const outcome = await invoke<InstallOutcome>("install_bmug2", { request });
-    renderInstalled(outcome.bin_dir);
+    void renderDashboard(outcome.bin_dir);
   } catch (err) {
     renderError(String(err), renderSetup);
   }
@@ -234,7 +400,7 @@ async function init() {
   try {
     const existing = await invoke<string | null>("check_existing_install");
     if (existing) {
-      renderInstalled(existing);
+      void renderDashboard(existing);
       return;
     }
   } catch (err) {
