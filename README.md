@@ -1,5 +1,7 @@
 # bmug2 — BackMeUp generation 2
 
+<!-- unofficially, also a "Beer MUG for 2" -->
+
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
 search — readable with nothing more than `ls`, `find` and `grep`.

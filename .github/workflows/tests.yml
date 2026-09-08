@@ -13,8 +13,9 @@ jobs:
         # plocate provides the mlocate-style updatedb/locate dialect,
         # exercising the non-GNU branch of the capability detection;
         # zsh is needed for the _bmu completion file's syntax check
-        # (macOS ships zsh by default, Ubuntu doesn't)
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh
+        # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
+        # backmeup.replicate.sh for real
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 
@@ -23,9 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install dependencies
-        # real rsync (Apple ships openrsync) and GNU findutils
-        # (gupdatedb/glocate), exercising the GNU branch
-        run: brew install rsync findutils
+        # real rsync (Apple ships openrsync), GNU findutils
+        # (gupdatedb/glocate), and rclone for backmeup.replicate.sh
+        run: brew install rsync findutils rclone
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 
