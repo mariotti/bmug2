@@ -512,7 +512,18 @@ testConfigureNonInteractiveFlagsSkipPrompts() {
     mkdir -p "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    timeout 15 "${l_checkout}/backmeup.install.sh" \
+    # capability detection, not OS detection (same idiom as BMU_CMDRSYNC
+    # etc.): GNU coreutils' timeout isn't installed by default on macOS,
+    # only Linux - an empty l_bmu_timeout below just vanishes from the
+    # command line, so this degrades to running unguarded rather than
+    # failing outright where neither is available.
+    l_bmu_timeout=""
+    if command -v timeout > /dev/null 2>&1; then
+        l_bmu_timeout="timeout 15"
+    elif command -v gtimeout > /dev/null 2>&1; then
+        l_bmu_timeout="gtimeout 15"
+    fi
+    ${l_bmu_timeout} "${l_checkout}/backmeup.install.sh" \
         --sync-dir="${l_home}/data/sync" \
         --backup-dir="${l_home}/data/sync-BP" \
         --index-dir="${l_home}/data/sync/.locate.dir" \
