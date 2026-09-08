@@ -499,6 +499,88 @@ testConfigureSkipsReplicationSetupWhenDeclined() {
 }
 
 #
+# non-interactive configure.sh (a GUI, or any scripted caller, drives
+# this instead of scripted stdin)
+# ---------------------------------------------------------------------
+
+testConfigureNonInteractiveFlagsSkipPrompts() {
+    # The test that actually proves non-interactivity: empty stdin, so
+    # any prompt this run didn't mean to skip would hang or fail on
+    # read, not just "happen to be granted an unused answer".
+    l_home="${SHUNIT_TMPDIR}/noninteractivehome"
+    l_checkout="${SHUNIT_TMPDIR}/noninteractivecheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # capability detection, not OS detection (same idiom as BMU_CMDRSYNC
+    # etc.): GNU coreutils' timeout isn't installed by default on macOS,
+    # only Linux - an empty l_bmu_timeout below just vanishes from the
+    # command line, so this degrades to running unguarded rather than
+    # failing outright where neither is available.
+    l_bmu_timeout=""
+    if command -v timeout > /dev/null 2>&1; then
+        l_bmu_timeout="timeout 15"
+    elif command -v gtimeout > /dev/null 2>&1; then
+        l_bmu_timeout="gtimeout 15"
+    fi
+    ${l_bmu_timeout} "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/data/sync" \
+        --backup-dir="${l_home}/data/sync-BP" \
+        --index-dir="${l_home}/data/sync/.locate.dir" \
+        --install-path="${l_home}/data/usr" \
+        --install-dir="${l_home}/data/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/noninteractive-install.log" 2>&1
+    assertEquals "non-interactive install failed, see noninteractive-install.log" \
+        0 $?
+
+    l_bmu="${l_home}/data/usr/bmu/bin"
+    assertTrue "install did not create ${l_bmu}/backmeup.sh" \
+        "[ -x '${l_bmu}/backmeup.sh' ]"
+    grep -q 'BMU_DIRRSYNC="'"${l_home}"'/data/sync"' "${l_bmu}/backmeup.setup.sh"
+    assertTrue "flagged SYNC dir was not persisted" $?
+    grep -q "Non-interactive run: skipping optional replication setup" \
+        "${SHUNIT_TMPDIR}/noninteractive-install.log"
+    assertTrue "non-interactive run did not auto-skip the replication prompt" $?
+    grep -q 'BMU_CMDREPLICATE=""' "${l_bmu}/backmeup.setup.sh"
+    assertTrue "replication got configured despite a non-interactive run" $?
+}
+
+testConfigurePartialFlagsStillPromptForRest() {
+    # SYNC/BackUp flagged; IndexDB/INSTPATH/INSTDIR still answered
+    # interactively - proves the two modes can mix in one run.
+    l_home="${SHUNIT_TMPDIR}/partialflagshome"
+    l_checkout="${SHUNIT_TMPDIR}/partialflagscheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/flagged-sync" \
+        --backup-dir="${l_home}/flagged-sync-BP" \
+        > "${SHUNIT_TMPDIR}/partialflags-install.log" 2>&1
+    assertEquals "partial-flags install failed, see partialflags-install.log" \
+        0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_DIRRSYNC="'"${l_home}"'/flagged-sync"' "${l_setup}"
+    assertTrue "flagged SYNC dir was not persisted" $?
+    grep -q 'BMU_DIRDBLOCATE="'"${l_home}"'/flagged-sync/.locate.dir"' "${l_setup}"
+    assertTrue "prompted IndexDB dir (under the flagged SYNC default) was not persisted" $?
+}
+
+testConfigureRejectsRelativePathFlag() {
+    l_checkout="${SHUNIT_TMPDIR}/relativeflagcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.configure.sh" --sync-dir=relative/path \
+        < /dev/null > "${SHUNIT_TMPDIR}/relativeflag.log" 2>&1
+    assertEquals "must reject a relative --sync-dir value" 1 $?
+    grep -q "must be an absolute path" "${SHUNIT_TMPDIR}/relativeflag.log"
+    assertTrue "no clear message rejecting the relative flag value" $?
+}
+
+#
 # the bmu dispatcher
 # ------------------
 
@@ -1034,6 +1116,60 @@ testStatusHandlesMirrorOnlyProject() {
     echo "${l_out}" | grep -q "^manualproj *- *- *0"
     assertTrue "mirror-only project not reported with '-' placeholders" $?
     rm -rf "${SB}/sync/manualproj"
+}
+
+testStatusJsonMatchesTextReport() {
+    # Ground truth read straight off disk, not the human table's padded
+    # columns - LAST RUN/LAST CHANGE each embed a space ("YYYY-MM-DD
+    # HH:MM:SS"), so naive whitespace field-splitting of that table
+    # lands on the wrong column; --json exists precisely so nothing,
+    # including this test, has to parse it.
+    l_json=`"${SB}/bin/backmeup.status.sh" --json 2>&1`
+    assertEquals "status --json failed" 0 $?
+    echo "${l_json}" | python3 -c "import json,sys; json.load(sys.stdin)"
+    assertTrue "status --json is not valid JSON" $?
+    echo "${l_json}" | grep -q '"name":"myproject"'
+    assertTrue "status --json misses the myproject entry" $?
+
+    l_realsnaps=`ls -d "${SB}/sync-BP/myproject"/B-*/ 2>/dev/null | wc -l | tr -d ' '`
+    l_snaps=`echo "${l_json}" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); print([p for p in d['projects'] if p['name']=='myproject'][0]['snapshot_count'])"`
+    assertEquals "snapshot_count disagrees with the real B-<date> dir count" \
+        "${l_realsnaps}" "${l_snaps}"
+
+    l_msizekb=`echo "${l_json}" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); print([p for p in d['projects'] if p['name']=='myproject'][0]['mirror_size_kb'])"`
+    assertTrue "mirror_size_kb is not a positive integer" \
+        "[ '${l_msizekb}' -gt 0 ]"
+}
+
+testLocateJsonMatchesTextResults() {
+    [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
+    "${SB}/bin/backmeup.updatedb.sh" > "${SB}/jsonlocate-updatedb.log" 2>&1
+    assertEquals "backmeup.updatedb.sh failed, see jsonlocate-updatedb.log" 0 $?
+
+    l_json=`"${SB}/bin/backmeup.locate.sh" --json file1.txt 2>&1`
+    assertEquals "locate --json failed" 0 $?
+    echo "${l_json}" | python3 -c "import json,sys; json.load(sys.stdin)"
+    assertTrue "locate --json is not valid JSON" $?
+    l_idxcount=`echo "${l_json}" | python3 -c \
+        "import json,sys; print(json.load(sys.stdin)['counts']['index'])"`
+    assertTrue "locate --json found no indexed hits for file1.txt" \
+        "[ '${l_idxcount}' -gt 0 ]"
+    l_textcount=`"${SB}/bin/backmeup.locate.sh" file1.txt 2>/dev/null | grep -vc '(archived)'`
+    assertEquals "index count disagrees between --json and text output" \
+        "${l_textcount}" "${l_idxcount}"
+}
+
+testLocateJsonReportsNotIndexedWithoutUpdatedb() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-nolocatejson"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    echo 'BMU_CMDLOCATE=""' >> "${l_dir}/backmeup.setup.sh"
+    l_json=`"${l_dir}/backmeup.locate.sh" --json file1.txt 2>&1`
+    assertEquals "locate --json failed without a locate binary" 0 $?
+    l_indexed=`echo "${l_json}" | python3 -c "import json,sys; print(json.load(sys.stdin)['indexed'])"`
+    assertEquals "indexed should be false without a locate binary" "False" "${l_indexed}"
 }
 
 testUpdatedbFailsCleanlyWithoutUpdatedb() {

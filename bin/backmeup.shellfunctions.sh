@@ -1,6 +1,42 @@
 #! /bin/sh
 #
 #
+# bmuJsonEscape()
+# Escapes backslash and double-quote for embedding a value inside a
+# JSON string (backslash first, so a literal backslash in the input
+# doesn't get double-escaped by the second substitution). Used by the
+# --json output modes of backmeup.status.sh/backmeup.locate.sh - not a
+# full JSON encoder, just enough for the plain paths/names those
+# scripts ever embed.
+bmuJsonEscape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+#
+# bmuConfigureDirFromFlag()
+# Non-interactive counterpart to a bmuPromptValue "-d" while-loop: given
+# a flag's value (already known non-empty by the caller), validates
+# it's an absolute path and creates it if missing, or exits with a
+# clear error - no retry loop, since a flag-driven caller has no user
+# to ask again. $1=value $2=flag name (for the error message)
+# $3=variable name to export the validated value into.
+bmuConfigureDirFromFlag() {
+    val="$1"
+    flagname="$2"
+    storevar="$3"
+    case "$val" in
+        /*) ;;
+        *)
+            echo "ERROR: ${flagname} must be an absolute path (starting with /): $val"
+            exit 1
+            ;;
+    esac
+    if ! bmuMkDir "$val" "y"; then
+        echo "ERROR: cannot create directory for ${flagname}: $val"
+        exit 1
+    fi
+    export $storevar="$val"
+}
+#
 # bmuMkDir()
 # This function tries to create a directory and returns the success
 # of the command. Still buggy!!!
