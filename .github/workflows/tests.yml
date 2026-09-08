@@ -12,8 +12,10 @@ jobs:
       - name: Install dependencies
         # plocate provides the mlocate-style updatedb/locate dialect,
         # exercising the non-GNU branch of the capability detection;
-        # rclone exercises backmeup.replicate.sh for real
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate rclone
+        # zsh is needed for the _bmu completion file's syntax check
+        # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
+        # backmeup.replicate.sh for real
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 

@@ -61,6 +61,7 @@ fi;
 # copying the whole source directory used to bring them along regardless.
 mkdir -p "${BMU_INSTDIR}/bin"
 cp -p "${BMU_PATH}"/*.sh "${BMU_PATH}"/*.template "${BMU_INSTDIR}/bin/"
+cp -p "${BMU_PATH}"/shell-integration/* "${BMU_INSTDIR}/bin/"
 #
 # Create check file
 touch "${BMU_DIRRSYNC}/.bmumeta"
@@ -101,5 +102,9 @@ else
 	echo "  ${l_bmu_rcline}"
     fi
 fi
+echo ""
+echo "Once bmug2 is on your PATH, the short 'bmu' command is available"
+echo "(e.g. 'bmu status', 'bmu ~/Documents'). Shell completion for it is"
+echo "also available - see docs/MANUAL.md for how to turn it on."
 #
 # END

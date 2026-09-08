@@ -1,0 +1,80 @@
+#! /bin/sh
+#
+# bmu - short dispatcher for bmug2's commands, e.g. `bmu ~/Documents` or
+# `bmu status`. Installed onto PATH by backmeup_shrc, so - unlike every
+# other bmug2 script - it is normally invoked as a bare command, found by
+# a PATH search, not by a relative or absolute path.
+#
+# That distinction matters for self-location: POSIX guarantees that when
+# a command is found via PATH search, $0 is exactly the string typed
+# (here, "bmu"), with no path component at all. The dirname-based trick
+# every other bmug2 script uses would then resolve to ".", the caller's
+# current directory, not wherever bmu actually lives - only "working" by
+# coincidence if the caller happens to be sitting in bmu's own directory.
+# Detect that case and ask the shell where it actually found bmu instead,
+# via the same PATH lookup it just performed to run this script.
+#
+case "$0" in
+    */*)
+        # invoked with an explicit path (./bmu, ../bin/bmu, /abs/path/bmu)
+        MY_PATH="`dirname \"$0\"`"
+        ;;
+    *)
+        # bare command, found via PATH search
+        l_bmu_resolved="`command -v \"$0\" 2>/dev/null`"
+        if [ -z "${l_bmu_resolved}" ]; then
+            echo "ERROR: cannot determine bmu's own location." >&2
+            exit 1
+        fi
+        MY_PATH="`dirname \"${l_bmu_resolved}\"`"
+        ;;
+esac
+MY_PATH="`( cd \"$MY_PATH\" && pwd )`"  # absolutized and normalized
+if [ -z "$MY_PATH" ] ; then
+  exit 1  # fail
+fi
+BMU_PATH="${MY_PATH}"
+#
+case "$1" in
+    ""|-h|--help)
+        echo "usage: bmu [-n|--dry-run] <dir> | bmu <subcommand> [args...]"
+        echo "  subcommands: backup status locate archive unarchive migrate updatedb"
+        echo "  bmu <dir> is shorthand for: bmu backup <dir>"
+        exit 1
+        ;;
+    status)
+        shift
+        exec "${BMU_PATH}/backmeup.status.sh" "$@"
+        ;;
+    locate)
+        shift
+        exec "${BMU_PATH}/backmeup.locate.sh" "$@"
+        ;;
+    archive)
+        shift
+        exec "${BMU_PATH}/backmeup.archive.sh" "$@"
+        ;;
+    unarchive)
+        shift
+        exec "${BMU_PATH}/backmeup.unarchive.sh" "$@"
+        ;;
+    migrate)
+        shift
+        exec "${BMU_PATH}/backmeup.migrate.sh" "$@"
+        ;;
+    updatedb)
+        shift
+        exec "${BMU_PATH}/backmeup.updatedb.sh" "$@"
+        ;;
+    backup)
+        shift
+        exec "${BMU_PATH}/backmeup.sh" "$@"
+        ;;
+    *)
+        # default: anything not matching a known subcommand (including
+        # -n/--dry-run, and a bare directory) is a backup shorthand.
+        # backmeup.sh already owns argument validation - bmu does not
+        # duplicate it here, to avoid the two drifting apart.
+        exec "${BMU_PATH}/backmeup.sh" "$@"
+        ;;
+esac

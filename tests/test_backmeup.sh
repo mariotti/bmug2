@@ -499,6 +499,182 @@ testConfigureSkipsReplicationSetupWhenDeclined() {
 }
 
 #
+# the bmu dispatcher
+# ------------------
+
+testBmuDispatcherRoutesSubcommandsViaPath() {
+    # The critical test: bmu must work invoked as a bare PATH-found
+    # command, from a directory that is NOT its own bin dir - that's
+    # the one scenario where a naive dirname-"$0"-only implementation
+    # would silently resolve to the wrong location instead of failing
+    # loudly, since $0 is just "bmu" with no path component once found
+    # via PATH search. Running from inside bindir would let that bug
+    # pass by accident.
+    l_home="${SHUNIT_TMPDIR}/bmuhome"
+    l_checkout="${SHUNIT_TMPDIR}/bmucheckout"
+    l_elsewhere="${SHUNIT_TMPDIR}/bmuelsewhere"
+    mkdir -p "${l_home}/usr" "${l_checkout}" "${l_elsewhere}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    unset SHELL
+
+    l_bindir="${l_home}/usr/bmu/bin"
+    assertTrue "bmu was not installed" "[ -x '${l_bindir}/bmu' ]"
+
+    l_src="${l_home}/Documents"
+    mkdir -p "${l_src}/sub"
+    echo "hello v1" > "${l_src}/file1.txt"
+    echo "doomed" > "${l_src}/sub/file2.txt"
+
+    # every call below runs from l_elsewhere, never from l_bindir, and
+    # finds bmu purely via PATH
+    (
+        cd "${l_elsewhere}" || exit 1
+        PATH="${l_bindir}:${PATH}"
+        export PATH
+
+        bmu --dry-run "${l_src}" > "${SHUNIT_TMPDIR}/bmu-dryrun.log" 2>&1
+        echo "dryrun_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu backup "${l_src}" > /dev/null 2>&1
+        echo "backup1_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        sleep 1
+        echo "hello v2" > "${l_src}/file1.txt"
+        rm "${l_src}/sub/file2.txt"
+        bmu "${l_src}" > /dev/null 2>&1
+        echo "backup2_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu status > "${SHUNIT_TMPDIR}/bmu-status.log" 2>&1
+        echo "status_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu updatedb > /dev/null 2>&1
+        echo "updatedb_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu locate file2.txt > "${SHUNIT_TMPDIR}/bmu-locate.log" 2>&1
+        echo "locate_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        sleep 1
+        l_snap=`ls -d "${l_home}/Backups/rsyncBackup-BP/Documents"/B-*/ 2>/dev/null | head -1`
+        l_snap=`basename "${l_snap%/}"`
+        bmu archive Documents 0 > "${SHUNIT_TMPDIR}/bmu-archive.log" 2>&1
+        echo "archive_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu unarchive Documents "${l_snap}" > "${SHUNIT_TMPDIR}/bmu-unarchive.log" 2>&1
+        echo "unarchive_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+
+        bmu migrate Documents > "${SHUNIT_TMPDIR}/bmu-migrate.log" 2>&1
+        echo "migrate_exit:$?" >> "${SHUNIT_TMPDIR}/bmu-results.log"
+    )
+
+    grep -q "^dryrun_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu --dry-run failed" $?
+    grep -q "DRY RUN" "${SHUNIT_TMPDIR}/bmu-dryrun.log"
+    assertTrue "bmu --dry-run did not preview" $?
+
+    grep -q "^backup1_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu backup <dir> (explicit) failed" $?
+    grep -q "^backup2_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bare bmu <dir> (shorthand) failed" $?
+    assertEquals "hello v2" \
+        "`cat \"${l_home}/Backups/rsyncBackup/Documents/file1.txt\" 2>/dev/null`"
+
+    grep -q "^status_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu status failed" $?
+    grep -q "^Documents " "${SHUNIT_TMPDIR}/bmu-status.log"
+    assertTrue "bmu status does not list Documents" $?
+
+    grep -q "^updatedb_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu updatedb failed" $?
+    grep -q "^locate_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu locate failed" $?
+    grep -q "sub/file2.txt" "${SHUNIT_TMPDIR}/bmu-locate.log"
+    assertTrue "bmu locate did not find the deleted file" $?
+
+    grep -q "^archive_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu archive failed" $?
+    grep -q "archived B-" "${SHUNIT_TMPDIR}/bmu-archive.log"
+    assertTrue "bmu archive did not report archiving anything" $?
+
+    grep -q "^unarchive_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu unarchive failed" $?
+    grep -q "restored" "${SHUNIT_TMPDIR}/bmu-unarchive.log"
+    assertTrue "bmu unarchive did not report restoring anything" $?
+
+    grep -q "^migrate_exit:1$" "${SHUNIT_TMPDIR}/bmu-results.log"
+    assertTrue "bmu migrate on a flat-layout project should refuse" $?
+    grep -q "no old-layout nesting found" "${SHUNIT_TMPDIR}/bmu-migrate.log"
+    assertTrue "bmu migrate did not explain the refusal" $?
+}
+
+testBmuNoArgsShowsUsageAndExitsOne() {
+    l_home="${SHUNIT_TMPDIR}/bmunoargshome"
+    l_checkout="${SHUNIT_TMPDIR}/bmunoargscheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    unset SHELL
+
+    l_bindir="${l_home}/usr/bmu/bin"
+    "${l_bindir}/bmu" > "${SHUNIT_TMPDIR}/bmu-noargs.log" 2>&1
+    assertEquals "bmu with no args must exit 1" 1 $?
+    grep -q "usage: bmu" "${SHUNIT_TMPDIR}/bmu-noargs.log"
+    assertTrue "bmu with no args did not show usage" $?
+}
+
+testBmuUnrecognizedFirstArgFallsThroughToBackup() {
+    # anything not matching a known subcommand - including a directory
+    # that happens to share a name with something else entirely - is
+    # treated as the backup shorthand's target, not an error
+    l_home="${SHUNIT_TMPDIR}/bmufallthroughhome"
+    l_checkout="${SHUNIT_TMPDIR}/bmufallthroughcheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    touch "${l_home}/.zshrc"
+
+    SHELL=/bin/zsh
+    export SHELL
+    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    unset SHELL
+
+    l_src="${l_home}/notasubcommand"
+    mkdir -p "${l_src}"
+    echo x > "${l_src}/x.txt"
+
+    l_bindir="${l_home}/usr/bmu/bin"
+    "${l_bindir}/bmu" "${l_src}" > "${SHUNIT_TMPDIR}/bmu-fallthrough.log" 2>&1
+    assertEquals "unrecognized first arg should fall through to backup" 0 $?
+    assertTrue "project was not backed up via the fallthrough" \
+        "[ -f '${l_home}/Backups/rsyncBackup/notasubcommand/x.txt' ]"
+}
+
+testCompletionFilesAreSyntacticallyValid() {
+    # Parse-syntax only, not real compinit/TAB-completion behavior - a
+    # real interactive zsh+compinit session is disproportionate test
+    # machinery for a small static file, same "known, accepted gap"
+    # treatment as the untested tar-count-mismatch archive path.
+    bash -n "${BMU_BIN_SRC}/shell-integration/bmu-completion.bash"
+    assertTrue "bash completion file has a syntax error" $?
+
+    if [ -z "`command -v zsh`" ]; then
+        startSkipping
+    fi
+    zsh -n "${BMU_BIN_SRC}/shell-integration/_bmu"
+    assertTrue "zsh completion file has a syntax error" $?
+}
+
+#
 # rsync detection and core backup behaviour
 # -----------------------------------------
 

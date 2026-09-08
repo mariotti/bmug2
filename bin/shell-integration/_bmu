@@ -1,0 +1,10 @@
+#compdef bmu
+#
+# zsh completion for the bmu dispatcher. Static subcommand names only -
+# see bmu-completion.bash for why there's no dynamic project-name
+# completion yet.
+#
+# Activate by adding this file's directory to your fpath, then running
+# `compinit` - see docs/MANUAL.md for the exact steps.
+#
+_arguments '1: :(backup status locate archive unarchive migrate updatedb -n --dry-run)' '*::arg:->args'
