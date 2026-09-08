@@ -33,7 +33,10 @@ echo ""
 echo "You are installing BMU from: ${BMU_PATH}"
 #
 echo "${BMU_PATH}/backmeup.configure.sh will run and ask you few questions for installation."
-"${BMU_PATH}/backmeup.configure.sh"
+# Forwarded as-is: install.sh's own non-interactive flags (--sync-dir=,
+# --backup-dir=, etc.) are configure.sh's, passed straight through so a
+# scripted/GUI caller can drive the whole install without a tty.
+"${BMU_PATH}/backmeup.configure.sh" "$@"
 if [ $? -ne 0 ]; then
     echo "ERROR: configuration did not complete, installation aborted."
     exit 1

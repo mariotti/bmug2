@@ -113,6 +113,22 @@ If `rclone` is installed, configuration also offers (optional, y/N) to
 set up off-site replication — see
 [backmeup.replicate.sh](#backmeupreplicatesh).
 
+**Non-interactive**: every prompt above has a matching flag —
+`--sync-dir=`, `--backup-dir=`, `--index-dir=`, `--install-path=`,
+`--install-dir=` — for a scripted or GUI caller with no terminal to
+prompt on. Flags and prompts can mix: any question without a matching
+flag still prompts interactively. Passing any flag switches the whole
+run non-interactive, including auto-skipping the optional replication
+setup above (re-run interactively later to enable it). `install.sh`
+forwards its own arguments straight through to `backmeup.configure.sh`,
+so the flags work the same way at either entry point:
+
+```
+./install.sh --sync-dir=/mnt/backup/sync --backup-dir=/mnt/backup/sync-BP \
+    --index-dir=/mnt/backup/sync/.locate.dir \
+    --install-path="$HOME/usr" --install-dir="$HOME/usr/bmu"
+```
+
 ## Commands
 
 ### backmeup.sh
@@ -147,6 +163,17 @@ something), snapshot count, and disk usage of the mirror and history.
 Projects still in the old bmu layout are flagged with the exact
 `backmeup.migrate.sh` command to fix them.
 
+`--json` emits the same data as one JSON object instead of the table —
+`{"sync_dir", "history_dir", "projects": [{"name", "last_run",
+"last_change", "snapshot_count", "mirror_size_kb", "history_size_kb",
+"old_layout"}, ...]}` — for a GUI or any other non-terminal consumer.
+`*_size_kb` comes from `du -sk` (block-based kilobytes, not an exact
+byte sum — portable across BSD/GNU `du`, close enough for a dashboard
+number). `last_run`/`last_change` are `null` when a project has none
+yet, otherwise the same raw internal date strings used elsewhere
+(`YYYY-MM-DD HH:MM:SS` and `YYYYMMDD-HHMMSS` respectively — not
+reformatted to match each other or ISO 8601).
+
 ### backmeup.locate.sh
 
 ```
@@ -158,6 +185,12 @@ Case-insensitive search across the current mirror and the full history
 *archived* snapshot (see [backmeup.archive.sh](#backmeuparchivesh)),
 whose hits are marked `(archived)`. Works with no `locate` installed at
 all — search then falls back entirely to the filelists.
+
+`--json` emits `{"patterns", "indexed", "counts": {"index",
+"archived_filelist"}, "results": [{"path", "source"}, ...]}` instead of
+plain-text lines — `source` is `"index"` or `"archived_filelist"`;
+`indexed` is `false` when no `locate` binary is available (results can
+then only come from the archived-filelist fallback).
 
 ### backmeup.updatedb.sh
 
