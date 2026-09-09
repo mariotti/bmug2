@@ -39,7 +39,7 @@ h1 {
 
 .container {
   width: 100%;
-  max-width: 520px;
+  max-width: 720px;
   margin-inline: auto;
   padding-inline: 1.5em;
   box-sizing: border-box;
@@ -118,6 +118,97 @@ form button[type="submit"] {
   overflow-y: auto;
 }
 
+.dashboard-header {
+  text-align: left;
+  margin-bottom: 1em;
+}
+
+.dashboard-header button {
+  margin-top: 0.4em;
+  border-radius: 8px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.4em 0.9em;
+  cursor: pointer;
+}
+
+.status-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9em;
+  margin-bottom: 1em;
+  display: block;
+  overflow-x: auto;
+}
+
+.status-table th,
+.status-table td {
+  padding: 0.4em 0.6em;
+  border-bottom: 1px solid #ddd;
+  white-space: nowrap;
+}
+
+.badge-old-layout {
+  margin-right: 0.3em;
+}
+
+.note-old-layout,
+.note-not-indexed {
+  font-size: 0.85em;
+  color: #8a6d00;
+  text-align: left;
+}
+
+.search-form {
+  display: flex;
+  gap: 0.5em;
+  align-items: flex-end;
+}
+
+.search-form .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.search-results {
+  margin-top: 0.8em;
+  text-align: left;
+}
+
+.search-result-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.search-result-list li {
+  padding: 0.3em 0;
+  border-bottom: 1px solid #eee;
+  word-break: break-all;
+}
+
+.source-tag {
+  display: inline-block;
+  font-size: 0.75em;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  margin-right: 0.5em;
+  text-transform: uppercase;
+}
+
+.source-tag.source-index {
+  background-color: #dbe8ff;
+  color: #1a4faa;
+}
+
+.source-tag.source-archived_filelist {
+  background-color: #f0e6d6;
+  color: #8a6d00;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -135,5 +226,17 @@ form button[type="submit"] {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;
+  }
+
+  .status-table th,
+  .status-table td,
+  .search-result-list li {
+    border-color: #444;
+  }
+
+  .dashboard-header button {
+    background-color: transparent;
+    color: #6fa8ff;
+    border-color: #6fa8ff;
   }
 }
