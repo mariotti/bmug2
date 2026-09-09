@@ -1,6 +1,7 @@
 mod config;
 mod dashboard;
 mod install;
+mod version;
 
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome};
@@ -11,7 +12,11 @@ use tauri::AppHandle;
 fn check_existing_install(app: AppHandle) -> Option<String> {
     let cfg = config::load(&app)?;
     let path = std::path::Path::new(&cfg.bin_dir);
-    if config::looks_installed(path) {
+    // An incompatible saved install is treated the same as a missing
+    // one (falls through to the setup screen) rather than proceeding
+    // into a dashboard that's guaranteed to fail on its first
+    // get_status call.
+    if config::looks_installed(path) && version::check_compatible(path).is_ok() {
         Some(cfg.bin_dir)
     } else {
         None

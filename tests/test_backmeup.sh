@@ -373,6 +373,55 @@ testConfigureExplainsDestinationsAndDefaultIsNotNamedTmp() {
     assertFalse "default SYNC directory still suggests a tmp/ path" $?
 }
 
+testConfigurePersistsVersionMarker() {
+    l_home="${SHUNIT_TMPDIR}/versionhome"
+    l_checkout="${SHUNIT_TMPDIR}/versioncheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    assertEquals "install failed" 0 $?
+
+    grep -q '^BMU_VERSION="[0-9]*\.[0-9]*\.[0-9]*"$' \
+        "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    assertTrue "no BMU_VERSION persisted into the generated setup file" $?
+}
+
+testConfigureReconfigureDoesNotInheritStaleVersion() {
+    # BMU_VERSION is deliberately NOT sourced from the existing
+    # setup.sh like every other setting (see the comment in
+    # backmeup.configure.sh) - it must always be the version of the
+    # configure.sh that's actually running, so a reconfigure reports
+    # the current code's version, not whatever was there when the
+    # install was first set up. Verified here by hand-corrupting the
+    # persisted value to something obviously stale before reconfiguring.
+    l_home="${SHUNIT_TMPDIR}/staleversionhome"
+    l_checkout="${SHUNIT_TMPDIR}/staleversioncheckout"
+    mkdir -p "${l_home}/usr" "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
+    assertEquals "install failed" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    sed -e 's/^BMU_VERSION=.*/BMU_VERSION="0.0.1"/' "${l_setup}" > "${l_setup}.tmp"
+    mv "${l_setup}.tmp" "${l_setup}"
+    grep -q 'BMU_VERSION="0.0.1"' "${l_setup}"
+    assertTrue "test setup itself is broken: stale version wasn't injected" $?
+
+    # reconfigure: all directories already exist, blank accepts default
+    printf '\n\n\n\n' | \
+        HOME="${l_home}" "${l_home}/usr/bmu/bin/backmeup.configure.sh" > /dev/null 2>&1
+    assertEquals "reconfigure failed" 0 $?
+
+    grep -q 'BMU_VERSION="0.0.1"' "${l_setup}"
+    assertFalse "reconfigure inherited the stale persisted version" $?
+    grep -q '^BMU_VERSION="[0-9]*\.[0-9]*\.[0-9]*"$' "${l_setup}"
+    assertTrue "reconfigure did not persist a real version" $?
+}
+
 testBackmeupShrcGeneratedIdempotentPath() {
     l_home="${SHUNIT_TMPDIR}/shrcpathhome"
     l_checkout="${SHUNIT_TMPDIR}/shrcpathcheckout"

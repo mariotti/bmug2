@@ -61,6 +61,7 @@ pub fn use_existing(app: &AppHandle, bin_dir: &str) -> Result<InstallOutcome, St
              backmeup.setup.sh - run install.sh there first)."
         ));
     }
+    crate::version::check_compatible(path)?;
     config::save(app, bin_dir)?;
     Ok(InstallOutcome {
         bin_dir: bin_dir.to_string(),
@@ -394,6 +395,38 @@ mod tests {
         assert_eq!(found, vec![real_install.display().to_string()]);
 
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// use_existing itself needs a real AppHandle (for config::save),
+    /// which nothing in this file's tests constructs - so this exercises
+    /// the exact pre-save sequence use_existing runs, in order, against
+    /// a real-shaped old install: looks_installed (true, since both
+    /// files exist) followed by version::check_compatible (must reject
+    /// it). This is the regression test for the original bug that
+    /// started this feature - picking an old install used to sail
+    /// straight through to a confusing JSON-parse failure instead of
+    /// stopping here with a clear message.
+    #[test]
+    fn an_old_but_real_install_is_rejected_before_it_would_be_saved() {
+        let dir = std::env::temp_dir().join(format!("bmug2-old-install-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("backmeup.sh"), "").unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            "BMU_DIRRSYNC=\"/tmp/x\"\nBMU_VERSION=\"2.3.0\"\n",
+        )
+        .unwrap();
+
+        assert!(config::looks_installed(&dir), "test fixture should look installed");
+        let err = crate::version::check_compatible(&dir).unwrap_err();
+        assert!(err.contains("2.3.0"), "message should name the found version: {err}");
+        assert!(
+            err.contains(&crate::version::MIN_COMPATIBLE_VERSION.0.to_string()),
+            "message should name the required major version: {err}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
