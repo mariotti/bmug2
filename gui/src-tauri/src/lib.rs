@@ -35,7 +35,6 @@ enum InstallRequest {
         sync_dir: String,
         backup_dir: String,
         index_dir: String,
-        install_path: String,
         install_dir: String,
     },
     Existing {
@@ -50,16 +49,8 @@ fn install_bmug2(app: AppHandle, request: InstallRequest) -> Result<InstallOutco
             sync_dir,
             backup_dir,
             index_dir,
-            install_path,
             install_dir,
-        } => install::install_new(
-            &app,
-            &sync_dir,
-            &backup_dir,
-            &index_dir,
-            &install_path,
-            &install_dir,
-        ),
+        } => install::install_new(&app, &sync_dir, &backup_dir, &index_dir, &install_dir),
         InstallRequest::Existing { bin_dir } => install::use_existing(&app, &bin_dir),
     }
 }

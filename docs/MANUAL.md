@@ -76,8 +76,9 @@ you can `tar`/`grep`/`ls` into by hand).
 root so a fresh clone doesn't need to know where it actually lives)
 
 Copies the scripts to an install directory and runs
-`backmeup.configure.sh`, which asks for the SYNC, HISTORY, index and
-install directories, offers to create them, and detects a usable
+`backmeup.configure.sh`, which asks for the SYNC, HISTORY, and index
+directories plus the install directory, offers to create them, and
+detects a usable
 `rsync` and `updatedb`/`locate`. Along the way it explains what each
 question is for: SYNC/HISTORY/IndexDB are your **data**, and should
 live somewhere safe from casual deletion — but SYNC and IndexDB in
@@ -85,9 +86,9 @@ particular are meant to stay readily available, so a local disk (even
 the internal one) is often the right call, not necessarily an external
 drive or NAS. An off-site copy is a separate replication step layered
 on top, not a replacement destination for these — see
-[DESTINATIONS.md](DESTINATIONS.md). The two install-location questions
-are a different thing entirely: where the **program** itself lives,
-which should stay on your regular system disk. The generated `backmeup.setup.sh` also
+[DESTINATIONS.md](DESTINATIONS.md). The install-location question is a
+different thing entirely: where the **program** itself lives, which
+should stay on your regular system disk. The generated `backmeup.setup.sh` also
 carries a short comment explaining what it is, since it's meant to be
 sourced by the other scripts, not run directly. Re-run
 `backmeup.configure.sh` alone later to change settings — it preserves
@@ -114,19 +115,18 @@ set up off-site replication — see
 [backmeup.replicate.sh](#backmeupreplicatesh).
 
 **Non-interactive**: every prompt above has a matching flag —
-`--sync-dir=`, `--backup-dir=`, `--index-dir=`, `--install-path=`,
-`--install-dir=` — for a scripted or GUI caller with no terminal to
-prompt on. Flags and prompts can mix: any question without a matching
-flag still prompts interactively. Passing any flag switches the whole
-run non-interactive, including auto-skipping the optional replication
-setup above (re-run interactively later to enable it). `install.sh`
-forwards its own arguments straight through to `backmeup.configure.sh`,
-so the flags work the same way at either entry point:
+`--sync-dir=`, `--backup-dir=`, `--index-dir=`, `--install-dir=` — for
+a scripted or GUI caller with no terminal to prompt on. Flags and
+prompts can mix: any question without a matching flag still prompts
+interactively. Passing any flag switches the whole run non-interactive,
+including auto-skipping the optional replication setup above (re-run
+interactively later to enable it). `install.sh` forwards its own
+arguments straight through to `backmeup.configure.sh`, so the flags
+work the same way at either entry point:
 
 ```
 ./install.sh --sync-dir=/mnt/backup/sync --backup-dir=/mnt/backup/sync-BP \
-    --index-dir=/mnt/backup/sync/.locate.dir \
-    --install-path="$HOME/usr" --install-dir="$HOME/usr/bmu"
+    --index-dir=/mnt/backup/sync/.locate.dir --install-dir="$HOME/usr/bmu"
 ```
 
 ## Commands

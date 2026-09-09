@@ -10,7 +10,6 @@ interface DefaultPaths {
   sync_dir: string;
   backup_dir: string;
   index_dir: string;
-  install_path: string;
   install_dir: string;
 }
 
@@ -335,11 +334,6 @@ function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
     "index-dir",
     defaults.index_dir,
   );
-  const [pathField, pathInput] = directoryField(
-    "Base install directory",
-    "install-path",
-    defaults.install_path,
-  );
   const [dirField, dirInput] = directoryField(
     "BMU install directory",
     "install-dir",
@@ -357,14 +351,13 @@ function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
           "IndexDB (the search index) are your data — keep them safe " +
           "from casual deletion. SYNC and IndexDB in particular should " +
           "stay fast and local; an off-site copy is a separate step, not " +
-          "a replacement for these. The install directories below are a " +
+          "a replacement for these. The install directory below is a " +
           "different thing — where the bmug2 program itself lives, " +
           "on your regular system disk.",
       ]),
       syncField,
       backupField,
       indexField,
-      pathField,
       dirField,
       submit,
     ],
@@ -377,7 +370,6 @@ function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
       sync_dir: syncInput.value,
       backup_dir: backupInput.value,
       index_dir: indexInput.value,
-      install_path: pathInput.value,
       install_dir: dirInput.value,
     });
   });
