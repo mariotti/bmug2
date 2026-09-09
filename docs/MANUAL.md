@@ -90,7 +90,10 @@ on top, not a replacement destination for these — see
 different thing entirely: where the **program** itself lives, which
 should stay on your regular system disk. The generated `backmeup.setup.sh` also
 carries a short comment explaining what it is, since it's meant to be
-sourced by the other scripts, not run directly. Re-run
+sourced by the other scripts, not run directly, plus a `BMU_VERSION`
+line recording the version of `backmeup.configure.sh` that generated
+it (always the currently-running one, even on a reconfigure — never
+inherited from a previous setup file). Re-run
 `backmeup.configure.sh` alone later to change settings — it preserves
 the previous `backmeup.setup.sh` as `backmeup.setup.sh.old`.
 

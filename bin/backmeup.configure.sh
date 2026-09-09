@@ -62,6 +62,14 @@ else
     echo "No previous setup file. Using template."
 fi
 #
+# Not sourced from the template/existing setup.sh above like everything
+# else - deliberately. This must always be the version of *this*
+# configure.sh, so a reconfigure doesn't keep reporting a stale value
+# from whenever the install was first set up (sourcing an existing
+# setup.sh above would otherwise silently win). Bump by hand alongside
+# every git tag.
+BMU_VERSION="2.6.0"
+#
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
 echo ""
@@ -330,6 +338,7 @@ echo "# it is meant to be sourced (. backmeup.setup.sh) by the other bmug2" \
 echo "# scripts. To change these settings, re-run backmeup.configure.sh." \
     >> "${MY_PATH}/backmeup.setup.sh.new"
 for curvar in \
+ BMU_VERSION \
  BMU_DIRRSYNC \
  BMU_DIRBACKUPS \
  BMU_DIRDBLOCATE \
