@@ -43,7 +43,6 @@ BMU_DIRDBLOCATE="${BMU_DIRRSYNC}/.locate.dir"
 # ----------
 #BMU_INSTDIR="/usr/local/bmu"
 BMU_INSTDIR="${HOME}/usr/bmu"
-BMU_LINKTO="/usr/local/bin/backmeup"
 #
 # System Options
 # --------------

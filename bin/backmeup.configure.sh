@@ -188,7 +188,6 @@ echo "IndexDB Directory is: ${BMU_DIRDBLOCATE}"
 # OS Options
 # ----------
 #BMU_INSTDIR="${HOME}/usr/bmu"
-#BMU_LINKTO="/usr/local/bin/backmeup"
 #
 echo ""
 echo "The next question is different: this is where the bmug2"
@@ -343,7 +342,6 @@ for curvar in \
  BMU_DIRBACKUPS \
  BMU_DIRDBLOCATE \
  BMU_INSTDIR \
- BMU_LINKTO \
  BMU_INDEXTYPE \
  BMU_DATEFRMT \
  BMU_mydate \
