@@ -23,6 +23,11 @@ fn get_default_paths(app: AppHandle) -> Result<DefaultPaths, String> {
     install::default_paths(&app)
 }
 
+#[tauri::command]
+fn find_existing_installs(app: AppHandle) -> Vec<String> {
+    install::find_existing_installs(&app)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 enum InstallRequest {
@@ -77,6 +82,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_existing_install,
             get_default_paths,
+            find_existing_installs,
             install_bmug2,
             get_status,
             search

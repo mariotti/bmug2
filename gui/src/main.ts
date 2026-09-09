@@ -385,12 +385,47 @@ function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
   return form;
 }
 
+function buildSuggestionsBox(onPick: (path: string) => void): HTMLElement {
+  const box = el("div", { class: "suggestions" }, [
+    el("p", { class: "suggestions-status" }, ["Looking for existing installs…"]),
+  ]);
+  void invoke<string[]>("find_existing_installs")
+    .then((paths) => {
+      if (paths.length === 0) {
+        box.replaceChildren();
+        return;
+      }
+      box.replaceChildren(
+        el("p", { class: "suggestions-label" }, ["Found on this machine:"]),
+        el(
+          "ul",
+          { class: "suggestions-list" },
+          paths.map((path) => {
+            const btn = el("button", { type: "button", class: "suggestion-btn" }, [
+              path,
+            ]);
+            btn.addEventListener("click", () => onPick(path));
+            return el("li", {}, [btn]);
+          }),
+        ),
+      );
+    })
+    .catch(() => {
+      // best-effort only - the manual input/browse button still work
+      box.replaceChildren();
+    });
+  return box;
+}
+
 function buildExistingForm(): HTMLFormElement {
   const [binField, binInput] = directoryField(
     "bmug2 bin directory (contains backmeup.sh)",
     "bin-dir",
     "",
   );
+  const suggestions = buildSuggestionsBox((path) => {
+    binInput.value = path;
+  });
   const submit = el("button", { type: "submit" }, ["Use this install"]);
   const form = el("form", {}, [
     el("p", {}, [
@@ -404,6 +439,7 @@ function buildExistingForm(): HTMLFormElement {
       el("code", {}, ["backmeup.configure.sh"]),
       ".",
     ]),
+    suggestions,
     binField,
     submit,
   ]);

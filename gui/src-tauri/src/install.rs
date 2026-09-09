@@ -67,6 +67,73 @@ pub fn use_existing(app: &AppHandle, bin_dir: &str) -> Result<InstallOutcome, St
     })
 }
 
+/// Suggests likely existing installs by shelling out to `find` (same
+/// "shell out to a real system tool, don't grow a dependency" pattern
+/// as curl/tar above - `find` is exactly bmug2's own philosophy for
+/// this job, see backmeup.locate.sh's own archived-filelist fallback).
+/// Bounded to depth 6 under $HOME and pruning conventionally-huge/
+/// irrelevant directories for speed (confirmed real: ~0.2s against a
+/// real home directory with several GB of node_modules/Cargo/Library
+/// content). Best-effort: any failure (find missing, home dir
+/// unresolvable) yields an empty list rather than an error - this is
+/// a convenience on top of the always-available manual path input/
+/// browse button, not a required step.
+const PRUNE_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "Library",
+    ".cargo",
+    ".rustup",
+    ".npm",
+    ".cache",
+    "Applications",
+];
+
+pub fn find_existing_installs(app: &AppHandle) -> Vec<String> {
+    match app.path().home_dir() {
+        Ok(home) => find_existing_installs_under(&home),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn find_existing_installs_under(search_root: &Path) -> Vec<String> {
+    let mut prune_args: Vec<String> = Vec::new();
+    for (i, name) in PRUNE_DIRS.iter().enumerate() {
+        if i > 0 {
+            prune_args.push("-o".to_string());
+        }
+        prune_args.push("-name".to_string());
+        prune_args.push((*name).to_string());
+    }
+    let output = Command::new("find")
+        .arg(search_root)
+        .arg("-maxdepth")
+        .arg("6")
+        .arg("(")
+        .args(&prune_args)
+        .arg(")")
+        .arg("-prune")
+        .arg("-o")
+        .arg("-name")
+        .arg("backmeup.sh")
+        .arg("-print")
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+
+    let mut candidates: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| Path::new(line).parent().map(|p| p.to_path_buf()))
+        .filter(|dir| config::looks_installed(dir))
+        .map(|dir| dir.display().to_string())
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
 #[derive(Debug, Deserialize)]
 struct LatestRelease {
     tarball_url: Option<String>,
@@ -309,6 +376,42 @@ mod tests {
         let outcome = result.unwrap();
         assert!(Path::new(&outcome.bin_dir).join("backmeup.sh").is_file());
 
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn finds_a_real_install_and_ignores_a_bare_checkout() {
+        let base = std::env::temp_dir().join(format!("bmug2-suggest-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+
+        // a real, configured install
+        let real_install = base.join("usr/bmu/bin");
+        std::fs::create_dir_all(&real_install).unwrap();
+        std::fs::write(real_install.join("backmeup.sh"), "").unwrap();
+        std::fs::write(real_install.join("backmeup.setup.sh"), "").unwrap();
+
+        // a bare checkout: has backmeup.sh, never configured
+        let bare_checkout = base.join("GIT/bmug2/bin");
+        std::fs::create_dir_all(&bare_checkout).unwrap();
+        std::fs::write(bare_checkout.join("backmeup.sh"), "").unwrap();
+
+        // a directory that should be pruned entirely
+        let pruned = base.join("node_modules/somepkg/bin");
+        std::fs::create_dir_all(&pruned).unwrap();
+        std::fs::write(pruned.join("backmeup.sh"), "").unwrap();
+        std::fs::write(pruned.join("backmeup.setup.sh"), "").unwrap();
+
+        let found = find_existing_installs_under(&base);
+        assert_eq!(found, vec![real_install.display().to_string()]);
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn empty_dir_yields_no_suggestions() {
+        let base = std::env::temp_dir().join(format!("bmug2-suggest-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(find_existing_installs_under(&base).is_empty());
         std::fs::remove_dir_all(&base).ok();
     }
 }

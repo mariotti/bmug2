@@ -11,13 +11,16 @@ are independent consumers of the same core.
 
 v1's scope (read-only: status + search, no mutating actions) is
 built. On launch, the app checks a small config it owns
-(`app_data_dir()/config.json` — no auto-discovery of an existing CLI
-install, matching `mcp/`'s own stance):
+(`app_data_dir()/config.json` — it never auto-uses a discovered
+install without an explicit click, matching `mcp/`'s "no single
+well-known install location" stance):
 
 - Nothing installed yet → a setup screen offers to download the latest
   bmug2 release and run its `install.sh` non-interactively
   (`gui/src-tauri/src/install.rs`), or point at a bin directory
-  that's already set up.
+  that's already set up — suggested from a bounded `find` scan of
+  `$HOME` (`find_existing_installs`), or typed/pasted/browsed to
+  directly.
 - Installed → a dashboard (`gui/src-tauri/src/dashboard.rs`): a
   per-project status table (`backmeup.status.sh --json`) with a
   Refresh button, and a search box (`backmeup.locate.sh --json`)
