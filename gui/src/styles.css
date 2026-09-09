@@ -108,6 +108,48 @@ form button {
   background-color: #ffffff;
 }
 
+.suggestions {
+  margin-bottom: 1em;
+}
+
+.suggestions-status {
+  font-size: 0.85em;
+  color: #666;
+}
+
+.suggestions-label {
+  font-size: 0.85em;
+  font-weight: 500;
+  margin-bottom: 0.3em;
+}
+
+.suggestions-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.suggestion-btn {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background-color: #ffffff;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  padding: 0.4em 0.7em;
+  font-size: 0.85em;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.suggestion-btn:hover {
+  border-color: #396cd8;
+  color: #396cd8;
+}
+
 form button[type="submit"] {
   margin-top: 0.5em;
   cursor: pointer;
@@ -254,5 +296,9 @@ form button[type="submit"] {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
+  }
+
+  .suggestions-status {
+    color: #aaa;
   }
 }
