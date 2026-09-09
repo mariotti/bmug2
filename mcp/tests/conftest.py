@@ -53,9 +53,8 @@ def real_sandbox(tmp_path: Path) -> Sandbox:
     shutil.copytree(REPO_BIN, checkout)
 
     # Answers, in prompt order: SYNC (default) -> y to create; BACKUP -> y;
-    # INDEX -> y; base INSTALL path (pre-created above, accepted
-    # immediately); INSTALL dir (default) -> y to create.
-    install_input = "\ny\n\ny\n\ny\n\n\ny\n"
+    # INDEX -> y; INSTALL dir (default) -> y to create.
+    install_input = "\ny\n\ny\n\ny\n\ny\n"
     env = dict(os.environ, HOME=str(home))
     result = subprocess.run(
         [str(checkout / "backmeup.install.sh")],

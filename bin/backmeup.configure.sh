@@ -23,20 +23,18 @@ BMU_CONFIGURE_ROLLBACK=""
 #
 # Non-interactive flags (a GUI, or any other scripted caller, uses
 # these instead of interactive prompts): --sync-dir=, --backup-dir=,
-# --index-dir=, --install-path=, --install-dir=. Any prompt whose flag
-# isn't given still prompts interactively as before - purely additive,
-# mixing flagged and unflagged prompts in the same run is supported.
+# --index-dir=, --install-dir=. Any prompt whose flag isn't given still
+# prompts interactively as before - purely additive, mixing flagged and
+# unflagged prompts in the same run is supported.
 BMU_CLI_DIRRSYNC=""
 BMU_CLI_DIRBACKUPS=""
 BMU_CLI_DIRDBLOCATE=""
-BMU_CLI_INSTPATH=""
 BMU_CLI_INSTDIR=""
 for l_bmu_arg in "$@"; do
     case "$l_bmu_arg" in
         --sync-dir=*)     BMU_CLI_DIRRSYNC="${l_bmu_arg#--sync-dir=}" ;;
         --backup-dir=*)   BMU_CLI_DIRBACKUPS="${l_bmu_arg#--backup-dir=}" ;;
         --index-dir=*)    BMU_CLI_DIRDBLOCATE="${l_bmu_arg#--index-dir=}" ;;
-        --install-path=*) BMU_CLI_INSTPATH="${l_bmu_arg#--install-path=}" ;;
         --install-dir=*)  BMU_CLI_INSTDIR="${l_bmu_arg#--install-dir=}" ;;
         *)
             echo "ERROR: unrecognized argument: $l_bmu_arg" >&2
@@ -50,7 +48,7 @@ done
 # tty to ask on and no UI for that prompt yet either.
 BMU_NONINTERACTIVE=""
 if [ -n "$BMU_CLI_DIRRSYNC" ] || [ -n "$BMU_CLI_DIRBACKUPS" ] || [ -n "$BMU_CLI_DIRDBLOCATE" ] \
-   || [ -n "$BMU_CLI_INSTPATH" ] || [ -n "$BMU_CLI_INSTDIR" ]; then
+   || [ -n "$BMU_CLI_INSTDIR" ]; then
     BMU_NONINTERACTIVE="yes"
 fi
 #
@@ -150,11 +148,10 @@ echo "BackUp Directory is: ${BMU_DIRBACKUPS}"
 if [ -n "${BMU_CLI_DIRDBLOCATE}" ]; then
     bmuConfigureDirFromFlag "${BMU_CLI_DIRDBLOCATE}" "--index-dir" "BMU_DIRDBLOCATE"
 else
-    # Recompute the suggested default from the just-chosen BMU_DIRRSYNC
-    # (same fix as BMU_INSTDIR below applies to BMU_INSTPATH) - otherwise
-    # a custom/flagged SYNC dir is silently ignored here and the stale
-    # template default ("lives inside SYNC by default" becomes false)
-    # is suggested again. A real bug this new test caught: a flagged
+    # Recompute the suggested default from the just-chosen BMU_DIRRSYNC -
+    # otherwise a custom/flagged SYNC dir is silently ignored here and
+    # the stale template default ("lives inside SYNC by default" becomes
+    # false) is suggested again. A real bug this new test caught: a flagged
     # --sync-dir left the IndexDB prompt suggesting the old default
     # location, unrelated to the SYNC dir actually chosen.
     BMU_DIRDBLOCATE_TMP="${BMU_DIRRSYNC}/.locate.dir"
@@ -182,54 +179,21 @@ echo "IndexDB Directory is: ${BMU_DIRDBLOCATE}"
 #
 # OS Options
 # ----------
-#BMU_INSTPATH="/usr/local"
-#BMU_INSTDIRNAME="/bmu"
-#BMU_INSTDIR="${BMU_INSTPATH}${BMU_INSTDIRNAME}"
+#BMU_INSTDIR="${HOME}/usr/bmu"
 #BMU_LINKTO="/usr/local/bin/backmeup"
 #
 echo ""
-echo "The next two questions are different: this is where the bmug2"
+echo "The next question is different: this is where the bmug2"
 echo "PROGRAM itself lives, not your data. Keep it on your regular"
 echo "system disk (not the backup destination above), so it still"
 echo "works even when that drive isn't connected."
 echo ""
 #
-# BMU_INSTPATH
-if [ -n "${BMU_CLI_INSTPATH}" ]; then
-    bmuConfigureDirFromFlag "${BMU_CLI_INSTPATH}" "--install-path" "BMU_INSTPATH"
-else
-    BMU_INSTPATH_TMP=${BMU_INSTPATH}
-    while bmuPromptValue "Please type the base INSTALL directory: (${BMU_INSTPATH_TMP})" "BMU_INSTPATH_TMP" "d"
-    do
-        echo "not valid or not existing installation path: ${BMU_INSTPATH_TMP}"
-        if [ -z "$BMU_INSTPATH_TMP" ] ; then
-    	echo "Empty input value: Exiting the configuration ..."
-    	exit 1
-        fi
-        bmuPromptyNexit "Shall I create the directory for you (y/N)?"
-        export BMU_INSTPATH=${BMU_INSTPATH_TMP}
-        if bmuMkDir "${BMU_INSTPATH}" "empty"; then
-    	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_INSTPATH};"
-    	break
-        else
-    	echo "cannot create the directory."
-        fi
-    done
-    BMU_INSTPATH=${BMU_INSTPATH_TMP}
-fi
-echo "Install on: ${BMU_INSTPATH}"
-#
-
-#
 # BMU_INSTDIR
 if [ -n "${BMU_CLI_INSTDIR}" ]; then
     bmuConfigureDirFromFlag "${BMU_CLI_INSTDIR}" "--install-dir" "BMU_INSTDIR"
 else
-    # Recompute the suggested default from the just-chosen BMU_INSTPATH,
-    # rather than reusing the value the template originally expanded
-    # before BMU_INSTPATH was overridden - otherwise a custom install
-    # path is silently ignored here and the old default suggested again.
-    BMU_INSTDIR_TMP="${BMU_INSTPATH}${BMU_INSTDIRNAME}"
+    BMU_INSTDIR_TMP=${BMU_INSTDIR}
     while bmuPromptValue "Please type the BMU install directory: (${BMU_INSTDIR_TMP})" "BMU_INSTDIR_TMP" "d"
     do
         echo "not valid or not existing BMU install directory: ${BMU_INSTDIR_TMP}"
@@ -369,8 +333,6 @@ for curvar in \
  BMU_DIRRSYNC \
  BMU_DIRBACKUPS \
  BMU_DIRDBLOCATE \
- BMU_INSTPATH \
- BMU_INSTDIRNAME \
  BMU_INSTDIR \
  BMU_LINKTO \
  BMU_INDEXTYPE \

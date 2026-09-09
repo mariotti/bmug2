@@ -16,7 +16,6 @@ pub struct DefaultPaths {
     pub sync_dir: String,
     pub backup_dir: String,
     pub index_dir: String,
-    pub install_path: String,
     pub install_dir: String,
 }
 
@@ -24,8 +23,12 @@ pub struct DefaultPaths {
 ///   BMU_DIRRSYNC="${HOME}/Backups/rsyncBackup"
 ///   BMU_DIRBACKUPS="${BMU_DIRRSYNC}-BP"
 ///   BMU_DIRDBLOCATE="${BMU_DIRRSYNC}/.locate.dir"
-///   BMU_INSTPATH="${HOME}/usr"
-///   BMU_INSTDIR="${BMU_INSTPATH}/bmu"
+///   BMU_INSTDIR="${HOME}/usr/bmu"
+/// No separate "base install path" field - configure.sh used to ask
+/// for one too, but it was write-only (persisted, never read again by
+/// any script) and, once install-dir became independently editable,
+/// had zero effect on where bmug2 actually installs. Dropped from
+/// both sides together rather than just hidden here.
 pub fn default_paths(app: &AppHandle) -> Result<DefaultPaths, String> {
     let home = app
         .path()
@@ -34,13 +37,11 @@ pub fn default_paths(app: &AppHandle) -> Result<DefaultPaths, String> {
     let sync_dir = home.join("Backups").join("rsyncBackup");
     let backup_dir_str = format!("{}-BP", sync_dir.display());
     let index_dir = sync_dir.join(".locate.dir");
-    let install_path = home.join("usr");
-    let install_dir = install_path.join("bmu");
+    let install_dir = home.join("usr").join("bmu");
     Ok(DefaultPaths {
         sync_dir: sync_dir.display().to_string(),
         backup_dir: backup_dir_str,
         index_dir: index_dir.display().to_string(),
-        install_path: install_path.display().to_string(),
         install_dir: install_dir.display().to_string(),
     })
 }
@@ -174,13 +175,12 @@ fn find_extracted_dir(extract_dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// Downloads the latest bmug2 release and runs its install.sh
-/// non-interactively with the five given paths.
+/// non-interactively with the four given paths.
 pub fn install_new(
     app: &AppHandle,
     sync_dir: &str,
     backup_dir: &str,
     index_dir: &str,
-    install_path: &str,
     install_dir: &str,
 ) -> Result<InstallOutcome, String> {
     let base_tmp = app
@@ -191,14 +191,7 @@ pub fn install_new(
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
 
-    let result = install_new_into(
-        &work_dir,
-        sync_dir,
-        backup_dir,
-        index_dir,
-        install_path,
-        install_dir,
-    );
+    let result = install_new_into(&work_dir, sync_dir, backup_dir, index_dir, install_dir);
     let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
 
     let outcome = result?;
@@ -216,7 +209,6 @@ fn install_new_into(
     sync_dir: &str,
     backup_dir: &str,
     index_dir: &str,
-    install_path: &str,
     install_dir: &str,
 ) -> Result<InstallOutcome, String> {
     let mut log = String::new();
@@ -263,7 +255,6 @@ fn install_new_into(
         .arg(format!("--sync-dir={sync_dir}"))
         .arg(format!("--backup-dir={backup_dir}"))
         .arg(format!("--index-dir={index_dir}"))
-        .arg(format!("--install-path={install_path}"))
         .arg(format!("--install-dir={install_dir}"))
         .stdin(Stdio::null()))?;
     log.push_str(&install_log);
@@ -360,7 +351,6 @@ mod tests {
         let sync_dir = base.join("data/sync");
         let backup_dir = base.join("data/sync-BP");
         let index_dir = base.join("data/sync/.locate.dir");
-        let install_path = base.join("data/usr");
         let install_dir = base.join("data/usr/bmu");
 
         let result = install_new_into(
@@ -368,7 +358,6 @@ mod tests {
             sync_dir.to_str().unwrap(),
             backup_dir.to_str().unwrap(),
             index_dir.to_str().unwrap(),
-            install_path.to_str().unwrap(),
             install_dir.to_str().unwrap(),
         );
 

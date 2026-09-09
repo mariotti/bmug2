@@ -89,10 +89,9 @@ testUserJourneyEndToEnd() {
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
     # Answers, in prompt order: SYNC (default, doesn't exist) -> y to
-    # create; BACKUP (default) -> y; INDEX (default) -> y; base INSTALL
-    # path (pre-created above, so accepted immediately, no create
-    # prompt); INSTALL dir (default, doesn't exist) -> y to create.
-    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+    # create; BACKUP (default) -> y; INDEX (default) -> y; INSTALL dir
+    # (default, doesn't exist) -> y to create.
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/journey/install.log" 2>&1
     assertEquals "install failed, see install.log" 0 $?
@@ -186,32 +185,33 @@ testUserJourneyEndToEnd() {
     assertTrue "snapshot not restored to a directory" "[ -d '${l_snap}' ]"
 }
 
-testInstallOffersToCreateCustomInstpath() {
-    # The base INSTALL directory prompt used to be the only one of the
-    # four directory prompts that didn't offer to create a missing
-    # directory - it just printed "not existing installation path." and
-    # exited, which only went unnoticed because every other test (and the
-    # journey test above) pre-creates the default path or accepts an
-    # already-existing default. Typing a custom, nonexistent path is the
-    # scenario that actually exposed it.
-    l_home="${SHUNIT_TMPDIR}/custominstpathhome"
-    l_checkout="${SHUNIT_TMPDIR}/custominstpathcheckout"
+testInstallOffersToCreateCustomInstallDir() {
+    # The install directory prompt used to be the only one of the four
+    # directory prompts that didn't offer to create a missing directory
+    # (back when it was split into a "base install path" question plus
+    # this one) - it just printed "not existing installation path." and
+    # exited, which only went unnoticed because every other test (and
+    # the journey test above) pre-creates the default path or accepts
+    # an already-existing default. Typing a custom, nonexistent path is
+    # the scenario that actually exposed it; kept as its own test now
+    # that there's a single install-directory question, not two.
+    l_home="${SHUNIT_TMPDIR}/custominstdirhome"
+    l_checkout="${SHUNIT_TMPDIR}/custominstdircheckout"
     mkdir -p "${l_home}" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
     # Answers: SYNC (default) -> y; BACKUP (default) -> y; INDEX
-    # (default) -> y; base INSTALL path -> a custom, nonexistent path,
-    # then y to create it; INSTALL dir (default under that custom
-    # path) -> y to create.
-    printf '\ny\n\ny\n\ny\n%s\ny\n\ny\n' "${l_home}/custom-instpath" | \
+    # (default) -> y; INSTALL dir -> a custom, nonexistent path, then y
+    # to create it.
+    printf '\ny\n\ny\n\ny\n%s\ny\n' "${l_home}/custom-installdir" | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
-        > "${SHUNIT_TMPDIR}/custominstpath-install.log" 2>&1
-    assertEquals "install with a custom INSTPATH failed, see custominstpath-install.log" \
+        > "${SHUNIT_TMPDIR}/custominstdir-install.log" 2>&1
+    assertEquals "install with a custom install dir failed, see custominstdir-install.log" \
         0 $?
-    assertTrue "custom INSTPATH was not created" \
-        "[ -d '${l_home}/custom-instpath' ]"
-    assertTrue "install did not create backmeup.sh under the custom INSTPATH" \
-        "[ -x '${l_home}/custom-instpath/bmu/bin/backmeup.sh' ]"
+    assertTrue "custom install dir was not created" \
+        "[ -d '${l_home}/custom-installdir' ]"
+    assertTrue "install did not create backmeup.sh under the custom install dir" \
+        "[ -x '${l_home}/custom-installdir/bin/backmeup.sh' ]"
 }
 
 testInstallAbortsCleanlyWhenConfigureFails() {
@@ -287,9 +287,8 @@ testConfigureRepromptsOnNonAbsoluteAnswerInsteadOfAborting() {
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
     # SYNC: blank+y: BackUp: blank+y; IndexDB: "y" (mistake) -> rejected,
-    # re-prompted -> blank+y; INSTPATH: blank (pre-created above, no
-    # create prompt); INSTDIR: blank+y.
-    printf '\ny\n\ny\ny\n\ny\n\n\ny\n' | \
+    # re-prompted -> blank+y; INSTDIR: blank+y.
+    printf '\ny\n\ny\ny\n\ny\n\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/repromptbadanswer-install.log" 2>&1
     assertEquals "install should recover and succeed, see repromptbadanswer-install.log" \
@@ -321,11 +320,11 @@ testInstallCopiesOnlyRealFilesNoHousekeepingCruft() {
     # a stray hand-made backup, the kind a manual edit can leave behind
     echo "leftover" > "${l_checkout}/backmeup.setup.sh.bak"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     assertEquals "first install failed" 0 $?
     # reconfigure once more so backmeup.setup.sh.old actually gets created
-    printf '\n\n\n\n\n' | \
+    printf '\n\n\n\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.configure.sh" > /dev/null 2>&1
     assertTrue "expected backmeup.setup.sh.old to exist after reconfiguring" \
         "[ -f '${l_checkout}/backmeup.setup.sh.old' ]"
@@ -357,7 +356,7 @@ testConfigureExplainsDestinationsAndDefaultIsNotNamedTmp() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/tips-install.log" 2>&1
     assertEquals "install failed, see tips-install.log" 0 $?
@@ -380,7 +379,7 @@ testBackmeupShrcGeneratedIdempotentPath() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     l_bmu="${l_home}/usr/bmu"
     assertTrue "backmeup_shrc was not generated" "[ -f '${l_bmu}/backmeup_shrc' ]"
@@ -400,7 +399,7 @@ testInstallOffersRcIntegrationAndAppendsOnce() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcappend-install.log" 2>&1
     assertEquals "install failed, see rcappend-install.log" 0 $?
@@ -422,7 +421,7 @@ testInstallRcIntegrationDeclineDoesNotFailInstall() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     assertEquals "declining rc integration must not fail the install" 0 $?
     unset SHELL
@@ -440,11 +439,11 @@ testInstallRcIntegrationIdempotentOnRerun() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\ny\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     # second run: all directories already exist (blank accepts default),
     # decline replication again, answer y again to the rc prompt too
-    printf '\n\n\n\n\nn\ny\n' | \
+    printf '\n\n\n\nn\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcrerun-install.log" 2>&1
     assertEquals "second install run failed" 0 $?
@@ -466,7 +465,7 @@ testConfigureOffersReplicationSetupAndPersistsIt() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\ny\nremote:bucket/sync\nremote:bucket/sync-BP\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\ny\nremote:bucket/sync\nremote:bucket/sync-BP\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/replicatesetup-install.log" 2>&1
     assertEquals "install failed, see replicatesetup-install.log" 0 $?
@@ -489,7 +488,7 @@ testConfigureSkipsReplicationSetupWhenDeclined() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/replicatedecline-install.log" 2>&1
     assertEquals "install failed, see replicatedecline-install.log" 0 $?
@@ -527,7 +526,6 @@ testConfigureNonInteractiveFlagsSkipPrompts() {
         --sync-dir="${l_home}/data/sync" \
         --backup-dir="${l_home}/data/sync-BP" \
         --index-dir="${l_home}/data/sync/.locate.dir" \
-        --install-path="${l_home}/data/usr" \
         --install-dir="${l_home}/data/usr/bmu" \
         < /dev/null > "${SHUNIT_TMPDIR}/noninteractive-install.log" 2>&1
     assertEquals "non-interactive install failed, see noninteractive-install.log" \
@@ -546,14 +544,14 @@ testConfigureNonInteractiveFlagsSkipPrompts() {
 }
 
 testConfigurePartialFlagsStillPromptForRest() {
-    # SYNC/BackUp flagged; IndexDB/INSTPATH/INSTDIR still answered
-    # interactively - proves the two modes can mix in one run.
+    # SYNC/BackUp flagged; IndexDB/INSTDIR still answered interactively
+    # - proves the two modes can mix in one run.
     l_home="${SHUNIT_TMPDIR}/partialflagshome"
     l_checkout="${SHUNIT_TMPDIR}/partialflagscheckout"
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n' | \
+    printf '\ny\ny\n\ny\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         --sync-dir="${l_home}/flagged-sync" \
         --backup-dir="${l_home}/flagged-sync-BP" \
@@ -601,7 +599,7 @@ testBmuDispatcherRoutesSubcommandsViaPath() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     unset SHELL
 
@@ -703,7 +701,7 @@ testBmuNoArgsShowsUsageAndExitsOne() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     unset SHELL
 
@@ -726,7 +724,7 @@ testBmuUnrecognizedFirstArgFallsThroughToBackup() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\n\ny\nn\n' | \
+    printf '\ny\n\ny\n\ny\n\ny\nn\n' | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     unset SHELL
 
