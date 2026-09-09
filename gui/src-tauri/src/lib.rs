@@ -73,6 +73,7 @@ fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             check_existing_install,
             get_default_paths,
