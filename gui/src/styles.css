@@ -92,6 +92,22 @@ form button {
   font-family: inherit;
 }
 
+.field-row {
+  display: flex;
+  gap: 0.5em;
+}
+
+.field-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.browse-btn {
+  cursor: pointer;
+  white-space: nowrap;
+  background-color: #ffffff;
+}
+
 form button[type="submit"] {
   margin-top: 0.5em;
   cursor: pointer;

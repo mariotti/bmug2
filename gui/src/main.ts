@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 // First-run flow: check for a saved install, otherwise offer to
 // install a new copy or point at an existing one. Wording below is
@@ -292,24 +293,54 @@ function field(
   return [wrapper, input];
 }
 
+// Same as field(), plus a native folder-picker button (no client-side
+// path validation here either - picking a folder just fills the same
+// text input backmeup.configure.sh's own validation ultimately checks;
+// typing/pasting a path directly still works exactly as before.
+function directoryField(
+  label: string,
+  id: string,
+  value: string,
+): [HTMLDivElement, HTMLInputElement] {
+  const input = el("input", { type: "text", id, value });
+  const browseBtn = el("button", { type: "button", class: "browse-btn" }, [
+    "Browse…",
+  ]);
+  browseBtn.addEventListener("click", () => {
+    void open({ directory: true, defaultPath: input.value || undefined }).then(
+      (selected) => {
+        if (typeof selected === "string") {
+          input.value = selected;
+        }
+      },
+    );
+  });
+  const row = el("div", { class: "field-row" }, [input, browseBtn]);
+  const wrapper = el("div", { class: "field" }, [
+    el("label", { for: id }, [label]),
+    row,
+  ]);
+  return [wrapper, input];
+}
+
 function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
-  const [syncField, syncInput] = field("SYNC directory", "sync-dir", defaults.sync_dir);
-  const [backupField, backupInput] = field(
+  const [syncField, syncInput] = directoryField("SYNC directory", "sync-dir", defaults.sync_dir);
+  const [backupField, backupInput] = directoryField(
     "BackUp directory",
     "backup-dir",
     defaults.backup_dir,
   );
-  const [indexField, indexInput] = field(
+  const [indexField, indexInput] = directoryField(
     "IndexDB directory",
     "index-dir",
     defaults.index_dir,
   );
-  const [pathField, pathInput] = field(
+  const [pathField, pathInput] = directoryField(
     "Base install directory",
     "install-path",
     defaults.install_path,
   );
-  const [dirField, dirInput] = field(
+  const [dirField, dirInput] = directoryField(
     "BMU install directory",
     "install-dir",
     defaults.install_dir,
@@ -355,7 +386,7 @@ function buildNewForm(defaults: DefaultPaths): HTMLFormElement {
 }
 
 function buildExistingForm(): HTMLFormElement {
-  const [binField, binInput] = field(
+  const [binField, binInput] = directoryField(
     "bmug2 bin directory (contains backmeup.sh)",
     "bin-dir",
     "",
