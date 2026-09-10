@@ -49,16 +49,19 @@ HISTORY/<project>/B-<date>/...        the changed/deleted files, that run
 HISTORY/<project>/B-<date>.filelist   plain-text `find` listing of the snapshot
 HISTORY/<project>/B-<date>.tar.gz     the snapshot, once archived (see below)
 HISTORY/<project>/.bmulastrun         timestamp of the last successful run
+HISTORY/<project>.filelist            plain-text listing of the current mirror,
+                                       refreshed on every successful run - lets
+                                       search find just-backed-up files instantly,
+                                       without waiting for a full reindex
 ```
 
 `<date>` is `YYYYMMDD-HHMMSS`, so snapshot names sort chronologically as
-plain strings. The index directory holds one full index of SYNC, one of
-HISTORY, and one incremental index per backup run:
+plain strings. The index directory holds one full index of SYNC and one
+of HISTORY, rebuilt from scratch by `backmeup.updatedb.sh`:
 
 ```
 SYNC/.locate.dir/.locate.db                       full index of SYNC
 SYNC/.locate.dir/.locate.dbb                       full index of HISTORY
-SYNC/.locate.dir/.locate.db.<project>.<date>       one run's incremental index
 ```
 
 Everything here is a plain file or directory — no bmug2-specific format
@@ -142,6 +145,10 @@ Backs up `<dir>` as a project named after its basename. Copies new and
 changed files into `SYNC/<project>/`; anything changed or deleted since
 the last run is moved into a new `HISTORY/<project>/B-<date>/` snapshot
 instead of being lost. If nothing changed, no snapshot is created.
+Also refreshes `HISTORY/<project>.filelist` (a plain listing of the
+current mirror) on every successful run, so
+[backmeup.locate.sh](#backmeuplocatesh) can find what was just backed
+up immediately, without waiting for a full reindex.
 
 `-n`/`--dry-run` previews the transfer (what would be copied, deleted,
 archived) without changing anything on disk — safety checks below still
@@ -181,17 +188,22 @@ reformatted to match each other or ISO 8601).
 backmeup.locate.sh <pattern>...
 ```
 
-Case-insensitive search across the current mirror and the full history
-(`locate -i`), plus a plain-`grep` pass over the `.filelist` of any
-*archived* snapshot (see [backmeup.archive.sh](#backmeuparchivesh)),
-whose hits are marked `(archived)`. Works with no `locate` installed at
-all — search then falls back entirely to the filelists.
+Case-insensitive search across three sources at once: the full index
+(`locate -i`, covering `SYNC` and `HISTORY`), a plain-`grep` pass over
+each project's live `HISTORY/<project>.filelist` (marked `(live)` —
+covers anything backed up since the last full reindex), and a
+plain-`grep` pass over the `.filelist` of any *archived* snapshot (see
+[backmeup.archive.sh](#backmeuparchivesh), marked `(archived)`). The
+same real hit can legitimately show up more than once across sources —
+not deduplicated. Works with no `locate` installed at all — search
+then falls back entirely to the filelists.
 
 `--json` emits `{"patterns", "indexed", "counts": {"index",
-"archived_filelist"}, "results": [{"path", "source"}, ...]}` instead of
-plain-text lines — `source` is `"index"` or `"archived_filelist"`;
-`indexed` is `false` when no `locate` binary is available (results can
-then only come from the archived-filelist fallback).
+"archived_filelist", "live"}, "results": [{"path", "source"}, ...]}`
+instead of plain-text lines — `source` is `"index"`,
+`"archived_filelist"`, or `"live"`; `indexed` is `false` when no
+`locate` binary is available (results can then only come from the
+filelist fallbacks).
 
 ### backmeup.updatedb.sh
 
@@ -199,9 +211,12 @@ then only come from the archived-filelist fallback).
 backmeup.updatedb.sh
 ```
 
-Rebuilds the full `SYNC` and `HISTORY` indexes from scratch and clears
-old per-run incremental indexes. Can take a long time on a large
-backup; a good candidate for a nightly cron job. Fails if no
+Rebuilds the full `SYNC` and `HISTORY` indexes from scratch. Not
+required for search to work on just-backed-up files — see
+[backmeup.locate.sh](#backmeuplocatesh)'s live-filelist fallback above
+— but still the only way to get indexed (fast, `locate`-backed) search
+over everything. Can take a long time on a large backup; a good
+candidate for a nightly cron job. Fails if no
 `updatedb` is available.
 
 ### backmeup.archive.sh

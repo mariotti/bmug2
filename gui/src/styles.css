@@ -267,6 +267,11 @@ form button[type="submit"] {
   color: #8a6d00;
 }
 
+.source-tag.source-live {
+  background-color: #dcf3de;
+  color: #1a7431;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;

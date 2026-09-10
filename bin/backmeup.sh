@@ -98,17 +98,19 @@ if [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then
   cd - > /dev/null
 fi;
 #
-### END OF RSYNC JOB ###
+# Live filelist: a plain `find` over the just-updated mirror, refreshed on
+# every successful run - not the slow full `bmu updatedb`/cron reindex,
+# which can be a day away. Without this, a file backed up seconds ago
+# is invisible to backmeup.locate.sh until that next full reindex
+# happens, since the index it queries (.locate.db) is only ever built by
+# backmeup.updatedb.sh, never incrementally by this script. Same
+# zero-dependency "grep a plain filelist" trick already used for
+# archived snapshots below, just for the live mirror instead of history.
+if [ ${l_BMU_RSYNCRC} -eq 0 ]; then
+    ( cd "${BMU_DIRRSYNC}" && find "${l_BMU_PRJDIR}" > "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}.filelist" )
+fi;
 #
-# INDEXING
-# Add Eventual changed files
-if [ -z "${BMU_CMDUPDATEDB}" ]; then
-    echo "WARNING: no updatedb found, skipping indexing."
-    echo "  Search still works via the .filelist files."
-    echo "  Install GNU findutils (macOS: brew install findutils)"
-elif [ -d "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}" ]; then
-    ${BMU_CMDUPDATEDB} --output="${BMU_DIRDBLOCATE}/.locate.db.${l_BMU_PRJDIR}.${mydate}" ${BMU_UPDBOPT}"${l_BMU_DIRBKUP}"
-fi
+### END OF RSYNC JOB ###
 #
 #Exit with rsync's own status: a cron job checking $? should see a real
 #rsync failure, not the unrelated exit code of whichever "if" ran last
