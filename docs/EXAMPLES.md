@@ -4,6 +4,14 @@ Real, run-and-verified sessions covering common and not-so-common setups.
 For the option-by-option reference, see [MANUAL.md](MANUAL.md); this doc
 is about *how* people actually use bmug2 day to day.
 
+Sessions below call the full `backmeup.*.sh` names for clarity about
+which command does what. Once bmug2 is on your `PATH` (`install.sh`
+offers this), the shorter [`bmu`](MANUAL.md#bmu) dispatcher does the
+same thing: `bmu ~/Documents` for `backmeup.sh ~/Documents`, `bmu
+status` for `backmeup.status.sh`, `bmu locate` for
+`backmeup.locate.sh`, and so on — interchangeable, same output either
+way.
+
 ## Contents
 
  - [The basics: one directory, one project](#the-basics-one-directory-one-project)
@@ -203,8 +211,9 @@ afterward:
 
 Notes:
 
- - Full paths everywhere — cron's `PATH` is minimal, and (per the
-   manual) bmug2 doesn't put itself on `PATH` anyway.
+ - Full paths everywhere — cron doesn't source your shell rc file, so
+   even if you accepted `install.sh`'s offer to put `bmu`/`backmeup.*.sh`
+   on `PATH` for interactive shells, cron jobs still need the full path.
  - Stagger the backup jobs a few minutes apart if they share a slow
    disk; running `updatedb.sh` only after they've all finished avoids
    indexing a half-written backup.
