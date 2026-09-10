@@ -359,16 +359,31 @@ installed; `brew install rsync` (or your distro's real rsync package).
 work; install findutils to enable fast indexed search, or rely on
 `backmeup.locate.sh`'s filelist fallback.
 
-**`backmeup.updatedb.sh` (or replication) fails from cron/launchd with
-`ERROR: no updatedb found, cannot build the index.` even though
-`backmeup.configure.sh` never warned about it** — this is a PATH
-problem, not a missing-tool problem. `configure.sh` ran with your
-normal interactive PATH (Homebrew's `/opt/homebrew/bin` included);
-cron and launchd jobs start with a minimal PATH that leaves it out, and
-unlike `rsync`'s own detection, the indexer/rclone detection has no
-absolute-path fallback to fall back on. Set `PATH=` explicitly in the
-scheduler entry (see [SCHEDULING.md](SCHEDULING.md) for worked
-examples on both platforms).
+**`backup`/`updatedb`/replication behaves differently from cron/launchd
+than it does in Terminal — an error, or (worse) no error but deleted
+files stay in the mirror** — this is a PATH problem: `configure.sh`
+detects rsync/the indexer/rclone once, with your normal interactive
+PATH (Homebrew's `/opt/homebrew/bin` included), and bakes the result
+into `backmeup.setup.sh`; nothing re-detects at run time. Older
+installs baked in a bare command name, which can resolve to a
+*different binary* under cron/launchd's minimal PATH — for rsync
+specifically, bare `rsync` under a stripped PATH can silently become
+Apple's openrsync, which drops `--delete`, so a deleted source file
+quietly stays in the mirror with no error at all. The indexer/rclone
+side of the same bug fails loudly instead:
+
+```
+ERROR: no updatedb found, cannot build the index.
+  Install GNU findutils (macOS: brew install findutils)
+```
+
+**Fixed** in the detection functions (`bin/backmeup.shellfunctions.sh`)
+to always bake in the resolved absolute path, never a bare name. If
+your install predates this fix, **re-run `backmeup.configure.sh`
+once** to regenerate `backmeup.setup.sh` with absolute paths — it's
+idempotent and safe to re-run. See
+[SCHEDULING.md](SCHEDULING.md#what-every-scheduler-needs-to-know)
+for the full writeup and worked scheduler examples on both platforms.
 
 **`ERROR: replication is not configured`** — re-run
 `backmeup.configure.sh` and accept the off-site replication prompt

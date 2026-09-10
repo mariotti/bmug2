@@ -520,8 +520,9 @@ testConfigureOffersReplicationSetupAndPersistsIt() {
     assertEquals "install failed, see replicatesetup-install.log" 0 $?
 
     l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
-    grep -q 'BMU_CMDREPLICATE="rclone sync"' "${l_setup}"
-    assertTrue "replication command was not persisted" $?
+    l_rclone="$(command -v rclone)"
+    grep -q "BMU_CMDREPLICATE=\"${l_rclone} sync\"" "${l_setup}"
+    assertTrue "replication command was not persisted as an absolute path" $?
     grep -q 'BMU_REPLICATE_REMOTE_SYNC="remote:bucket/sync"' "${l_setup}"
     assertTrue "remote SYNC destination was not persisted" $?
     grep -q 'BMU_REPLICATE_REMOTE_BACKUPS="remote:bucket/sync-BP"' "${l_setup}"
