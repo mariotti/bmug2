@@ -42,7 +42,7 @@ interface LocateHit {
 interface LocateResult {
   patterns: string[];
   indexed: boolean;
-  counts: { index: number; archived_filelist: number };
+  counts: { index: number; live: number; archived_filelist: number };
   results: LocateHit[];
 }
 
@@ -173,12 +173,21 @@ async function runSearch(
   }
 }
 
+// "index"/"live" pass through as-is; anything else (today just
+// "archived_filelist") is display-shortened to "archived" - matches
+// the source-tag CSS class name (source-${hit.source}) staying the
+// raw backend value, only the visible label gets the friendlier text.
+function sourceLabel(source: string): string {
+  if (source === "index" || source === "live") return source;
+  return "archived";
+}
+
 function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
   const children: (Node | string)[] = [];
   if (!result.indexed) {
     children.push(
       el("p", { class: "note-not-indexed" }, [
-        "No locate installed — results are from archived snapshots only.",
+        "No locate installed — results are from live and archived filelists only.",
       ]),
     );
   }
@@ -192,7 +201,7 @@ function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
         result.results.map((hit) =>
           el("li", {}, [
             el("span", { class: `source-tag source-${hit.source}` }, [
-              hit.source === "index" ? "index" : "archived",
+              sourceLabel(hit.source),
             ]),
             hit.path,
           ]),

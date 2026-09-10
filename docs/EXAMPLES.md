@@ -261,6 +261,10 @@ $ backmeup.locate.sh scratch.txt
 
 That's the deleted `scratch.txt` from the "edit and delete" example
 above — gone from the live mirror, found instantly in its snapshot.
+`updatedb.sh` was needed here since the file only exists inside a
+`HISTORY` snapshot; a file still in the *live* mirror is searchable
+right after its own backup run, no `updatedb.sh` required — see
+[MANUAL.md](MANUAL.md#backmeuplocatesh).
 
 ## Housekeeping: status and archiving old snapshots
 

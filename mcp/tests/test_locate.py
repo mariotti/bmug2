@@ -110,6 +110,36 @@ def test_filelist_skipped_when_snapshot_dir_still_present(tmp_path):
     assert result.counts.archived_filelist == 0
 
 
+def test_live_filelist_hit_tagged_and_counted(tmp_path):
+    # bin/backmeup.sh writes HISTORY/<project>.filelist (flat, not nested
+    # under HISTORY/<project>/ like the archived-snapshot filelists above)
+    # on every successful run, so search finds fresh content immediately.
+    config = _config(tmp_path, locate_cmd=None)
+    config.history_dir.mkdir(parents=True)
+    filelist = config.history_dir / "proj.filelist"
+    filelist.write_text("proj\nproj/Fresh.TXT\n")
+
+    result = do_locate(config, ["fresh.txt"])
+    assert result.counts.live == 1
+    assert result.results[0].source == "live"
+    assert result.results[0].path == str(config.sync_dir / "proj/Fresh.TXT")
+
+
+def test_live_and_archived_hits_can_coexist_for_the_same_search(tmp_path):
+    config = _config(tmp_path, locate_cmd=None)
+    config.history_dir.mkdir(parents=True)
+    (config.history_dir / "proj.filelist").write_text("proj/shared.txt\n")
+    snap_fl = config.history_dir / "proj" / "B-20260101-000000.filelist"
+    snap_fl.parent.mkdir(parents=True)
+    snap_fl.write_text("proj/B-20260101-000000/shared.txt\n")
+
+    result = do_locate(config, ["shared.txt"])
+    assert result.counts.live == 1
+    assert result.counts.archived_filelist == 1
+    sources = {h.source for h in result.results}
+    assert sources == {"live", "archived_filelist"}
+
+
 def test_literal_substring_not_regex(tmp_path):
     # A deliberate difference from grep -i's basic-regex semantics: "." in
     # a pattern must match literally, not "any character".

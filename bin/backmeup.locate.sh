@@ -50,13 +50,26 @@ if [ -z "${l_BMU_JSON}" ]; then
                 sed "s|^|${BMU_DIRBACKUPS}/|; s|\$| (archived)|"
         done
     done
+    #
+    # Live mirror content (backmeup.sh writes/refreshes one of these per
+    # project on every successful run) - covers files too new for the
+    # locate index above, which is only rebuilt by the separate, slower
+    # bmu updatedb, possibly a day away via cron.
+    for l_fl in "${BMU_DIRBACKUPS}"/*.filelist; do
+        [ -f "${l_fl}" ] || continue
+        for l_pat in "$@"; do
+            grep -i -- "${l_pat}" "${l_fl}" | \
+                sed "s|^|${BMU_DIRRSYNC}/|; s|\$| (live)|"
+        done
+    done
     exit 0
 fi;
 #
-# JSON mode: same two sources as above, captured instead of printed.
+# JSON mode: same sources as above, captured instead of printed.
 l_indexed="false"
 l_idxcount=0
 l_archcount=0
+l_livecount=0
 l_results=""
 #
 bmuJsonAddResult() {
@@ -102,6 +115,23 @@ for l_fl in "${BMU_DIRBACKUPS}"/*/B-*.filelist; do
     done
 done
 #
+for l_fl in "${BMU_DIRBACKUPS}"/*.filelist; do
+    [ -f "${l_fl}" ] || continue
+    for l_pat in "$@"; do
+        l_lhits=`grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null`
+        [ -z "${l_lhits}" ] && continue
+        l_oldifs="${IFS}"
+        IFS='
+'
+        for l_lpath in ${l_lhits}; do
+            [ -n "${l_lpath}" ] || continue
+            bmuJsonAddResult "${BMU_DIRRSYNC}/${l_lpath}" "live"
+            l_livecount=`expr ${l_livecount} + 1`
+        done
+        IFS="${l_oldifs}"
+    done
+done
+#
 l_patjson=""
 for l_pat in "$@"; do
     l_pesc=`bmuJsonEscape "${l_pat}"`
@@ -109,8 +139,8 @@ for l_pat in "$@"; do
     l_patjson="${l_patjson}\"${l_pesc}\""
 done
 #
-printf '{"patterns":[%s],"indexed":%s,"counts":{"index":%d,"archived_filelist":%d},"results":[%s]}\n' \
-    "${l_patjson}" "${l_indexed}" "${l_idxcount}" "${l_archcount}" "${l_results}"
+printf '{"patterns":[%s],"indexed":%s,"counts":{"index":%d,"archived_filelist":%d,"live":%d},"results":[%s]}\n' \
+    "${l_patjson}" "${l_indexed}" "${l_idxcount}" "${l_archcount}" "${l_livecount}" "${l_results}"
 #
 # NOTES
 #

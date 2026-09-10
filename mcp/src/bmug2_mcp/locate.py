@@ -71,6 +71,35 @@ def _archived_filelist_hits(config: Config, patterns: list[str]) -> list[str]:
     return hits
 
 
+def _live_filelist_hits(config: Config, patterns: list[str]) -> list[str]:
+    """Every project's live filelist (HISTORY/<project>.filelist, flat -
+    not the nested HISTORY/<project>/B-<date>.filelist snapshots
+    _archived_filelist_hits reads) is refreshed by bin/backmeup.sh on
+    every successful run, so a file backed up seconds ago is findable
+    here immediately - unlike the locate index above, which is only
+    ever rebuilt by the separate, slower backmeup.updatedb.sh.
+    """
+    hits: list[str] = []
+    if not config.history_dir.is_dir():
+        return hits
+    lowered_patterns = [p.lower() for p in patterns]
+    for filelist in sorted(config.history_dir.glob("*.filelist")):
+        try:
+            lines = filelist.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line:
+                continue
+            lowered = line.lower()
+            if any(p in lowered for p in lowered_patterns):
+                # `line` is relative to sync_dir: bin/backmeup.sh writes
+                # each live filelist via `cd "$BMU_DIRRSYNC" && find
+                # "$project"`.
+                hits.append(str(config.sync_dir / line))
+    return hits
+
+
 def do_locate(config: Config, patterns: list[str]) -> LocateResult:
     indexed = bool(config.locate_cmd) and config.index_dir is not None
     index_hits: list[str] = []
@@ -85,14 +114,18 @@ def do_locate(config: Config, patterns: list[str]) -> LocateResult:
                     _run_locate(config.locate_cmd, config.index_dir / db_name, pattern)
                 )
 
+    live_hits = _live_filelist_hits(config, patterns)
     archived_hits = _archived_filelist_hits(config, patterns)
 
     results = [LocateHit(path=p, source="index") for p in index_hits]
+    results.extend(LocateHit(path=p, source="live") for p in live_hits)
     results.extend(LocateHit(path=p, source="archived_filelist") for p in archived_hits)
 
     return LocateResult(
         patterns=patterns,
         indexed=indexed,
-        counts=LocateCounts(index=len(index_hits), archived_filelist=len(archived_hits)),
+        counts=LocateCounts(
+            index=len(index_hits), archived_filelist=len(archived_hits), live=len(live_hits)
+        ),
         results=results,
     )
