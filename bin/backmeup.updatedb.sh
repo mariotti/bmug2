@@ -47,7 +47,3 @@ fi;
 ${BMU_CMDUPDATEDB} --output="${BMU_DIRDBLOCATE}/.locate.db" ${BMU_UPDBOPT}"${BMU_DIRRSYNC}"
 ${BMU_CMDUPDATEDB} --output="${BMU_DIRDBLOCATE}/.locate.dbb" ${BMU_UPDBOPT}"${BMU_DIRBACKUPS}"
 #
-# Remove old part indexes
-# This will have to check the dates, expecially for concurrency problems.
-rm -rf "${BMU_DIRDBLOCATE}"/.locate.db.*
-#
