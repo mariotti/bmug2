@@ -39,11 +39,9 @@ bmuConfigureDirFromFlag() {
 #
 # bmuMkDir()
 # This function tries to create a directory and returns the success
-# of the command. Still buggy!!!
-# The default behavior is just exactly as mkdir, but you can
-# ask to force a positive response if the directory exists already
-# or check if the newly "forced" created directory is empty (The
-# still buggy part).
+# of the command. The default behavior is just exactly as mkdir, but
+# you can ask to force a positive response if the directory exists
+# already, or check that the newly "forced" created directory is empty.
 bmuMkDir() {
     newdir=$1
     force=$2
@@ -55,20 +53,20 @@ bmuMkDir() {
 	    mkdir -p "$newdir"
 	    [ "$(ls -A "$newdir")" ] && return 1 || return 0
 	    ;;
-	* | "n" | "N" | "no" | "NO" | "No")
+	"n" | "N" | "no" | "NO" | "No" | *)
 	    mkdir "$newdir"; return $?
 	    ;;
     esac
 }
 #
 # bmuSetIndirectVar()
-# TO DOUBLE CHECK THIS COMMENT AND DEMO
-# This function is an helper to read indirect variables.
-# i.e. get the content of a variable whos name is saved
-# within an other variable. Like:
-# MYDIR="/tmp"
-# WHICHDIR="MYDIR"
-#	bmuSetIndirectVar "WHICHDIR" "$MYDIR"
+# Sets the variable named $1 to the current value of the variable whose
+# NAME is given by $2 - i.e. $2 is itself a variable holding a name.
+# Given:
+#   MYDIR="/tmp"
+#   WHICHDIR="MYDIR"
+#	bmuSetIndirectVar "target" "$WHICHDIR"
+# `target` ends up set to "/tmp" (the value of the variable MYDIR names).
 #
 bmuSetIndirectVar(){
     tmpVarName=$1
@@ -109,10 +107,6 @@ bmuPromptyNexit() {
 	    ;;
     esac
     return 0    
-}
-#
-bmuPromptyNexit_Example() {
-    bmuPromptyNexit "Shall I create the directory for you (y/N)?"
 }
 #
 # bmuPromptyN()
@@ -250,34 +244,46 @@ bmuPromptValue() {
     export $storevar="$val"
     return 1
 }
-
-bmuPromptValue_Example() {
-    while bmuPromptValue "Enter a string:" "MYV" $1
-    do
-        echo "not valid"
-    done
-    echo "You wrote: >${MYV}<"
-    #
-}
-bmuPromptValue_ExampleYN() {
-    while bmuPromptValue "PShall I create the directory for you (y/N)?" "TMPYN" "n"
-    do
-	echo "Exiting configuration ..."
-	exit 1
-    done
-    case ${TMPYN} in
-	"n" | "N" | "no" | "NO" | "No")
-	    echo "Exiting configuration ..."
-	    exit 1
-	    ;;
-	"y" | "Y" | "yes" | "YES" | "Yes")
-	    export BMU_DIRRSYNC=${BMU_DIRRSYNC_TMP}
-	    echo "MKDIR ${BMU_DIRRSYNC}"
-	    break
-	    ;;
-	*)
-	    echo "Exiting configuration ..."
-	    exit 1
-	    ;;
-    esac
+#
+# bmuConfigureDir()
+# Prompts for one of configure.sh's directory settings (SYNC, HISTORY,
+# IndexDB, install dir), offering to create it if missing and tracking
+# the creation in BMU_CONFIGURE_ROLLBACK (accumulated for a possible
+# future rollback-on-abort - nothing consumes it yet). Replaces four
+# copy-pasted ~20-line blocks in configure.sh that differed only in
+# which variable/flag/prompt text they used.
+#   $1 noun      - human label, e.g. "SYNC" - becomes "SYNC directory"
+#                  in prompts, "SYNC Directory is:" in the summary line
+#   $2 varname   - the BMU_* variable to set, e.g. BMU_DIRRSYNC
+#   $3 default   - suggested value shown in the prompt
+#   $4 flagname  - the --xxx-dir= flag name for bmuConfigureDirFromFlag
+#   $5 clivalue  - already-extracted CLI flag value, empty if none given
+bmuConfigureDir() {
+    l_bcd_noun=$1
+    l_bcd_varname=$2
+    l_bcd_default=$3
+    l_bcd_flagname=$4
+    l_bcd_clivalue=$5
+    if [ -n "${l_bcd_clivalue}" ]; then
+        bmuConfigureDirFromFlag "${l_bcd_clivalue}" "${l_bcd_flagname}" "${l_bcd_varname}"
+    else
+        BMU_CONFIGURE_TMPVAL=${l_bcd_default}
+        while bmuPromptValue "Please type the ${l_bcd_noun} directory: (${BMU_CONFIGURE_TMPVAL})" "BMU_CONFIGURE_TMPVAL" "d"
+        do
+            echo "not valid or not existing ${l_bcd_noun} directory: ${BMU_CONFIGURE_TMPVAL}"
+            if [ -z "$BMU_CONFIGURE_TMPVAL" ]; then
+                echo "Empty input value: Exiting the configuration ..."
+                exit 1
+            fi
+            bmuPromptyNexit "Shall I create the directory for you (y/N)?"
+            if bmuMkDir "${BMU_CONFIGURE_TMPVAL}" "empty"; then
+                BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_CONFIGURE_TMPVAL};"
+                break
+            else
+                echo "cannot create the directory."
+            fi
+        done
+        bmuSetIndirectVar "${l_bcd_varname}" "BMU_CONFIGURE_TMPVAL"
+    fi
+    eval "echo \"${l_bcd_noun} Directory is: \${${l_bcd_varname}}\""
 }
