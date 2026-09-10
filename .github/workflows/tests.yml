@@ -57,3 +57,53 @@ jobs:
         run: pip install -e "./mcp[dev]"
       - name: Run test suite
         run: pytest mcp/tests
+
+  gui-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Tauri Linux build dependencies
+        # webkit2gtk/gtk/appindicator/rsvg headers + patchelf, per Tauri's
+        # own Ubuntu prerequisite list - needed even just to compile the
+        # crate (it links against these), not only to bundle an installer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf build-essential curl wget file libssl-dev libgtk-3-dev
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+      - name: Type-check and build frontend
+        working-directory: gui
+        run: npm run build
+      - name: Run Rust test suite
+        working-directory: gui/src-tauri
+        run: cargo test
+
+  gui-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        # Same reason as the macos job above: Apple ships openrsync as
+        # /usr/bin/rsync, which the real end-to-end test's backmeup.sh
+        # call refuses to use (it drops --delete with --backup) - without
+        # a real rsync on PATH that test fails with no usable rsync found.
+        run: brew install rsync findutils
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+      - name: Type-check and build frontend
+        working-directory: gui
+        run: npm run build
+      - name: Run Rust test suite
+        working-directory: gui/src-tauri
+        run: cargo test
