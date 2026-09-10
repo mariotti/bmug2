@@ -35,6 +35,14 @@ BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
 #
 # rsync detection
 # ---------------
+# Kept inline here rather than calling backmeup.shellfunctions.sh's
+# bmuDetectRsync (which backmeup.configure.sh uses) - unlike configure.sh,
+# this template must stay sourceable completely standalone, with no
+# assumption that shellfunctions.sh was sourced first. In particular,
+# tests/test_backmeup.sh builds its fake "resolved" setup.sh fixtures by
+# sed-substituting this template directly and sourcing the result on its
+# own. If you change this detection logic, change bmuDetectRsync too.
+#
 # Apple ships "openrsync" as /usr/bin/rsync (macOS >= 15). openrsync
 # silently ignores --delete when --backup is active, so deleted files
 # would stay in the sync dir forever and never reach the backup dir.
@@ -51,8 +59,10 @@ done
 #
 # Index command detection (capability based, not uname based)
 # -----------------------------------------------------------
-# Solves the old "gnu or m?" issue: the updatedb dialects differ, while
-# "locate -i -d <db> <pattern>" works the same in all of them.
+# Same standalone-sourceable reasoning as above - kept inline, mirrors
+# backmeup.shellfunctions.sh's bmuDetectIndexer. Solves the old "gnu or
+# bsd?" issue: the updatedb dialects differ, while "locate -i -d <db>
+# <pattern>" works the same in all of them.
 #   GNU findutils:   updatedb --output=FILE --localpaths='DIR'
 #                    (on macOS via Homebrew findutils: gupdatedb/glocate)
 #   mlocate/plocate: updatedb -l 0 --output=FILE -U DIR

@@ -12,6 +12,60 @@ bmuJsonEscape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 #
+# bmuDetectRsync()
+# Sets BMU_CMDRSYNC to the first usable rsync found on PATH or in the
+# common Homebrew/system locations. Apple ships "openrsync" as
+# /usr/bin/rsync (macOS >= 15), which silently ignores --delete when
+# --backup is active, so deleted files would stay in the sync dir
+# forever and never reach the backup dir - skipped on sight. Stays
+# empty if no real rsync is usable; callers warn/refuse accordingly.
+# Used by backmeup.configure.sh. backmeup.setup.sh.template keeps an
+# identical inline copy rather than calling this - see the comment
+# there for why (it must stay sourceable without shellfunctions.sh).
+# Keep both copies in sync if you change this.
+bmuDetectRsync() {
+    BMU_CMDRSYNC=""
+    for l_bmu_rsync in rsync /opt/homebrew/bin/rsync /usr/local/bin/rsync /usr/bin/rsync; do
+        command -v "${l_bmu_rsync}" > /dev/null 2>&1 || continue
+        if "${l_bmu_rsync}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
+            continue
+        fi
+        BMU_CMDRSYNC="${l_bmu_rsync}"
+        break
+    done
+}
+#
+# bmuDetectIndexer()
+# Sets BMU_CMDUPDATEDB/BMU_UPDBOPT/BMU_CMDLOCATE based on whichever
+# updatedb/locate dialect is actually installed (GNU findutils vs.
+# mlocate/plocate) - capability based, not uname based: solves the old
+# "gnu or bsd?" guessing game, since "locate -i -d <db> <pattern>"
+# behaves the same across all of them even though the updatedb
+# invocation differs. All three stay empty if no updatedb is found.
+# Used by backmeup.configure.sh. backmeup.setup.sh.template keeps an
+# identical inline copy rather than calling this - see the comment
+# there for why (it must stay sourceable without shellfunctions.sh).
+# Keep both copies in sync if you change this.
+bmuDetectIndexer() {
+    BMU_CMDUPDATEDB=''
+    BMU_UPDBOPT=''
+    BMU_CMDLOCATE=''
+    if command -v gupdatedb > /dev/null 2>&1; then
+        BMU_CMDUPDATEDB='gupdatedb'
+        BMU_UPDBOPT='--localpaths='
+        BMU_CMDLOCATE='glocate'
+    elif command -v updatedb > /dev/null 2>&1; then
+        if updatedb --version 2>/dev/null | head -1 | grep -q 'GNU findutils'; then
+            BMU_CMDUPDATEDB='updatedb'
+            BMU_UPDBOPT='--localpaths='
+        else
+            BMU_CMDUPDATEDB='updatedb -l 0'
+            BMU_UPDBOPT='-U '
+        fi
+        BMU_CMDLOCATE='locate'
+    fi
+}
+#
 # bmuConfigureDirFromFlag()
 # Non-interactive counterpart to a bmuPromptValue "-d" while-loop: given
 # a flag's value (already known non-empty by the caller), validates
