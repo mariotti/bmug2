@@ -97,98 +97,26 @@ echo ""
 # the search index always locally available please
 # change this default.
 #
-# See also below INDEXING OPTIONS which will be introduced soon
-#
 # BMU_DIRRSYNC
-if [ -n "${BMU_CLI_DIRRSYNC}" ]; then
-    bmuConfigureDirFromFlag "${BMU_CLI_DIRRSYNC}" "--sync-dir" "BMU_DIRRSYNC"
-else
-    BMU_DIRRSYNC_TMP=${BMU_DIRRSYNC}
-    while bmuPromptValue "Please type the SYNC directory: (${BMU_DIRRSYNC_TMP})" "BMU_DIRRSYNC_TMP" "d"
-    do
-        echo "not valid or not existing SYNC directory: ${BMU_DIRRSYNC_TMP}"
-        if [ -z "$BMU_DIRRSYNC_TMP" ] ; then
-    	echo "Empty input value: Exiting the configuration ..."
-    	exit 1
-        fi
-        bmuPromptyNexit "Shall I create the directory for you (y/N)?"
-        export BMU_DIRRSYNC=${BMU_DIRRSYNC_TMP}
-        if bmuMkDir "${BMU_DIRRSYNC}" "empty"; then
-    	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRRSYNC};"
-    	break
-        else
-    	echo "cannot create the directory."
-        fi
-    done
-    #echo "debug SYNC directory: >${BMU_DIRRSYNC}< >${BMU_DIRRSYNC_TMP}<"
-    BMU_DIRRSYNC=${BMU_DIRRSYNC_TMP}
-fi
-echo "SYNC Directory is: ${BMU_DIRRSYNC}"
+bmuConfigureDir "SYNC" "BMU_DIRRSYNC" "${BMU_DIRRSYNC}" "--sync-dir" "${BMU_CLI_DIRRSYNC}"
 #
 # BMU_DIRBACKUPS
-if [ -n "${BMU_CLI_DIRBACKUPS}" ]; then
-    bmuConfigureDirFromFlag "${BMU_CLI_DIRBACKUPS}" "--backup-dir" "BMU_DIRBACKUPS"
-else
-    BMU_DIRBACKUPS_TMP=${BMU_DIRBACKUPS}
-    while bmuPromptValue "Please type the BackUp directory: (${BMU_DIRBACKUPS_TMP})" "BMU_DIRBACKUPS_TMP" "d"
-    do
-        echo "not valid or not existing BackUp directory: ${BMU_DIRBACKUPS_TMP}"
-        if [ -z "$BMU_DIRBACKUPS_TMP" ] ; then
-    	echo "Empty input value: Exiting the configuration ..."
-    	exit 1
-        fi
-        bmuPromptyNexit "Shall I create the directory for you (y/N)?"
-        export BMU_DIRBACKUPS=${BMU_DIRBACKUPS_TMP}
-        if bmuMkDir "${BMU_DIRBACKUPS}" "empty"; then
-    	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRBACKUPS};"
-    	break
-        else
-    	echo "cannot create the directory."
-        fi
-    done
-    #echo "debug BackUp directory: >${BMU_DIRBACKUPS}< >${BMU_DIRBACKUPS_TMP}<"
-    BMU_DIRBACKUPS=${BMU_DIRBACKUPS_TMP}
-fi
-echo "BackUp Directory is: ${BMU_DIRBACKUPS}"
+bmuConfigureDir "BackUp" "BMU_DIRBACKUPS" "${BMU_DIRBACKUPS}" "--backup-dir" "${BMU_CLI_DIRBACKUPS}"
 #
 #
 # BMU_DIRDBLOCATE
-if [ -n "${BMU_CLI_DIRDBLOCATE}" ]; then
-    bmuConfigureDirFromFlag "${BMU_CLI_DIRDBLOCATE}" "--index-dir" "BMU_DIRDBLOCATE"
-else
-    # Recompute the suggested default from the just-chosen BMU_DIRRSYNC -
-    # otherwise a custom/flagged SYNC dir is silently ignored here and
-    # the stale template default ("lives inside SYNC by default" becomes
-    # false) is suggested again. A real bug this new test caught: a flagged
-    # --sync-dir left the IndexDB prompt suggesting the old default
-    # location, unrelated to the SYNC dir actually chosen.
-    BMU_DIRDBLOCATE_TMP="${BMU_DIRRSYNC}/.locate.dir"
-    while bmuPromptValue "Please type the IndexDB directory: (${BMU_DIRDBLOCATE_TMP})" "BMU_DIRDBLOCATE_TMP" "d"
-    do
-        echo "not valid or not existing IndexDB directory: ${BMU_DIRDBLOCATE_TMP}"
-        if [ -z "$BMU_DIRDBLOCATE_TMP" ] ; then
-    	echo "Empty input value: Exiting the configuration ..."
-    	exit 1
-        fi
-        bmuPromptyNexit "Shall I create the directory for you (y/N)?"
-        export BMU_DIRDBLOCATE=${BMU_DIRDBLOCATE_TMP}
-        if bmuMkDir "${BMU_DIRDBLOCATE}" "empty"; then
-    	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_DIRDBLOCATE};"
-    	break
-        else
-    	echo "cannot create the directory."
-        fi
-    done
-    #echo "debug IndexDB directory: >${BMU_DIRDBLOCATE}< >${BMU_DIRDBLOCATE_TMP}<"
-    BMU_DIRDBLOCATE=${BMU_DIRDBLOCATE_TMP}
-fi
-echo "IndexDB Directory is: ${BMU_DIRDBLOCATE}"
+# Default recomputed from the just-chosen BMU_DIRRSYNC (not simply the
+# template's original value) - otherwise a custom/flagged SYNC dir is
+# silently ignored here and the stale template default ("lives inside
+# SYNC by default" becomes false) is suggested again. A real bug an
+# earlier test caught: a flagged --sync-dir left the IndexDB prompt
+# suggesting the old default location, unrelated to the SYNC dir
+# actually chosen.
+bmuConfigureDir "IndexDB" "BMU_DIRDBLOCATE" "${BMU_DIRRSYNC}/.locate.dir" "--index-dir" "${BMU_CLI_DIRDBLOCATE}"
 #
 #
 # OS Options
 # ----------
-#BMU_INSTDIR="${HOME}/usr/bmu"
-#
 echo ""
 echo "The next question is different: this is where the bmug2"
 echo "PROGRAM itself lives, not your data. Keep it on your regular"
@@ -197,30 +125,7 @@ echo "works even when that drive isn't connected."
 echo ""
 #
 # BMU_INSTDIR
-if [ -n "${BMU_CLI_INSTDIR}" ]; then
-    bmuConfigureDirFromFlag "${BMU_CLI_INSTDIR}" "--install-dir" "BMU_INSTDIR"
-else
-    BMU_INSTDIR_TMP=${BMU_INSTDIR}
-    while bmuPromptValue "Please type the BMU install directory: (${BMU_INSTDIR_TMP})" "BMU_INSTDIR_TMP" "d"
-    do
-        echo "not valid or not existing BMU install directory: ${BMU_INSTDIR_TMP}"
-        if [ -z "$BMU_INSTDIR_TMP" ] ; then
-    	echo "Empty input value: Exiting the configuration ..."
-    	exit 1
-        fi
-        bmuPromptyNexit "Shall I create the directory for you (y/N)?"
-        export BMU_INSTDIR=${BMU_INSTDIR_TMP}
-        if bmuMkDir "${BMU_INSTDIR}" "empty"; then
-    	BMU_CONFIGURE_ROLLBACK="${BMU_CONFIGURE_ROLLBACK} rm -rf ${BMU_INSTDIR};"
-    	break
-        else
-    	echo "cannot create the directory."
-        fi
-    done
-    #echo "debug IndexDB directory: >${BMU_INSTDIR}< >${BMU_INSTDIR_TMP}<"
-    BMU_INSTDIR=${BMU_INSTDIR_TMP}
-fi
-echo "BMU install Directory is: ${BMU_INSTDIR}"
+bmuConfigureDir "BMU install" "BMU_INSTDIR" "${BMU_INSTDIR}" "--install-dir" "${BMU_CLI_INSTDIR}"
 #
 # Currently HARDCODED
 #
