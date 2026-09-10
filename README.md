@@ -15,7 +15,7 @@ version history.
 ## Status
 
 Personal-use software, actively developed. All issues known from the
-original bmu are fixed and covered by a 20-test regression suite
+original bmu are fixed and covered by a 63-test regression suite
 (`sh tests/test_backmeup.sh`) running in CI on Linux and macOS. It has
 not seen long-term use at large scale yet — read
 [Requirements](#requirements) before pointing it at real data, and try
@@ -48,12 +48,17 @@ the destination filesystem, not on bmug2 itself.
 ```
 git clone https://github.com/mariotti/bmug2
 cd bmug2
-./install.sh                            # answers a few questions, see the manual
-./bin/backmeup.sh --dry-run ~/Documents   # preview
-./bin/backmeup.sh ~/Documents             # back it up
-./bin/backmeup.locate.sh report.pdf       # find it, current or historical
-./bin/backmeup.status.sh                  # see all projects at a glance
+./install.sh                    # a few questions; offers to put `bmu` on your PATH
+bmu --dry-run ~/Documents       # preview
+bmu ~/Documents                 # back it up
+bmu locate report.pdf           # find it, current or historical
+bmu status                      # see all projects at a glance
 ```
+
+Skipped the PATH offer, or calling this from cron/a script? Every `bmu
+<subcommand>` above is a shorter name for the matching
+`backmeup.<subcommand>.sh`, callable directly by full path from the
+install directory instead — see the manual.
 
 Full command reference, directory layout, and troubleshooting:
 **[docs/MANUAL.md](docs/MANUAL.md)**. Real usage recipes — multiple
@@ -81,8 +86,10 @@ their MCP annotations and their descriptions.
 
 ## Desktop GUI
 
-[`gui/`](gui/README.md) is a native Tauri app — skeleton stage only,
-see its README for what's built so far and what isn't yet.
+[`gui/`](gui/README.md) is a native Tauri app: install (download the
+latest release, or point at an existing install) plus a read-only
+dashboard (per-project status, search) — see its README for what's
+built so far and what's still CLI-only.
 
 ## Future directions
 
