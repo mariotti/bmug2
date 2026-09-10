@@ -189,10 +189,20 @@ same way. User units stop when you log out unless you also run
 `loginctl enable-linger $USER` once, so the timer keeps firing while
 you're logged out (Tier 2).
 
-**Tier 3 — not independently verified**: this machine has no systemd
-(it's a Mac); sanity-check the unit files above with
-`systemd-analyze verify bmu-backup.service bmu-backup.timer` on a real
-Linux box before relying on them verbatim.
+Verified for real (this machine has no systemd of its own, so checked
+inside an Ubuntu 24.04 container running systemd 255):
+
+```
+$ systemd-analyze verify bmu-backup.service bmu-backup.timer
+$ echo $?
+0
+```
+
+(the first check flags a missing `ExecStart` binary at the literal
+example path, as expected since `/home/alex/...` doesn't exist in the
+container — dropping in a stand-in executable there gets a clean,
+error-free verification, confirming both unit files are syntactically
+and semantically valid, not just plausible-looking.)
 
 ## macOS
 
