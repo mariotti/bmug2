@@ -8,11 +8,13 @@ single maintainer:
    change, and keep `sh tests/test_backmeup.sh` green locally.
 3. Push the branch and open a pull request (`gh pr create` or the
    GitHub UI).
-4. Wait for CI: GitHub Actions runs the suite on Linux (rsync +
-   plocate) and macOS (Homebrew rsync + findutils) — both must pass.
+4. Wait for CI: GitHub Actions runs four required jobs — the shell
+   suite on Linux (rsync + plocate) and macOS (Homebrew rsync +
+   findutils), and the `mcp/` pytest suite on both platforms too — all
+   four must pass.
 5. Squash-merge the PR once it's reviewed. `main` is protected: direct
-   pushes are rejected, and merging requires both checks green and the
-   branch up to date with `main`.
+   pushes are rejected, and merging requires all four checks green and
+   the branch up to date with `main`.
 
 The branch is deleted automatically on merge.
 
