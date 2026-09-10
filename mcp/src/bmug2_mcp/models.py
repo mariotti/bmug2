@@ -45,16 +45,20 @@ class StatusResult(BaseModel):
 
 class LocateHit(BaseModel):
     path: str
-    source: Literal["index", "archived_filelist"] = Field(
-        description="'index' = found via the locate database; "
-        "'archived_filelist' = found by grepping a kept snapshot filelist "
-        "after archiving. The same path can legitimately appear from both "
-        "sources for different snapshot generations - not deduplicated."
+    source: Literal["index", "live", "archived_filelist"] = Field(
+        description="'index' = found via the locate database (only as fresh "
+        "as the last backmeup.updatedb.sh run); 'live' = found by grepping "
+        "a project's live filelist, refreshed on every backup run - covers "
+        "anything too new for the index; 'archived_filelist' = found by "
+        "grepping a kept snapshot filelist after archiving. The same path "
+        "can legitimately appear from more than one source at once - not "
+        "deduplicated."
     )
 
 
 class LocateCounts(BaseModel):
     index: int
+    live: int
     archived_filelist: int
 
 
@@ -62,7 +66,8 @@ class LocateResult(BaseModel):
     patterns: list[str]
     indexed: bool = Field(
         description="Whether a locate binary was available at all. When "
-        "false, results can only come from the archived-filelist fallback."
+        "false, index results are unavailable, but live/archived-filelist "
+        "results are unaffected."
     )
     counts: LocateCounts
     results: list[LocateHit]

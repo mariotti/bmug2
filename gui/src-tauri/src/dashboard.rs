@@ -30,14 +30,15 @@ pub struct StatusResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocateCounts {
     pub index: u64,
+    pub live: u64,
     pub archived_filelist: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocateHit {
     pub path: String,
-    /// "index" or "archived_filelist" - kept as a plain string rather
-    /// than an enum since it's display-only data for the frontend.
+    /// "index", "live", or "archived_filelist" - kept as a plain string
+    /// rather than an enum since it's display-only data for the frontend.
     pub source: String,
 }
 
@@ -91,8 +92,8 @@ mod tests {
 
     // Captured from a real run against a real sandbox (backmeup.sh run
     // twice, backmeup.updatedb.sh run once) - not hand-typed guesses.
-    const REAL_STATUS_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","projects":[{"name":"proj1","last_run":"2026-09-08 22:04:12","last_change":"20260908-220412","snapshot_count":1,"mirror_size_kb":4,"history_size_kb":16,"old_layout":false}]}"#;
-    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0},"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260908-220412/file1.txt","source":"index"}]}"#;
+    const REAL_STATUS_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","projects":[{"name":"proj1","last_run":"2026-09-10 21:35:44","last_change":"20260910-213544","snapshot_count":1,"mirror_size_kb":4,"history_size_kb":12,"old_layout":false}]}"#;
+    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
 
     #[test]
     fn parses_real_status_json() {
@@ -102,7 +103,7 @@ mod tests {
         assert_eq!(p.name, "proj1");
         assert_eq!(p.snapshot_count, 1);
         assert_eq!(p.mirror_size_kb, 4);
-        assert_eq!(p.history_size_kb, Some(16));
+        assert_eq!(p.history_size_kb, Some(12));
         assert!(!p.old_layout);
     }
 
@@ -112,8 +113,10 @@ mod tests {
         assert!(parsed.indexed);
         assert_eq!(parsed.counts.index, 2);
         assert_eq!(parsed.counts.archived_filelist, 0);
-        assert_eq!(parsed.results.len(), 2);
+        assert_eq!(parsed.counts.live, 1);
+        assert_eq!(parsed.results.len(), 3);
         assert_eq!(parsed.results[0].source, "index");
+        assert_eq!(parsed.results[2].source, "live");
     }
 
     #[test]
@@ -181,11 +184,15 @@ mod tests {
 
         let found = search(bin_dir.to_str().unwrap(), &["hello.txt".to_string()])
             .expect("search should succeed");
-        // no locate/updatedb run in this test - archived-filelist path
-        // only, which is fine: this exercises the real subprocess +
-        // JSON contract, not backmeup.locate.sh's own search logic
-        // (already covered by tests/test_backmeup.sh).
+        // no locate/updatedb run in this test - the live-filelist path
+        // only, which is fine: this exercises the real subprocess + JSON
+        // contract, not backmeup.locate.sh's own search logic (already
+        // covered by tests/test_backmeup.sh). The live filelist is
+        // written by backmeup.sh itself on every successful run, so this
+        // finds hello.txt without ever running updatedb.
         assert_eq!(found.patterns, vec!["hello.txt".to_string()]);
+        assert_eq!(found.counts.live, 1);
+        assert!(found.results.iter().any(|r| r.source == "live"));
 
         std::fs::remove_dir_all(&base).ok();
     }

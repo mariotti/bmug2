@@ -930,10 +930,55 @@ testOldLayoutGuardIgnoresLegitimateSameNamedSubdir() {
 # indexing and search (skipped when no updatedb is available)
 # -----------------------------------------------------------
 
-testPerRunIndexCreated() {
-    [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
-    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.myproject.* 2>/dev/null | wc -l`
-    assertEquals "expected exactly one per-run index db" 1 `expr ${l_count}`
+testBackupWritesLiveFilelistForImmediateSearch() {
+    # Works even with no updatedb installed - unlike the old per-run
+    # indexing this replaces, so no skip guard here.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/freshnessproj"
+    mkdir -p "${l_src}"
+    echo "fresh content" > "${l_src}/freshfile.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    assertTrue "live filelist should exist for the project" \
+        "[ -f '${SB}/sync-BP/freshnessproj.filelist' ]"
+    grep -q "freshfile.txt" "${SB}/sync-BP/freshnessproj.filelist"
+    assertTrue "live filelist should mention the freshly-backed-up file" $?
+
+    l_hit=`"${SB}/bin/backmeup.locate.sh" freshfile.txt`
+    echo "${l_hit}" | grep -q "freshnessproj/freshfile.txt"
+    assertTrue "search should find the fresh file without ever running updatedb" $?
+    echo "${l_hit}" | grep -q "(live)"
+    assertTrue "the hit should be tagged (live)" $?
+}
+
+testLocateJsonReportsLiveSource() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/freshnessjsonproj"
+    mkdir -p "${l_src}"
+    echo "fresh json content" > "${l_src}/freshjson.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_json=`"${SB}/bin/backmeup.locate.sh" --json freshjson.txt`
+    echo "${l_json}" | grep -q '"source":"live"'
+    assertTrue "json output should tag the hit as live source" $?
+    echo "${l_json}" | grep -q '"live":1'
+    assertTrue "json counts should report 1 live hit" $?
+}
+
+testLiveFilelistRefreshesOnEachRun() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/refreshproj"
+    mkdir -p "${l_src}"
+    echo x > "${l_src}/stays.txt"
+    echo y > "${l_src}/goes.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    grep -q "goes.txt" "${SB}/sync-BP/refreshproj.filelist"
+    assertTrue "first run's live filelist should mention goes.txt" $?
+
+    sleep 1
+    rm "${l_src}/goes.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    grep -q "goes.txt" "${SB}/sync-BP/refreshproj.filelist"
+    assertFalse "live filelist must be replaced, not appended - goes.txt was deleted" $?
+    grep -q "stays.txt" "${SB}/sync-BP/refreshproj.filelist"
+    assertTrue "live filelist should still mention stays.txt" $?
 }
 
 testSearchFindsCurrentAndHistory() {
@@ -952,26 +997,6 @@ testSearchFindsDeletedFile() {
     "${SB}/bin/backmeup.locate.sh" file2 2>/dev/null \
         | grep -q "sync-BP/myproject/B-.*/sub/file2.txt"
     assertTrue "search misses the deleted (archived) file2" $?
-}
-
-testUpdatedbClearsOldPartIndexes() {
-    [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
-    # a fresh, dedicated project so this test does not depend on whether
-    # some other test already ran a full reindex over myproject's index
-    l_src="${SHUNIT_TMPDIR}/bmu/src/partindexproj"
-    mkdir -p "${l_src}"
-    echo x > "${l_src}/x.txt"
-    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
-    sleep 1
-    echo y > "${l_src}/x.txt"
-    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
-
-    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.partindexproj.* 2>/dev/null | wc -l`
-    assertNotEquals "expected a per-run index to clear" 0 `expr ${l_count}`
-    "${SB}/bin/backmeup.updatedb.sh" > /dev/null 2>&1
-    l_count=`ls "${SB}/sync/.locate.dir/".locate.db.partindexproj.* 2>/dev/null | wc -l`
-    assertEquals "a full reindex must clear old per-run indexes" \
-        0 `expr ${l_count}`
 }
 
 testLocateWorksWithoutLocateInstalled() {
@@ -1203,7 +1228,8 @@ testLocateJsonMatchesTextResults() {
         "import json,sys; print(json.load(sys.stdin)['counts']['index'])"`
     assertTrue "locate --json found no indexed hits for file1.txt" \
         "[ '${l_idxcount}' -gt 0 ]"
-    l_textcount=`"${SB}/bin/backmeup.locate.sh" file1.txt 2>/dev/null | grep -vc '(archived)'`
+    l_textcount=`"${SB}/bin/backmeup.locate.sh" file1.txt 2>/dev/null \
+        | grep -v '(archived)' | grep -vc '(live)'`
     assertEquals "index count disagrees between --json and text output" \
         "${l_textcount}" "${l_idxcount}"
 }
