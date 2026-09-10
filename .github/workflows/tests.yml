@@ -92,6 +92,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Install dependencies
+        # Same reason as the macos job above: Apple ships openrsync as
+        # /usr/bin/rsync, which the real end-to-end test's backmeup.sh
+        # call refuses to use (it drops --delete with --backup) - without
+        # a real rsync on PATH that test fails with no usable rsync found.
+        run: brew install rsync findutils
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci
