@@ -226,12 +226,7 @@ echo "BMU install Directory is: ${BMU_INSTDIR}"
 #
 # System Options
 # --------------
-BMU_INDEXTYPE="locate"
-BMU_DATEFRMT="+%Y%m%d-%H%M%S"
-BMU_mydate=`date +%Y%m%d-%H%M%S`
 BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
-BMU_CMDFILTER='sed'
-BMU_UNAME=`uname`
 #
 # rsync detection (skip Apple's openrsync: it drops --delete with --backup)
 # Keep in sync with backmeup.setup.sh.template
@@ -276,18 +271,6 @@ else
     echo "WARNING: no updatedb found, indexing will be skipped."
     echo "  Install GNU findutils (macOS: brew install findutils)"
 fi;
-#
-#
-# INDEXING OPTIONS
-# ----------------
-# Not yet used. They are at present down here as we need INDEXTYPE.
-# We might consider to re-sort these options
-# To be implemented.
-#
-# The basic idea is that we can  have locally stored indexes for
-# backup search when the backup disk is off-line.
-BMU_MAININDEXDIR=${DIRRSYNC}
-BMU_PARTINDEXDIR=${DIRRSYNC}/.locate.db.part
 #
 # OFF-SITE REPLICATION (optional)
 # --------------------------------
@@ -342,18 +325,11 @@ for curvar in \
  BMU_DIRBACKUPS \
  BMU_DIRDBLOCATE \
  BMU_INSTDIR \
- BMU_INDEXTYPE \
- BMU_DATEFRMT \
- BMU_mydate \
  BMU_OPTRSYNC \
  BMU_CMDRSYNC \
  BMU_CMDUPDATEDB \
  BMU_UPDBOPT \
  BMU_CMDLOCATE \
- BMU_CMDFILTER \
- BMU_UNAME \
- BMU_MAININDEXDIR \
- BMU_PARTINDEXDIR \
  BMU_CMDREPLICATE \
  BMU_REPLICATE_REMOTE_SYNC \
  BMU_REPLICATE_REMOTE_BACKUPS;
