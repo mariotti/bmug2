@@ -134,16 +134,7 @@ bmuConfigureDir "BMU install" "BMU_INSTDIR" "${BMU_INSTDIR}" "--install-dir" "${
 BMU_OPTRSYNC="-av --delete --backup" # --modify-window=1
 #
 # rsync detection (skip Apple's openrsync: it drops --delete with --backup)
-# Keep in sync with backmeup.setup.sh.template
-BMU_CMDRSYNC=""
-for l_bmu_rsync in rsync /opt/homebrew/bin/rsync /usr/local/bin/rsync /usr/bin/rsync; do
-    command -v "${l_bmu_rsync}" > /dev/null 2>&1 || continue
-    if "${l_bmu_rsync}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
-        continue
-    fi
-    BMU_CMDRSYNC="${l_bmu_rsync}"
-    break
-done
+bmuDetectRsync
 if [ -z "${BMU_CMDRSYNC}" ]; then
     echo "WARNING: no usable rsync found (only Apple openrsync?)."
     echo "  backmeup.sh will refuse to run. Install one: brew install rsync"
@@ -152,29 +143,16 @@ else
 fi;
 #
 # Index command detection (capability based, not uname based)
-# Keep in sync with backmeup.setup.sh.template
-BMU_CMDUPDATEDB=''
-BMU_UPDBOPT=''
-BMU_CMDLOCATE=''
-if command -v gupdatedb > /dev/null 2>&1; then
-    BMU_CMDUPDATEDB='gupdatedb'
-    BMU_UPDBOPT='--localpaths='
-    BMU_CMDLOCATE='glocate'
-    echo "GNU findutils detected (gupdatedb/glocate)"
-elif command -v updatedb > /dev/null 2>&1; then
-    if updatedb --version 2>/dev/null | head -1 | grep -q 'GNU findutils'; then
-        BMU_CMDUPDATEDB='updatedb'
-        BMU_UPDBOPT='--localpaths='
-        echo "GNU findutils detected (updatedb/locate)"
-    else
-        BMU_CMDUPDATEDB='updatedb -l 0'
-        BMU_UPDBOPT='-U '
-        echo "mlocate/plocate style updatedb detected"
-    fi
-    BMU_CMDLOCATE='locate'
-else
+bmuDetectIndexer
+if [ -z "${BMU_CMDUPDATEDB}" ]; then
     echo "WARNING: no updatedb found, indexing will be skipped."
     echo "  Install GNU findutils (macOS: brew install findutils)"
+else
+    case "${BMU_CMDUPDATEDB}" in
+        gupdatedb) echo "GNU findutils detected (gupdatedb/glocate)" ;;
+        updatedb)  echo "GNU findutils detected (updatedb/locate)" ;;
+        *)         echo "mlocate/plocate style updatedb detected" ;;
+    esac
 fi;
 #
 # OFF-SITE REPLICATION (optional)
