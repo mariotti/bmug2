@@ -171,15 +171,16 @@ echo ""
 BMU_CMDREPLICATE=""
 BMU_REPLICATE_REMOTE_SYNC=""
 BMU_REPLICATE_REMOTE_BACKUPS=""
+bmuDetectRclone
 if [ -n "${BMU_NONINTERACTIVE}" ]; then
     echo "Non-interactive run: skipping optional replication setup."
     echo "  Re-run backmeup.configure.sh interactively later to enable it."
-elif ! command -v rclone > /dev/null 2>&1; then
+elif [ -z "${BMU_CMDRCLONE}" ]; then
     echo "No rclone detected - skipping replication setup."
     echo "  Install it later (e.g. brew/apt install rclone) and re-run"
     echo "  backmeup.configure.sh to enable this."
 elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
-    BMU_CMDREPLICATE="rclone sync"
+    BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
     while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
     do
         echo "Empty input: replication needs a destination."

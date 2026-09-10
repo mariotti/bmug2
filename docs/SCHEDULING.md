@@ -30,54 +30,56 @@ own location from `$0` before doing anything else
 but *how* you invoke it (a real path, not a bare name relying on
 `PATH`) does.
 
-**2. PATH inside the job is not your interactive PATH — this is the
-most common way a scheduled bmug2 job fails.** cron and launchd both
-start jobs with a minimal `PATH` (typically just `/usr/bin:/bin`), not
-the one your shell builds from `.zshrc`/`.bash_profile`/Homebrew's
-shellenv. On a Homebrew-based macOS, `rsync`, GNU `findutils`
-(`gupdatedb`/`glocate`), and `rclone` all live under
-`/opt/homebrew/bin` (or `/usr/local/bin` on Intel) — none of which is
-on that minimal PATH.
+**2. PATH inside the job is not your interactive PATH.** cron and
+launchd both start jobs with a minimal `PATH` (typically just
+`/usr/bin:/bin`), not the one your shell builds from
+`.zshrc`/`.bash_profile`/Homebrew's shellenv. On a Homebrew-based
+macOS, `rsync`, GNU `findutils` (`gupdatedb`/`glocate`), and `rclone`
+all live under `/opt/homebrew/bin` (or `/usr/local/bin` on Intel) —
+none of which is on that minimal PATH.
 
-bmug2's own rsync detection has an absolute-path fallback for exactly
-this reason (`bmuDetectRsync()` in `bin/backmeup.shellfunctions.sh`
-tries `/opt/homebrew/bin/rsync`, `/usr/local/bin/rsync`, and
-`/usr/bin/rsync` in turn), so backups themselves keep working even
-under a stripped PATH. **The indexer and replication detection don't
-have that fallback** — `bmuDetectIndexer()` and the rclone check only
-ever probe the bare command name. Verified for real on this machine, by
-sourcing bmug2's actual detection functions under a minimal PATH:
-
-```
-$ env -i PATH="/usr/bin:/bin" HOME="$HOME" /bin/sh -c '
-. bin/backmeup.shellfunctions.sh
-bmuDetectRsync
-bmuDetectIndexer
-echo "BMU_CMDRSYNC=[$BMU_CMDRSYNC]"
-echo "BMU_CMDUPDATEDB=[$BMU_CMDUPDATEDB]"
-echo "BMU_CMDLOCATE=[$BMU_CMDLOCATE]"
-'
-BMU_CMDRSYNC=[/opt/homebrew/bin/rsync]
-BMU_CMDUPDATEDB=[]
-BMU_CMDLOCATE=[]
-```
-
-The practical symptom: `backmeup.configure.sh` (run interactively, your
-real PATH in effect) is happy and never warns you. The first time
-`backmeup.updatedb.sh` actually runs from cron, it fails instead:
+**This used to be the most common way a scheduled bmug2 job failed —
+and worse, one shape of it failed silently rather than loudly.**
+`backmeup.configure.sh` only runs its rsync/indexer/rclone detection
+once, at configure time, and bakes the result verbatim into the
+generated `backmeup.setup.sh`; nothing re-detects at backup/index/
+replicate time. Older bmug2 versions baked in whatever bare command
+name resolved at configure time (e.g. `BMU_CMDRSYNC="rsync"`) instead
+of its resolved absolute path. Verified for real on this machine: a
+normal interactive install baked in bare `rsync`; running that same
+install's `backmeup.sh` from a minimal cron-like PATH afterward still
+"worked" — bare `rsync` resolved via `/usr/bin`, but to **Apple's
+openrsync**, a different binary than the Homebrew rsync used at
+configure time. openrsync silently drops `--delete` when `--backup` is
+active, so a deleted source file quietly stayed in the mirror forever,
+with the run still reporting `exit 0` and no error at all. The
+indexer/rclone side of the same bug failed *loudly* instead — bare
+`gupdatedb`/`updatedb`/`rclone` simply weren't found under a stripped
+PATH:
 
 ```
 ERROR: no updatedb found, cannot build the index.
   Install GNU findutils (macOS: brew install findutils)
 ```
 
-— exit 1, indexing never happens, and nothing about the setup step told
-you this was coming. See the new
-[Troubleshooting entry](MANUAL.md#troubleshooting) for the same note
-closer to where the error actually shows up. **Fixing the detection
-gap itself is a code change and out of scope for this doc** — the
-workaround today is to set `PATH` explicitly in the scheduler entry
-(shown in every example below).
+**Fixed**: `bmuDetectRsync()`, `bmuDetectIndexer()`, and the new
+`bmuDetectRclone()` (all in `bin/backmeup.shellfunctions.sh`) now
+resolve every match — bare or absolute-fallback — to its absolute path
+via `command -v` before baking it in, so whatever binary was verified
+at configure time is exactly what every future scheduled run executes,
+regardless of what PATH looks like then. Confirmed for real, same
+repro as above, both detection and the actual scheduled `--delete`
+behavior now match under a minimal PATH.
+
+**If you configured your install before this fix**, your existing
+`backmeup.setup.sh` still has the old bare names baked in — re-run
+`backmeup.configure.sh` once to pick up the absolute-path fix (it's
+idempotent and safe to re-run; see
+[Troubleshooting](MANUAL.md#troubleshooting) if `backmeup.sh` under a
+scheduler still behaves oddly after that). Setting `PATH=` explicitly
+in the scheduler entry (shown in every example below) still isn't a
+bad habit regardless — it's just no longer the only thing standing
+between you and the openrsync problem above.
 
 **3. Order, and no lock.** Run backups first, `backmeup.updatedb.sh`
 once after they've all finished, `backmeup.replicate.sh` last — the

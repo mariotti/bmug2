@@ -14,10 +14,22 @@ bmuJsonEscape() {
 #
 # bmuDetectRsync()
 # Sets BMU_CMDRSYNC to the first usable rsync found on PATH or in the
-# common Homebrew/system locations. Apple ships "openrsync" as
-# /usr/bin/rsync (macOS >= 15), which silently ignores --delete when
-# --backup is active, so deleted files would stay in the sync dir
-# forever and never reach the backup dir - skipped on sight. Stays
+# common Homebrew/system locations, always resolved to its absolute
+# path via "command -v" - even a bare-name match, since none of these
+# detect functions are called again at backup/index/replicate time:
+# whatever string ends up here is baked verbatim into the generated
+# backmeup.setup.sh and run as-is on every future invocation. Baking in
+# a bare name instead of its resolved path is a real bug, confirmed
+# on this machine: a normal interactive install bakes in bare "rsync";
+# a cron job's minimal PATH later resolves that same bare name to
+# Apple's openrsync at /usr/bin/rsync instead of the Homebrew rsync
+# used at configure time - openrsync silently drops --delete under
+# --backup, so a deleted source file quietly stays in the mirror
+# forever, with the run still reporting exit 0. Resolving to an
+# absolute path once, here, pins the exact binary verified at
+# configure time regardless of what PATH looks like later.
+# Apple's openrsync itself is still skipped on sight (same
+# --delete-under-backup problem, whichever path it's found at). Stays
 # empty if no real rsync is usable; callers warn/refuse accordingly.
 # Used by backmeup.configure.sh. backmeup.setup.sh.template keeps an
 # identical inline copy rather than calling this - see the comment
@@ -26,11 +38,11 @@ bmuJsonEscape() {
 bmuDetectRsync() {
     BMU_CMDRSYNC=""
     for l_bmu_rsync in rsync /opt/homebrew/bin/rsync /usr/local/bin/rsync /usr/bin/rsync; do
-        command -v "${l_bmu_rsync}" > /dev/null 2>&1 || continue
-        if "${l_bmu_rsync}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
+        l_bmu_resolved="$(command -v "${l_bmu_rsync}" 2>/dev/null)" || continue
+        if "${l_bmu_resolved}" --version 2>/dev/null | head -1 | grep -qi openrsync; then
             continue
         fi
-        BMU_CMDRSYNC="${l_bmu_rsync}"
+        BMU_CMDRSYNC="${l_bmu_resolved}"
         break
     done
 }
@@ -41,7 +53,12 @@ bmuDetectRsync() {
 # mlocate/plocate) - capability based, not uname based: solves the old
 # "gnu or bsd?" guessing game, since "locate -i -d <db> <pattern>"
 # behaves the same across all of them even though the updatedb
-# invocation differs. All three stay empty if no updatedb is found.
+# invocation differs. Same absolute-path resolution and fallback
+# search as bmuDetectRsync (bare name, then /opt/homebrew/bin,
+# /usr/local/bin, /usr/bin; whatever's found is resolved to its
+# absolute path via "command -v" before being baked into
+# backmeup.setup.sh, for the same reason documented on bmuDetectRsync).
+# All three stay empty if no updatedb is found anywhere.
 # Used by backmeup.configure.sh. backmeup.setup.sh.template keeps an
 # identical inline copy rather than calling this - see the comment
 # there for why (it must stay sourceable without shellfunctions.sh).
@@ -50,20 +67,44 @@ bmuDetectIndexer() {
     BMU_CMDUPDATEDB=''
     BMU_UPDBOPT=''
     BMU_CMDLOCATE=''
-    if command -v gupdatedb > /dev/null 2>&1; then
-        BMU_CMDUPDATEDB='gupdatedb'
-        BMU_UPDBOPT='--localpaths='
-        BMU_CMDLOCATE='glocate'
-    elif command -v updatedb > /dev/null 2>&1; then
-        if updatedb --version 2>/dev/null | head -1 | grep -q 'GNU findutils'; then
-            BMU_CMDUPDATEDB='updatedb'
+    for l_bmu_dir in '' /opt/homebrew/bin/ /usr/local/bin/ /usr/bin/; do
+        l_bmu_gupdatedb="$(command -v "${l_bmu_dir}gupdatedb" 2>/dev/null)"
+        l_bmu_updatedb="$(command -v "${l_bmu_dir}updatedb" 2>/dev/null)"
+        if [ -n "${l_bmu_gupdatedb}" ]; then
+            BMU_CMDUPDATEDB="${l_bmu_gupdatedb}"
             BMU_UPDBOPT='--localpaths='
-        else
-            BMU_CMDUPDATEDB='updatedb -l 0'
-            BMU_UPDBOPT='-U '
+            BMU_CMDLOCATE="$(command -v "${l_bmu_dir}glocate" 2>/dev/null)"
+            break
+        elif [ -n "${l_bmu_updatedb}" ]; then
+            if "${l_bmu_updatedb}" --version 2>/dev/null | head -1 | grep -q 'GNU findutils'; then
+                BMU_CMDUPDATEDB="${l_bmu_updatedb}"
+                BMU_UPDBOPT='--localpaths='
+            else
+                BMU_CMDUPDATEDB="${l_bmu_updatedb} -l 0"
+                BMU_UPDBOPT='-U '
+            fi
+            BMU_CMDLOCATE="$(command -v "${l_bmu_dir}locate" 2>/dev/null)"
+            break
         fi
-        BMU_CMDLOCATE='locate'
-    fi
+    done
+}
+#
+# bmuDetectRclone()
+# Sets BMU_CMDRCLONE to the first usable rclone found on PATH or in the
+# common Homebrew/system locations, resolved to its absolute path via
+# "command -v" - same reasoning as bmuDetectRsync/bmuDetectIndexer:
+# BMU_CMDREPLICATE is baked in verbatim at configure time and never
+# re-detected, so a bare "rclone" would silently stop resolving (or
+# resolve to a different binary) the moment backmeup.replicate.sh runs
+# from cron/launchd's minimal PATH instead. Stays empty if rclone isn't
+# found anywhere. Used by backmeup.configure.sh only.
+bmuDetectRclone() {
+    BMU_CMDRCLONE=''
+    for l_bmu_dir in '' /opt/homebrew/bin/ /usr/local/bin/ /usr/bin/; do
+        l_bmu_resolved="$(command -v "${l_bmu_dir}rclone" 2>/dev/null)" || continue
+        BMU_CMDRCLONE="${l_bmu_resolved}"
+        break
+    done
 }
 #
 # bmuConfigureDirFromFlag()
