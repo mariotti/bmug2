@@ -20,7 +20,12 @@ well-known install location" stance):
   (`gui/src-tauri/src/install.rs`), or point at a bin directory
   that's already set up — suggested from a bounded `find` scan of
   `$HOME` (`find_existing_installs`), or typed/pasted/browsed to
-  directly.
+  directly. Either way, the install is checked against
+  `gui/src-tauri/src/version.rs`'s `MIN_COMPATIBLE_VERSION` (reading the
+  `BMU_VERSION` line in its `backmeup.setup.sh`) — an install that's too
+  old, or predates `BMU_VERSION` entirely, is rejected with a clear
+  message instead of failing confusingly once the dashboard tries to use
+  it.
 - Installed → a dashboard (`gui/src-tauri/src/dashboard.rs`): a
   per-project status table (`backmeup.status.sh --json`) with a
   Refresh button, and a search box (`backmeup.locate.sh --json`)
