@@ -68,7 +68,7 @@ fi
 # from whenever the install was first set up (sourcing an existing
 # setup.sh above would otherwise silently win). Bump by hand alongside
 # every git tag.
-BMU_VERSION="2.7.0"
+BMU_VERSION="2.7.1"
 #
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
