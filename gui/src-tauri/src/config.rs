@@ -21,6 +21,11 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
+// Collapses three different causes (no config file yet, app data dir
+// unresolvable, or a corrupt/unparseable config.json) into one None -
+// deliberately: every caller's response to "no usable saved config" is
+// identical (fall back to the setup screen), so there's nothing a
+// caller could do differently by distinguishing them.
 pub fn load(app: &AppHandle) -> Option<Config> {
     let path = config_path(app).ok()?;
     let data = std::fs::read_to_string(path).ok()?;
@@ -44,4 +49,21 @@ pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
 /// makes (mirrored, not shared code, since this is Rust not Python).
 pub fn looks_installed(bin_dir: &Path) -> bool {
     bin_dir.join("backmeup.sh").is_file() && bin_dir.join("backmeup.setup.sh").is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn looks_installed_requires_both_files() {
+        let tmp = std::env::temp_dir().join(format!("bmug2-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(!looks_installed(&tmp));
+        std::fs::write(tmp.join("backmeup.sh"), "").unwrap();
+        assert!(!looks_installed(&tmp));
+        std::fs::write(tmp.join("backmeup.setup.sh"), "").unwrap();
+        assert!(looks_installed(&tmp));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
 }

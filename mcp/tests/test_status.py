@@ -1,19 +1,7 @@
 from __future__ import annotations
 
-from bmug2_mcp.config import Config
+from conftest import _config
 from bmug2_mcp.status import get_status
-
-
-def _config(tmp_path, **overrides):
-    defaults = dict(
-        bin_dir=tmp_path,
-        sync_dir=tmp_path / "sync",
-        history_dir=tmp_path / "sync-BP",
-        index_dir=tmp_path / "sync" / ".locate.dir",
-        locate_cmd="locate",
-    )
-    defaults.update(overrides)
-    return Config(**defaults)
 
 
 def test_empty_sync_dir_returns_no_projects(tmp_path):

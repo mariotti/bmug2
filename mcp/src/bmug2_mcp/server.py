@@ -32,6 +32,10 @@ from .models import (
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True)
 _MUTATING_BACKUP = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
+# Unlike its siblings below: re-running archive with the same cutoff after
+# a first pass just finds nothing left old enough to archive - a true no-op,
+# not a repeat mutation. Backup/unarchive/migrate all do real work again
+# (or fail) on a repeat call, so they stay idempotent_hint=False.
 _MUTATING_ARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True)
 _MUTATING_UNARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
 _MUTATING_MIGRATE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)

@@ -10,125 +10,92 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TypeVar
 
 from .models import (
     ArchivePreviewResult,
     ArchiveResult,
     BackupPreviewResult,
     BackupResult,
+    CommandResult,
     MigrateResult,
     UnarchiveResult,
 )
 
+T = TypeVar("T", bound=CommandResult)
 
-def run_backup_preview(bin_dir: Path, path: str) -> BackupPreviewResult:
-    project = Path(path).name
+
+def _run_script(
+    bin_dir: Path,
+    script_name: str,
+    args: list[str],
+    result_cls: type[T],
+    verb: str,
+    **extra_fields: object,
+) -> T:
+    """Runs bin_dir/script_name with args, wrapping the real subprocess
+    result into result_cls. `verb` only shapes the human-readable message
+    ("Backup completed."/"Backup failed (exit 1).") - success/exit_code
+    always reflect the actual process result, never overridden into a
+    green result. extra_fields fills whatever result_cls adds on top of
+    CommandResult (project, days, snapshot, ...).
+    """
     result = subprocess.run(
-        [str(bin_dir / "backmeup.sh"), "--dry-run", path],
+        [str(bin_dir / script_name), *args],
         capture_output=True,
         text=True,
         check=False,
     )
     success = result.returncode == 0
-    return BackupPreviewResult(
+    return result_cls(
         success=success,
         exit_code=result.returncode,
-        project=project,
-        message="Dry run completed." if success else f"Dry run failed (exit {result.returncode}).",
+        message=f"{verb} completed." if success else f"{verb} failed (exit {result.returncode}).",
         stdout=result.stdout,
         stderr=result.stderr,
+        **extra_fields,
+    )
+
+
+def run_backup_preview(bin_dir: Path, path: str) -> BackupPreviewResult:
+    return _run_script(
+        bin_dir, "backmeup.sh", ["--dry-run", path], BackupPreviewResult, "Dry run", project=Path(path).name
     )
 
 
 def run_archive_preview(bin_dir: Path, project: str, days: int = 180) -> ArchivePreviewResult:
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.archive.sh"), "--dry-run", project, str(days)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    success = result.returncode == 0
-    return ArchivePreviewResult(
-        success=success,
-        exit_code=result.returncode,
+    return _run_script(
+        bin_dir,
+        "backmeup.archive.sh",
+        ["--dry-run", project, str(days)],
+        ArchivePreviewResult,
+        "Dry run",
         project=project,
         days=days,
-        message="Dry run completed." if success else f"Dry run failed (exit {result.returncode}).",
-        stdout=result.stdout,
-        stderr=result.stderr,
     )
 
 
 def run_backup(bin_dir: Path, path: str) -> BackupResult:
-    project = Path(path).name
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.sh"), path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    success = result.returncode == 0
-    return BackupResult(
-        success=success,
-        exit_code=result.returncode,
-        project=project,
-        message="Backup completed." if success else f"Backup failed (exit {result.returncode}).",
-        stdout=result.stdout,
-        stderr=result.stderr,
-    )
+    return _run_script(bin_dir, "backmeup.sh", [path], BackupResult, "Backup", project=Path(path).name)
 
 
 def run_archive(bin_dir: Path, project: str, days: int = 180) -> ArchiveResult:
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.archive.sh"), project, str(days)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    success = result.returncode == 0
-    return ArchiveResult(
-        success=success,
-        exit_code=result.returncode,
-        project=project,
-        days=days,
-        message="Archive completed." if success else f"Archive failed (exit {result.returncode}).",
-        stdout=result.stdout,
-        stderr=result.stderr,
+    return _run_script(
+        bin_dir, "backmeup.archive.sh", [project, str(days)], ArchiveResult, "Archive", project=project, days=days
     )
 
 
 def run_unarchive(bin_dir: Path, project: str, snapshot: str) -> UnarchiveResult:
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.unarchive.sh"), project, snapshot],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    success = result.returncode == 0
-    return UnarchiveResult(
-        success=success,
-        exit_code=result.returncode,
+    return _run_script(
+        bin_dir,
+        "backmeup.unarchive.sh",
+        [project, snapshot],
+        UnarchiveResult,
+        "Restore",
         project=project,
         snapshot=snapshot,
-        message="Restore completed." if success else f"Restore failed (exit {result.returncode}).",
-        stdout=result.stdout,
-        stderr=result.stderr,
     )
 
 
 def run_migrate(bin_dir: Path, project: str) -> MigrateResult:
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.migrate.sh"), project],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    success = result.returncode == 0
-    return MigrateResult(
-        success=success,
-        exit_code=result.returncode,
-        project=project,
-        message="Migration completed." if success else f"Migration failed (exit {result.returncode}).",
-        stdout=result.stdout,
-        stderr=result.stderr,
-    )
+    return _run_script(bin_dir, "backmeup.migrate.sh", [project], MigrateResult, "Migration", project=project)

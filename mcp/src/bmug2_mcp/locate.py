@@ -63,6 +63,10 @@ def _archived_filelist_hits(config: Config, patterns: list[str]) -> list[str]:
                 continue
             lowered = line.lower()
             if any(p in lowered for p in lowered_patterns):
+                # `line` is already relative to history_dir: bin/backmeup.
+                # archive.sh generates each .filelist via
+                # `cd "$BMU_DIRBACKUPS" && find "$project/$snapshot"`, so
+                # this join isn't a coincidence - it depends on that.
                 hits.append(str(config.history_dir / line))
     return hits
 
@@ -71,6 +75,8 @@ def do_locate(config: Config, patterns: list[str]) -> LocateResult:
     indexed = bool(config.locate_cmd) and config.index_dir is not None
     index_hits: list[str] = []
     if indexed:
+        # Narrows the Optional[...] types for the type checker - `indexed`
+        # being true already guarantees both, this doesn't re-check anything.
         assert config.index_dir is not None
         assert config.locate_cmd is not None
         for pattern in patterns:

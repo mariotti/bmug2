@@ -37,6 +37,9 @@ class ConfigError(Exception):
     """Raised when BMUG2_BIN_DIR/backmeup.setup.sh can't be found or parsed."""
 
 
+# A plain dataclass, not a Pydantic BaseModel like everything in models.py -
+# this never crosses the MCP wire (it's server-internal), so it doesn't need
+# the (de)serialization those models exist for.
 @dataclass(frozen=True)
 class Config:
     bin_dir: Path

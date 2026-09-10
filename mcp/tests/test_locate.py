@@ -3,20 +3,8 @@ from __future__ import annotations
 import os
 import stat
 
-from bmug2_mcp.config import Config
+from conftest import _config
 from bmug2_mcp.locate import do_locate
-
-
-def _config(tmp_path, **overrides):
-    defaults = dict(
-        bin_dir=tmp_path,
-        sync_dir=tmp_path / "sync",
-        history_dir=tmp_path / "sync-BP",
-        index_dir=tmp_path / "sync" / ".locate.dir",
-        locate_cmd="locate",
-    )
-    defaults.update(overrides)
-    return Config(**defaults)
 
 
 def _fake_locate(tmp_path, lines_by_pattern: dict[str, list[str]]):

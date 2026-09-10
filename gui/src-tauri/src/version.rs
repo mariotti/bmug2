@@ -1,9 +1,9 @@
 // A real, checkable bmug2 version, so an incompatible install fails
 // with a clear message instead of a confusing JSON-parse failure the
 // first time a --json call hits code that predates it. Two real
-// incidents this session had exactly that shape (v2.4.0 lacking the
-// --json/non-interactive flags, v2.5.0 lacking the simplified
-// install-dir question) before there was any way to detect it.
+// incidents had exactly that shape (v2.4.0 lacking the --json/
+// non-interactive flags, v2.5.0 lacking the simplified install-dir
+// question) before there was any way to detect it.
 use std::path::Path;
 
 /// Bumped whenever the GUI starts depending on a newer bmug2 flag or
