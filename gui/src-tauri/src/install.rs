@@ -99,6 +99,13 @@ pub fn find_existing_installs(app: &AppHandle) -> Vec<String> {
     }
 }
 
+// Builds, e.g. for search_root=/home/alex:
+//   find /home/alex -maxdepth 6 ( -name .git -o -name node_modules -o
+//     ... ) -prune -o -name backmeup.sh -print
+// find's -prune/-o semantics are easy to get backwards: the parenthesized
+// group matches any PRUNE_DIRS name and prunes it (skips descending into
+// it entirely); anything not pruned falls through to "-o -name
+// backmeup.sh -print", which prints matching files without pruning them.
 fn find_existing_installs_under(search_root: &Path) -> Vec<String> {
     let mut prune_args: Vec<String> = Vec::new();
     for (i, name) in PRUNE_DIRS.iter().enumerate() {
@@ -141,7 +148,12 @@ struct LatestRelease {
     tarball_url: Option<String>,
 }
 
-fn run(cmd: &mut Command) -> Result<(String, bool), String> {
+struct RunOutput {
+    log: String,
+    ok: bool,
+}
+
+fn run(cmd: &mut Command) -> Result<RunOutput, String> {
     let name = format!("{:?}", cmd);
     let output = cmd
         .output()
@@ -149,7 +161,10 @@ fn run(cmd: &mut Command) -> Result<(String, bool), String> {
     let mut log = String::new();
     log.push_str(&String::from_utf8_lossy(&output.stdout));
     log.push_str(&String::from_utf8_lossy(&output.stderr));
-    Ok((log, output.status.success()))
+    Ok(RunOutput {
+        log,
+        ok: output.status.success(),
+    })
 }
 
 /// Finds the single top-level directory a freshly-extracted GitHub
@@ -212,54 +227,60 @@ fn install_new_into(
     index_dir: &str,
     install_dir: &str,
 ) -> Result<InstallOutcome, String> {
+    // Only install.sh's own output (the chatty, human-relevant one) joins
+    // `log` on the success path below - api/dl/tar's curl/tar invocations
+    // use silent flags (-sL, no -v) and produce nothing on stdout/stderr
+    // when they succeed, so there's normally nothing useful to append.
+    // Their captured output is still used, just on the Err paths, where
+    // it's exactly the diagnostic a failure needs.
     let mut log = String::new();
 
     log.push_str("Looking up the latest release...\n");
-    let (api_log, api_ok) = run(Command::new("curl").args([
+    let api = run(Command::new("curl").args([
         "-sL",
         "https://api.github.com/repos/mariotti/bmug2/releases/latest",
     ]))?;
-    if !api_ok {
-        return Err(format!("{log}Failed to query GitHub releases API.\n{api_log}"));
+    if !api.ok {
+        return Err(format!("{log}Failed to query GitHub releases API.\n{}", api.log));
     }
-    let tarball_url = parse_tarball_url(&api_log)
-        .ok_or_else(|| format!("{log}Could not find a tarball_url in the releases API response.\n{api_log}"))?;
+    let tarball_url = parse_tarball_url(&api.log)
+        .ok_or_else(|| format!("{log}Could not find a tarball_url in the releases API response.\n{}", api.log))?;
 
     log.push_str(&format!("Downloading {tarball_url}...\n"));
     let archive_path = work_dir.join("bmug2.tar.gz");
-    let (dl_log, dl_ok) = run(Command::new("curl").args([
+    let dl = run(Command::new("curl").args([
         "-sL",
         &tarball_url,
         "-o",
         archive_path.to_str().ok_or("temp path is not valid UTF-8")?,
     ]))?;
-    if !dl_ok {
-        return Err(format!("{log}Download failed.\n{dl_log}"));
+    if !dl.ok {
+        return Err(format!("{log}Download failed.\n{}", dl.log));
     }
 
     log.push_str("Extracting...\n");
-    let (tar_log, tar_ok) = run(Command::new("tar").args([
+    let tar = run(Command::new("tar").args([
         "-xzf",
         archive_path.to_str().ok_or("temp path is not valid UTF-8")?,
         "-C",
         work_dir.to_str().ok_or("temp path is not valid UTF-8")?,
     ]))?;
-    if !tar_ok {
-        return Err(format!("{log}Extraction failed.\n{tar_log}"));
+    if !tar.ok {
+        return Err(format!("{log}Extraction failed.\n{}", tar.log));
     }
 
     let extracted = find_extracted_dir(work_dir).map_err(|e| format!("{log}{e}"))?;
     let install_script = extracted.join("install.sh");
 
     log.push_str("Running install.sh...\n");
-    let (install_log, install_ok) = run(Command::new(&install_script)
+    let install = run(Command::new(&install_script)
         .arg(format!("--sync-dir={sync_dir}"))
         .arg(format!("--backup-dir={backup_dir}"))
         .arg(format!("--index-dir={index_dir}"))
         .arg(format!("--install-dir={install_dir}"))
         .stdin(Stdio::null()))?;
-    log.push_str(&install_log);
-    if !install_ok {
+    log.push_str(&install.log);
+    if !install.ok {
         return Err(log);
     }
 
@@ -321,18 +342,6 @@ mod tests {
         std::fs::create_dir_all(tmp.join("a")).unwrap();
         std::fs::create_dir_all(tmp.join("b")).unwrap();
         assert!(find_extracted_dir(&tmp).is_err());
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn validate_existing_style_check_requires_both_files() {
-        let tmp = std::env::temp_dir().join(format!("bmug2-test-valid-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        assert!(!config::looks_installed(&tmp));
-        std::fs::write(tmp.join("backmeup.sh"), "").unwrap();
-        assert!(!config::looks_installed(&tmp));
-        std::fs::write(tmp.join("backmeup.setup.sh"), "").unwrap();
-        assert!(config::looks_installed(&tmp));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

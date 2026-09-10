@@ -109,6 +109,10 @@ async def _call_unarchive_and_migrate(bin_dir):
             archive_r = await session.call_tool(
                 "bmug2_archive", {"project": "myproject", "days": 0}
             )
+            # backmeup.archive.sh's stdout looks like:
+            #   "archived B-20260907-005457 -> B-20260907-005457.tar.gz (4 entries verified)"
+            # - split on " -> " to drop the ".tar.gz (...)" half, then take
+            # the last whitespace-separated token to drop the "archived " prefix.
             snapshot = archive_r.structured_content["stdout"].split(" -> ")[0].split()[-1]
             unarchive_r = await session.call_tool(
                 "bmug2_unarchive", {"project": "myproject", "snapshot": snapshot}

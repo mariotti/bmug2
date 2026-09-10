@@ -16,9 +16,28 @@ from pathlib import Path
 
 import pytest
 
+from bmug2_mcp import commands
 from bmug2_mcp.config import Config, load_config
 
 REPO_BIN = Path(__file__).resolve().parents[2] / "bin"
+
+
+def _config(tmp_path: Path, **overrides: object) -> Config:
+    """A fake-but-plausible Config for tests that exercise status.py/
+    locate.py directly against a hand-built directory tree, without going
+    through a real install (see conftest's own real_sandbox fixture for
+    the alternative, install.sh-driven approach). Shared by test_status.py
+    and test_locate.py - previously two identical copies.
+    """
+    defaults: dict[str, object] = dict(
+        bin_dir=tmp_path,
+        sync_dir=tmp_path / "sync",
+        history_dir=tmp_path / "sync-BP",
+        index_dir=tmp_path / "sync" / ".locate.dir",
+        locate_cmd="locate",
+    )
+    defaults.update(overrides)
+    return Config(**defaults)
 
 
 @dataclass(frozen=True)
@@ -28,12 +47,8 @@ class Sandbox:
 
 
 def _run_backup(bin_dir: Path, project_dir: Path) -> None:
-    result = subprocess.run(
-        [str(bin_dir / "backmeup.sh"), str(project_dir)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    result = commands.run_backup(bin_dir, str(project_dir))
+    assert result.success, result.stdout + result.stderr
 
 
 @pytest.fixture

@@ -71,7 +71,11 @@ class LocateResult(BaseModel):
 class CommandResult(BaseModel):
     success: bool
     exit_code: int
-    message: str
+    message: str = Field(
+        description="Short human/LLM-readable summary of the outcome, e.g. "
+        "'Backup completed.' or 'Backup failed (exit 1).' - distinct from "
+        "stdout/stderr, which carry the script's raw output verbatim."
+    )
     stdout: str
     stderr: str
 

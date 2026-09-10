@@ -53,7 +53,14 @@ def _last_run(project_history_dir: Path) -> str | None:
     stamp_file = project_history_dir / ".bmulastrun"
     if not stamp_file.is_file():
         return None
-    raw = stamp_file.read_text(encoding="utf-8").strip()
+    try:
+        raw = stamp_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        # Vanished between the is_file() check and the read (e.g. a
+        # concurrent run rewriting it) - same race _dir_size_bytes above
+        # guards against. Report as if it were never written rather than
+        # fail the whole status call over one file.
+        return None
     try:
         return datetime.strptime(raw, _LASTRUN_STRFTIME).isoformat()
     except ValueError:
