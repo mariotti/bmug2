@@ -168,7 +168,9 @@ ever-growing pile.
 A cron layout that puts this together — backmeup runs first, the cloud
 replication only sees a finished, consistent tree (or use
 [`backmeup.replicate.sh`](MANUAL.md#backmeupreplicatesh) in place of
-the two `rclone sync` lines, if you configured it):
+the two `rclone sync` lines, if you configured it; see
+[SCHEDULING.md](SCHEDULING.md) for the PATH pitfall that hits `rclone`
+detection specifically when run from cron):
 
 ```
 0  2  *  *  *   /Users/alex/usr/bmu/bin/backmeup.sh /Users/alex/Documents

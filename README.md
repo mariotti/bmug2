@@ -66,6 +66,9 @@ projects, excluding files, external drives, cron, upgrading an old bmu
 disk: **[docs/EXAMPLES.md](docs/EXAMPLES.md)**. Choosing where SYNC and
 HISTORY actually live — local disks, Dropbox/Google Drive, and why S3
 needs a different approach: **[docs/DESTINATIONS.md](docs/DESTINATIONS.md)**.
+Running it unattended — cron, `at`, systemd timers, launchd, and the
+PATH gotcha that trips up most scheduled jobs:
+**[docs/SCHEDULING.md](docs/SCHEDULING.md)**.
 
 ## Design goals
 

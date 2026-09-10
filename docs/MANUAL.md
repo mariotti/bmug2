@@ -5,7 +5,8 @@ the [README](../README.md). For real usage recipes (multiple projects,
 excluding files, cron, upgrading an old bmu disk), see
 [EXAMPLES.md](EXAMPLES.md). For where SYNC/HISTORY can actually live
 (local disks, cloud-sync folders, S3), see
-[DESTINATIONS.md](DESTINATIONS.md).
+[DESTINATIONS.md](DESTINATIONS.md). For running it unattended (cron,
+`at`, systemd timers, launchd), see [SCHEDULING.md](SCHEDULING.md).
 
 ## Contents
 
@@ -216,7 +217,9 @@ required for search to work on just-backed-up files — see
 [backmeup.locate.sh](#backmeuplocatesh)'s live-filelist fallback above
 — but still the only way to get indexed (fast, `locate`-backed) search
 over everything. Can take a long time on a large backup; a good
-candidate for a nightly cron job. Fails if no
+candidate for a nightly cron job (see
+[SCHEDULING.md](SCHEDULING.md) for the PATH gotcha that trips this up
+specifically when scheduled). Fails if no
 `updatedb` is available.
 
 ### backmeup.archive.sh
@@ -355,6 +358,17 @@ installed; `brew install rsync` (or your distro's real rsync package).
 **`WARNING: no updatedb found, skipping indexing`** — backups still
 work; install findutils to enable fast indexed search, or rely on
 `backmeup.locate.sh`'s filelist fallback.
+
+**`backmeup.updatedb.sh` (or replication) fails from cron/launchd with
+`ERROR: no updatedb found, cannot build the index.` even though
+`backmeup.configure.sh` never warned about it** — this is a PATH
+problem, not a missing-tool problem. `configure.sh` ran with your
+normal interactive PATH (Homebrew's `/opt/homebrew/bin` included);
+cron and launchd jobs start with a minimal PATH that leaves it out, and
+unlike `rsync`'s own detection, the indexer/rclone detection has no
+absolute-path fallback to fall back on. Set `PATH=` explicitly in the
+scheduler entry (see [SCHEDULING.md](SCHEDULING.md) for worked
+examples on both platforms).
 
 **`ERROR: replication is not configured`** — re-run
 `backmeup.configure.sh` and accept the off-site replication prompt

@@ -18,7 +18,7 @@ way.
  - [More than one project](#more-than-one-project)
  - [Special setting: excluding files with rsync options](#special-setting-excluding-files-with-rsync-options)
  - [Special setting: backing up to an external or network drive](#special-setting-backing-up-to-an-external-or-network-drive)
- - [Automating it with cron](#automating-it-with-cron)
+ - [Automating it (cron, launchd, systemd timers)](#automating-it-cron-launchd-systemd-timers)
  - [Preview before you commit](#preview-before-you-commit)
  - [Finding things again](#finding-things-again)
  - [Housekeeping: status and archiving old snapshots](#housekeeping-status-and-archiving-old-snapshots)
@@ -118,7 +118,8 @@ Two things worth planning around before you commit to a layout:
    *parents* instead, or plan distinct names.
  - There's no config file listing "these are my projects" — if you
    want a fixed set backed up every night, that list lives wherever you
-   automate it (see [Automating it with cron](#automating-it-with-cron)).
+   automate it (see
+   [Automating it](#automating-it-cron-launchd-systemd-timers)).
 
 ## Special setting: excluding files with rsync options
 
@@ -193,7 +194,7 @@ Things worth knowing before you do this:
    directory slow (it's a full copy); subsequent runs are only as slow
    as what actually changed, same as any rsync-based tool.
 
-## Automating it with cron
+## Automating it (cron, launchd, systemd timers)
 
 bmug2 has no daemon or scheduler of its own — cron (or launchd, or
 systemd timers) is the intended way to run it unattended. A simple
@@ -214,15 +215,15 @@ Notes:
  - Full paths everywhere — cron doesn't source your shell rc file, so
    even if you accepted `install.sh`'s offer to put `bmu`/`backmeup.*.sh`
    on `PATH` for interactive shells, cron jobs still need the full path.
- - Stagger the backup jobs a few minutes apart if they share a slow
-   disk; running `updatedb.sh` only after they've all finished avoids
-   indexing a half-written backup.
  - The monthly `archive.sh` line uses the default 180-day cutoff (no
    number after the project name) — see
    [Housekeeping](#housekeeping-status-and-archiving-old-snapshots).
- - Redirect cron's own mail (`MAILTO=`) or check `backmeup.status.sh`
-   periodically — a backup that silently stops running is worse than
-   one that never ran, because it looks fine from a distance.
+
+For staggering jobs, PATH inside a scheduled job (a common source of
+silent failures — indexing and replication in particular), systemd
+timer units, launchd LaunchAgents, `at`, and macOS's Full Disk Access
+caveat, see the dedicated
+**[docs/SCHEDULING.md](SCHEDULING.md)**.
 
 ## Preview before you commit
 
