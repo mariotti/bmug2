@@ -1,0 +1,73 @@
+name: gui-release
+
+# Builds installer bundles for the desktop GUI whenever a version tag is
+# pushed (the same v* tags the CLI's own releases use), and exposes them
+# as downloadable workflow artifacts - not auto-attached to the matching
+# GitHub Release, since that's cut by hand shortly after tagging and the
+# ordering between the two isn't guaranteed. Attach manually once both
+# exist:
+#   gh run download <run-id> -n bmug2-macos-bundle
+#   gh run download <run-id> -n bmug2-linux-bundles
+#   gh release upload vX.Y.Z bmug2_*.dmg *.AppImage *.deb
+#
+# IMPORTANT: these builds are unsigned and unnotarized. The macOS .dmg
+# will trigger Gatekeeper's "unidentified developer" warning on anyone
+# else's machine; the Linux bundles are unaffected by that (no macOS-
+# style code signing requirement there). Signing needs an Apple
+# Developer ID certificate and notarization credentials stored as
+# repository secrets - not set up here, since that requires the
+# repository owner's own paid developer account.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+      - name: Build Tauri bundles
+        working-directory: gui
+        run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bmug2-macos-bundle
+          path: gui/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf build-essential curl wget file libssl-dev libgtk-3-dev
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+      - name: Build Tauri bundles
+        working-directory: gui
+        run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bmug2-linux-bundles
+          path: |
+            gui/src-tauri/target/release/bundle/appimage/*.AppImage
+            gui/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
