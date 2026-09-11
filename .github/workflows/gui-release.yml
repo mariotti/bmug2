@@ -10,13 +10,19 @@ name: gui-release
 #   gh run download <run-id> -n bmug2-linux-bundles
 #   gh release upload vX.Y.Z bmug2_*.dmg *.AppImage *.deb
 #
-# IMPORTANT: these builds are unsigned and unnotarized. The macOS .dmg
-# will trigger Gatekeeper's "unidentified developer" warning on anyone
-# else's machine; the Linux bundles are unaffected by that (no macOS-
-# style code signing requirement there). Signing needs an Apple
-# Developer ID certificate and notarization credentials stored as
-# repository secrets - not set up here, since that requires the
-# repository owner's own paid developer account.
+# IMPORTANT: the macOS app is ad-hoc signed (tauri.conf.json's
+# bundle.macOS.signingIdentity: "-") but not notarized - a real
+# Developer ID certificate needs the repository owner's own paid
+# developer account, not set up here. Ad-hoc signing isn't optional
+# polish: without it, the assembled .app has no CodeResources seal at
+# all and macOS refuses to open it with "the app is damaged and
+# should be moved to the Trash" - confirmed for real via `spctl -a
+# -vvv --type execute` against an unsigned build, not just theorized.
+# With ad-hoc signing in place, a fresh download instead shows the
+# normal, recoverable Gatekeeper prompt for an unnotarized app -
+# right-click > Open, or System Settings > Privacy & Security > Open
+# Anyway. The Linux bundles have no equivalent step - no macOS-style
+# code signing requirement there.
 
 on:
   push:
