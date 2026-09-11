@@ -6,10 +6,23 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Schedule {
+    pub hour: u32,
+    pub minute: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupSource {
     pub name: String,
     pub path: String,
+    // None = not scheduled. The real source of truth for "is this
+    // actually scheduled" is the installed launchd/systemd artifact
+    // (schedule.rs::status reads that back) - this field is a
+    // UI-convenience mirror, kept in sync by schedule.rs's own
+    // install/uninstall calls, not authoritative on its own.
+    #[serde(default)]
+    pub schedule: Option<Schedule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +33,8 @@ pub struct Config {
     // otherwise-valid saved config.
     #[serde(default)]
     pub sources: Vec<BackupSource>,
+    #[serde(default)]
+    pub housekeeping_schedule: Option<Schedule>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -44,16 +59,17 @@ pub fn load(app: &AppHandle) -> Option<Config> {
 }
 
 pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
-    // Preserves any already-saved sources rather than wiping them -
-    // this runs on both first install and "use an existing install",
-    // and a user re-pointing at the same bin_dir shouldn't lose their
-    // tracked backup sources.
-    let sources = load(app).map(|cfg| cfg.sources).unwrap_or_default();
+    // Preserves any already-saved sources/schedules rather than wiping
+    // them - this runs on both first install and "use an existing
+    // install", and a user re-pointing at the same bin_dir shouldn't
+    // lose their tracked backup sources or schedules.
+    let existing = load(app);
     write(
         app,
         &Config {
             bin_dir: bin_dir.to_string(),
-            sources,
+            sources: existing.as_ref().map(|c| c.sources.clone()).unwrap_or_default(),
+            housekeeping_schedule: existing.and_then(|c| c.housekeeping_schedule),
         },
     )
 }
@@ -67,6 +83,32 @@ pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
 pub fn save_sources(app: &AppHandle, sources: &[BackupSource]) -> Result<(), String> {
     let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
     cfg.sources = sources.to_vec();
+    write(app, &cfg)
+}
+
+// Mirrors save_sources's shape: load, mutate one slice, write back.
+// The caller (schedule.rs, via lib.rs's commands) is responsible for
+// actually installing/uninstalling the native scheduler artifact
+// before calling this - this function only updates the UI-convenience
+// mirror.
+pub fn set_source_schedule(
+    app: &AppHandle,
+    source_path: &str,
+    schedule: Option<Schedule>,
+) -> Result<(), String> {
+    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+    let source = cfg
+        .sources
+        .iter_mut()
+        .find(|s| s.path == source_path)
+        .ok_or_else(|| format!("no backup source tracked at {source_path}"))?;
+    source.schedule = schedule;
+    write(app, &cfg)
+}
+
+pub fn set_housekeeping_schedule(app: &AppHandle, schedule: Option<Schedule>) -> Result<(), String> {
+    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+    cfg.housekeeping_schedule = schedule;
     write(app, &cfg)
 }
 

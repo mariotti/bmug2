@@ -2,10 +2,11 @@ mod config;
 mod dashboard;
 mod install;
 mod run;
+mod schedule;
 mod sources;
 mod version;
 
-use config::BackupSource;
+use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome};
 use run::RunOutput;
@@ -94,6 +95,50 @@ fn run_backup_now(bin_dir: String, source_path: String) -> Result<RunOutput, Str
     run::run_backup_now(&bin_dir, &source_path)
 }
 
+#[tauri::command]
+fn set_source_schedule(
+    app: AppHandle,
+    bin_dir: String,
+    source_path: String,
+    hour: u32,
+    minute: u32,
+) -> Result<(), String> {
+    let label = schedule::source_label(&source_path);
+    let wrapper = schedule::build_source_wrapper(&bin_dir, &source_path);
+    schedule::install(&label, &wrapper, hour, minute, &format!("bmug2 backup ({source_path})"))?;
+    config::set_source_schedule(&app, &source_path, Some(Schedule { hour, minute }))
+}
+
+#[tauri::command]
+fn clear_source_schedule(app: AppHandle, source_path: String) -> Result<(), String> {
+    schedule::uninstall(&schedule::source_label(&source_path))?;
+    config::set_source_schedule(&app, &source_path, None)
+}
+
+#[tauri::command]
+fn get_housekeeping_schedule() -> Option<Schedule> {
+    schedule::status(schedule::HOUSEKEEPING_LABEL)
+}
+
+#[tauri::command]
+fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, hour: u32, minute: u32) -> Result<(), String> {
+    let wrapper = schedule::build_housekeeping_wrapper(&bin_dir);
+    schedule::install(
+        schedule::HOUSEKEEPING_LABEL,
+        &wrapper,
+        hour,
+        minute,
+        "bmug2 housekeeping (updatedb/replicate)",
+    )?;
+    config::set_housekeeping_schedule(&app, Some(Schedule { hour, minute }))
+}
+
+#[tauri::command]
+fn clear_housekeeping_schedule(app: AppHandle) -> Result<(), String> {
+    schedule::uninstall(schedule::HOUSEKEEPING_LABEL)?;
+    config::set_housekeeping_schedule(&app, None)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -109,7 +154,12 @@ pub fn run() {
             list_sources,
             add_source,
             remove_source,
-            run_backup_now
+            run_backup_now,
+            set_source_schedule,
+            clear_source_schedule,
+            get_housekeeping_schedule,
+            set_housekeeping_schedule,
+            clear_housekeeping_schedule
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

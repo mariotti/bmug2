@@ -6,11 +6,31 @@
 // source path. Run Now (run.rs) and, later, scheduling both need a
 // name->source-path list to operate on, so this is where it lives.
 use crate::config::{self, BackupSource};
+use crate::schedule;
 use std::path::Path;
 use tauri::AppHandle;
 
+// Reconciles each source's schedule field against the installed
+// launchd/systemd artifact (the real source of truth - see
+// schedule.rs's own module doc) rather than trusting config.json
+// blindly, self-healing drift (e.g. a schedule removed outside the
+// app) and persisting the correction. A raw config::load without
+// reconciliation would be cheaper but could show a schedule as "on"
+// when nothing is actually installed to run it.
 pub fn list(app: &AppHandle) -> Vec<BackupSource> {
-    config::load(app).map(|cfg| cfg.sources).unwrap_or_default()
+    let mut sources = config::load(app).map(|cfg| cfg.sources).unwrap_or_default();
+    let mut changed = false;
+    for source in sources.iter_mut() {
+        let actual = schedule::status(&schedule::source_label(&source.path));
+        if actual != source.schedule {
+            source.schedule = actual;
+            changed = true;
+        }
+    }
+    if changed {
+        let _ = config::save_sources(app, &sources);
+    }
+    sources
 }
 
 pub fn add(app: &AppHandle, path: &str, name: Option<&str>) -> Result<BackupSource, String> {
@@ -24,6 +44,12 @@ pub fn add(app: &AppHandle, path: &str, name: Option<&str>) -> Result<BackupSour
 pub fn remove(app: &AppHandle, path: &str) -> Result<(), String> {
     let mut sources = list(app);
     let before = sources.len();
+    // Best-effort: a launchctl/systemctl hiccup shouldn't block the
+    // user from removing a folder they no longer want tracked - an
+    // orphaned job left behind by a failed uninstall is a smaller
+    // problem than "Remove doesn't work," and list()'s reconciliation
+    // above will keep self-correcting the displayed status regardless.
+    let _ = schedule::uninstall(&schedule::source_label(path));
     sources.retain(|s| s.path != path);
     if sources.len() == before {
         return Err(format!("no backup source tracked at {path}"));
@@ -60,6 +86,7 @@ fn build_source(
     Ok(BackupSource {
         name,
         path: path.to_string(),
+        schedule: None,
     })
 }
 
@@ -115,6 +142,7 @@ mod tests {
         let existing = vec![BackupSource {
             name: "already-here".to_string(),
             path: dir.to_str().unwrap().to_string(),
+            schedule: None,
         }];
         let err = build_source(&existing, dir.to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("already tracked"), "{err}");
