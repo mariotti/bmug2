@@ -107,6 +107,52 @@ bmuDetectRclone() {
     done
 }
 #
+# bmuAcquireLock()
+# $1 = lock directory path. Uses mkdir as the atomicity primitive -
+# not flock/lockf, which aren't both available on every platform this
+# project targets (confirmed: no flock(1) on macOS, no shlock on
+# Linux) - mkdir needs no external binary and is atomic on every POSIX
+# filesystem, matching the capability-based (not uname-based) approach
+# already used for rsync/indexer/rclone detection above.
+# On success, writes $$ into <lockdir>/pid and returns 0 - the caller
+# is expected to release it via bmuReleaseLock, normally through
+# `trap 'bmuReleaseLock "$dir"' EXIT` so it fires on normal exit and
+# most signals.
+# Stale-lock recovery: if mkdir fails because the directory already
+# exists, but its pid file names a process that's no longer running
+# (e.g. killed with SIGKILL, which no EXIT trap can clean up after),
+# reclaim it instead of blocking forever. The reclaiming mkdir is still
+# the atomic gate - if two callers both decide the lock is stale at
+# the same time, only one of their post-rm mkdir calls can succeed.
+# Returns 1 (caller prints its own clear error) only when the lock is
+# genuinely held by a still-running process.
+bmuAcquireLock() {
+    l_bmu_lockdir="$1"
+    if mkdir "${l_bmu_lockdir}" 2>/dev/null; then
+        echo $$ > "${l_bmu_lockdir}/pid"
+        return 0
+    fi
+    l_bmu_lockpid=''
+    if [ -f "${l_bmu_lockdir}/pid" ]; then
+        l_bmu_lockpid=`cat "${l_bmu_lockdir}/pid" 2>/dev/null`
+    fi
+    if [ -n "${l_bmu_lockpid}" ] && ! kill -0 "${l_bmu_lockpid}" 2>/dev/null; then
+        echo "WARNING: removing a stale lock left by pid ${l_bmu_lockpid} (no longer running)"
+        rm -rf "${l_bmu_lockdir}"
+        if mkdir "${l_bmu_lockdir}" 2>/dev/null; then
+            echo $$ > "${l_bmu_lockdir}/pid"
+            return 0
+        fi
+    fi
+    return 1
+}
+#
+# bmuReleaseLock()
+# $1 = lock directory path, as passed to bmuAcquireLock.
+bmuReleaseLock() {
+    rm -rf "$1"
+}
+#
 # bmuConfigureDirFromFlag()
 # Non-interactive counterpart to a bmuPromptValue "-d" while-loop: given
 # a flag's value (already known non-empty by the caller), validates

@@ -50,6 +50,9 @@ HISTORY/<project>/B-<date>/...        the changed/deleted files, that run
 HISTORY/<project>/B-<date>.filelist   plain-text `find` listing of the snapshot
 HISTORY/<project>/B-<date>.tar.gz     the snapshot, once archived (see below)
 HISTORY/<project>/.bmulastrun         timestamp of the last successful run
+HISTORY/<project>/.bmulock            present only while a backmeup.sh run for
+                                       this project is in progress; removed when
+                                       it finishes - see Troubleshooting below
 HISTORY/<project>.filelist            plain-text listing of the current mirror,
                                        refreshed on every successful run - lets
                                        search find just-backed-up files instantly,
@@ -358,6 +361,21 @@ installed; `brew install rsync` (or your distro's real rsync package).
 **`WARNING: no updatedb found, skipping indexing`** — backups still
 work; install findutils to enable fast indexed search, or rely on
 `backmeup.locate.sh`'s filelist fallback.
+
+**`ERROR: another backmeup.sh run for '<project>' is already in
+progress.`** — a second `backmeup.sh` call for the same project (a
+scheduled run, GUI Run Now, or a manual call) started while an earlier
+one was still running. This is `backmeup.sh`'s own per-project lock
+doing its job, not a bug — starting a second run would have raced the
+first for the same `B-<date>` snapshot directory. It exits on its own
+once the first run finishes; if it keeps happening, the schedule and/or
+Run Now for that project are firing more often than a full backup
+takes to complete, and need to be spaced out further. If you see this
+immediately after a run that was killed (not exited normally) and it
+doesn't go away, the lock recovers itself automatically the next time
+`backmeup.sh` runs for that project — it checks whether the process
+that held it is still alive and reclaims it if not, so no manual
+cleanup of `HISTORY/<project>/.bmulock` should ever be necessary.
 
 **`backup`/`updatedb`/replication behaves differently from cron/launchd
 than it does in Terminal — an error, or (worse) no error but deleted

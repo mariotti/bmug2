@@ -909,6 +909,58 @@ testBackupPropagatesRsyncFailureExitCode() {
         "[ -f '${SB}/sync-BP/rsyncfailproj/.bmulastrun' ]"
 }
 
+testBackupRefusesWhenAnotherRunHoldsTheLock() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/lockedproj"
+    mkdir -p "${l_src}"
+    echo "content" > "${l_src}/file.txt"
+
+    # Manually acquire the exact lock backmeup.sh would take for this
+    # project - a deterministic stand-in for a real overlapping run
+    # (GUI interval schedule, Run Now, and a cron entry can all target
+    # the same project), without racing real background processes.
+    . "${SB}/bin/backmeup.shellfunctions.sh"
+    l_lockdir="${SB}/sync-BP/lockedproj/.bmulock"
+    mkdir -p "${SB}/sync-BP/lockedproj"
+    bmuAcquireLock "${l_lockdir}"
+    assertTrue "test setup: failed to acquire the simulated lock" $?
+
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/locked.log" 2>&1
+    assertEquals "a run should refuse to start while the lock is held" 1 $?
+    grep -q "already in progress" "${SB}/locked.log"
+    assertTrue "expected an 'already in progress' error message" $?
+    assertFalse "mirror must not be created while locked" \
+        "[ -e '${SB}/sync/lockedproj' ]"
+
+    bmuReleaseLock "${l_lockdir}"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/unlocked.log" 2>&1
+    assertEquals "run should succeed once the lock is released" 0 $?
+    assertTrue "mirror should exist after the lock-free run" \
+        "[ -f '${SB}/sync/lockedproj/file.txt' ]"
+}
+
+testBackupReclaimsStaleLockFromDeadPid() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/staleproj"
+    mkdir -p "${l_src}"
+    echo "content" > "${l_src}/file.txt"
+
+    # A pid essentially guaranteed to no longer be running: a background
+    # subshell that has already exited by the time we read $!.
+    (exit 0) &
+    l_deadpid=$!
+    wait "${l_deadpid}" 2>/dev/null
+
+    l_lockdir="${SB}/sync-BP/staleproj/.bmulock"
+    mkdir -p "${l_lockdir}"
+    echo "${l_deadpid}" > "${l_lockdir}/pid"
+
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/stale.log" 2>&1
+    assertEquals "a stale lock should be reclaimed, not block the run" 0 $?
+    grep -q "removing a stale lock" "${SB}/stale.log"
+    assertTrue "expected a stale-lock warning" $?
+    assertFalse "lock dir should be gone after a successful run" \
+        "[ -d '${l_lockdir}' ]"
+}
+
 testOldLayoutGuardIgnoresLegitimateSameNamedSubdir() {
     # a project whose SOURCE legitimately contains a subdirectory with
     # the same name as itself ends up looking exactly like the old
