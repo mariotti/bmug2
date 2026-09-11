@@ -118,6 +118,62 @@ and `IOSchedulingClass=idle`, and launchd's `Nice` key are all cheap
 insurance against a nightly reindex fighting you for the disk while
 you're using the machine.
 
+## Running more often than once a day
+
+Nightly is the 80% case above, but "back up every few minutes so an
+active editing session is never more than a few minutes from a copy"
+is a real, common one too — someone writing a long document who can't
+afford to lose an hour of work, for instance. All three mechanisms
+support it; none of it needs a different tool.
+
+**Cron** needs nothing new — the step syntax already documented in
+`crontab(5)` just works: `*/5 * * * *` runs every 5 minutes,
+`*/30 * * * *` every 30.
+
+**launchd** uses a different key entirely, not just a different value
+of `StartCalendarInterval`. `StartInterval <integer>` (seconds) fires
+every N seconds instead — confirmed via `man launchd.plist` on this
+machine:
+
+> This optional key causes the job to be started every N seconds. If
+> the system is asleep during the time of the next scheduled interval
+> firing, that interval will be missed due to shortcomings in
+> kqueue(3). If the job is running during an interval firing, that
+> interval firing will likewise be missed.
+
+That second sentence is worth reading twice: launchd itself guarantees
+a `StartInterval` job never overlaps itself — a firing that lands while
+the previous run is still going is simply skipped, not queued. Add
+`StartInterval` (e.g. `1800` for every 30 minutes) to the LaunchAgent
+plist below in place of `StartCalendarInterval`, nothing else changes.
+
+**systemd timers** reuse the exact `OnCalendar=` directive daily
+schedules already use, just with step syntax instead of a fixed
+wall-clock time — `OnCalendar=*:0/5` for every 5 minutes. Verified for
+real, same container technique as the daily unit files below:
+
+```
+$ systemd-analyze verify bmu-backup.service bmu-backup.timer
+$ echo $?
+0
+$ systemd-analyze calendar --iterations=3 '*:0/5'
+    Next elapse: Fri 2026-09-11 19:25:00 UTC
+   Iteration #2: Fri 2026-09-11 19:30:00 UTC
+   Iteration #3: Fri 2026-09-11 19:35:00 UTC
+```
+
+**Short intervals make the no-lock limitation (point 3 above) concretely
+more likely to bite** — a 5-minute backup of a large folder can
+genuinely still be running at the next firing. launchd handles this
+gracefully on its own (confirmed above: it skips the overlapping
+firing rather than starting a second copy). systemd's per-unit
+activation semantics make a second concurrent start of the same
+`Type=oneshot` service unlikely by default, but that's the safer Tier 2
+assumption here, not independently re-verified against a real
+long-running job on this machine — if you rely on very short intervals
+for a large folder, watch `journalctl --user -u bmu-backup.service`
+the first few times rather than assuming it's fine.
+
 ## Linux
 
 ### cron

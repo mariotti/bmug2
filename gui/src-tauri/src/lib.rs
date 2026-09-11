@@ -100,13 +100,12 @@ fn set_source_schedule(
     app: AppHandle,
     bin_dir: String,
     source_path: String,
-    hour: u32,
-    minute: u32,
+    schedule: Schedule,
 ) -> Result<(), String> {
     let label = schedule::source_label(&source_path);
     let wrapper = schedule::build_source_wrapper(&bin_dir, &source_path);
-    schedule::install(&label, &wrapper, hour, minute, &format!("bmug2 backup ({source_path})"))?;
-    config::set_source_schedule(&app, &source_path, Some(Schedule { hour, minute }))
+    schedule::install(&label, &wrapper, &schedule, &format!("bmug2 backup ({source_path})"))?;
+    config::set_source_schedule(&app, &source_path, Some(schedule))
 }
 
 #[tauri::command]
@@ -121,16 +120,15 @@ fn get_housekeeping_schedule() -> Option<Schedule> {
 }
 
 #[tauri::command]
-fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, hour: u32, minute: u32) -> Result<(), String> {
+fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, schedule: Schedule) -> Result<(), String> {
     let wrapper = schedule::build_housekeeping_wrapper(&bin_dir);
     schedule::install(
         schedule::HOUSEKEEPING_LABEL,
         &wrapper,
-        hour,
-        minute,
+        &schedule,
         "bmug2 housekeeping (updatedb/replicate)",
     )?;
-    config::set_housekeeping_schedule(&app, Some(Schedule { hour, minute }))
+    config::set_housekeeping_schedule(&app, Some(schedule))
 }
 
 #[tauri::command]

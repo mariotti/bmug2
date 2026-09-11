@@ -6,10 +6,15 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+// Untagged so an already-persisted {"hour":N,"minute":N} value (from
+// before Interval existed) keeps parsing as Daily without a "kind"
+// discriminator - serde tries each variant structurally, and Daily's
+// field names never collide with Interval's.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct Schedule {
-    pub hour: u32,
-    pub minute: u32,
+#[serde(untagged)]
+pub enum Schedule {
+    Daily { hour: u32, minute: u32 },
+    Interval { minutes: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

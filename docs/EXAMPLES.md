@@ -14,6 +14,7 @@ way.
 
 ## Contents
 
+ - [Two ways people actually use bmug2](#two-ways-people-actually-use-bmug2)
  - [The basics: one directory, one project](#the-basics-one-directory-one-project)
  - [More than one project](#more-than-one-project)
  - [Special setting: excluding files with rsync options](#special-setting-excluding-files-with-rsync-options)
@@ -23,6 +24,41 @@ way.
  - [Finding things again](#finding-things-again)
  - [Housekeeping: status and archiving old snapshots](#housekeeping-status-and-archiving-old-snapshots)
  - [Upgrading a backup disk from the original bmu](#upgrading-a-backup-disk-from-the-original-bmu)
+
+## Two ways people actually use bmug2
+
+Not a full taxonomy, just two real shapes this project keeps coming
+back to — everything below is built from features already documented
+elsewhere in this doc set, nothing new.
+
+**The thesis writer.** You're deep in a document you genuinely cannot
+afford to lose an hour of — a thesis, a grant application, anything
+where "I'll back it up tonight" isn't good enough. Run it on demand
+whenever you remember (shell `bmu ~/Thesis`, or the GUI's **Run Now**),
+and set a tight schedule underneath so you don't have to remember: a
+launchd/systemd timer every 5-30 minutes rather than nightly — see
+[Running more often than once a day](SCHEDULING.md#running-more-often-than-once-a-day)
+for the recipe, or the GUI's per-source schedule picker, which offers
+the same intervals directly. Point SYNC at an external drive or a
+cloud-sync folder rather than the same internal disk your working copy
+lives on — see
+[Special setting: backing up to an external or network drive](#special-setting-backing-up-to-an-external-or-network-drive)
+and [DESTINATIONS.md](DESTINATIONS.md) — so a dead laptop disk doesn't
+take both copies with it.
+
+**Time Machine, without the lock-in.** Plain files, on a disk you
+choose, in a format you don't need bmug2 (or any tool) installed to
+read. Every past version already lives at
+`HISTORY/<project>/B-<date>/` as an ordinary directory tree — no
+database, no proprietary snapshot format, no password to forget; `cd`
+and `ls` are the recovery procedure. This isn't a version-control
+replacement (no diffs, no branches, no merges — see
+[MANUAL.md](MANUAL.md) for what `backmeup.sh`'s `--backup` snapshot
+behavior actually does), just a plain-filesystem alternative to a
+backup tool that only you can unlock. See
+[DESTINATIONS.md](DESTINATIONS.md) for what "SYNC on a real disk"
+means for this - local, external, or a cloud-sync folder, bmug2 doesn't
+care which.
 
 ## The basics: one directory, one project
 
