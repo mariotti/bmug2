@@ -46,6 +46,22 @@ interface LocateResult {
   results: LocateHit[];
 }
 
+interface BackupSource {
+  name: string;
+  path: string;
+}
+
+interface RunOutput {
+  log: string;
+  ok: boolean;
+}
+
+interface RunBanner {
+  ok: boolean;
+  message: string;
+  log?: string;
+}
+
 type InstallRequest =
   | ({ mode: "new" } & DefaultPaths)
   | { mode: "existing"; bin_dir: string };
@@ -135,6 +151,106 @@ function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
   return el("section", {}, [header, table, ...oldLayoutNotes]);
 }
 
+// bmug2 itself has no memory of "which folders to back up" -
+// backmeup.sh takes a directory argument each call and doesn't
+// persist it, and get_status only reports projects already backed up
+// at least once (by name, scanned from SYNC), with no record of their
+// original source path. This section is the GUI's own tracked list
+// (list_sources/add_source/remove_source), cross-referenced against
+// status.projects by name for a "last run" display when available.
+function buildSourcesSection(
+  sources: BackupSource[],
+  status: StatusResult,
+  binDir: string,
+): HTMLElement {
+  const addBtn = el("button", { type: "button" }, ["+ Add folder"]);
+  addBtn.addEventListener("click", () => void addSource(binDir));
+
+  const header = el("div", { class: "sources-header" }, [
+    el("h2", {}, ["Backup sources"]),
+    addBtn,
+  ]);
+
+  if (sources.length === 0) {
+    return el("section", {}, [
+      header,
+      el("p", {}, ["No backup sources yet — add a folder to get started."]),
+    ]);
+  }
+
+  const rows = sources.map((source) => {
+    const known = status.projects.find((p) => p.name === source.name);
+    const runBtn = el("button", { type: "button" }, ["Run now"]);
+    runBtn.addEventListener("click", () => void runBackupNow(binDir, source));
+    const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
+    removeBtn.addEventListener("click", () => void removeSource(binDir, source));
+
+    return el("tr", {}, [
+      el("td", {}, [source.name]),
+      el("td", {}, [el("code", {}, [source.path])]),
+      el("td", {}, [known?.last_run ?? "never run yet"]),
+      el("td", { class: "actions" }, [runBtn, removeBtn]),
+    ]);
+  });
+
+  const table = el("table", { class: "sources-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", {}, ["Name"]),
+        el("th", {}, ["Folder"]),
+        el("th", {}, ["Last run"]),
+        el("th", {}, [""]),
+      ]),
+    ]),
+    el("tbody", {}, rows),
+  ]);
+
+  return el("section", {}, [header, table]);
+}
+
+async function addSource(binDir: string) {
+  const selected = await open({ directory: true });
+  if (typeof selected !== "string") return;
+  try {
+    await invoke<BackupSource>("add_source", { path: selected, name: null });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+async function removeSource(binDir: string, source: BackupSource) {
+  try {
+    await invoke("remove_source", { path: source.path });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+async function runBackupNow(binDir: string, source: BackupSource) {
+  renderInstalling(`Running backup for ${source.name}…`);
+  try {
+    const result = await invoke<RunOutput>("run_backup_now", {
+      binDir,
+      sourcePath: source.path,
+    });
+    void renderDashboard(binDir, {
+      ok: result.ok,
+      message: result.ok
+        ? `Backup for ${source.name} completed.`
+        : `Backup for ${source.name} failed.`,
+      log: result.ok ? undefined : result.log,
+    });
+  } catch (err) {
+    void renderDashboard(binDir, {
+      ok: false,
+      message: `Backup for ${source.name} failed.`,
+      log: String(err),
+    });
+  }
+}
+
 function buildSearchSection(binDir: string): HTMLElement {
   const [searchField, searchInput] = field(
     "Search (space-separated patterns)",
@@ -212,20 +328,32 @@ function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
   resultsBox.replaceChildren(...children);
 }
 
-async function renderDashboard(binDir: string) {
+async function renderDashboard(binDir: string, banner?: RunBanner) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, ["Loading status…"]));
   let status: StatusResult;
+  let sources: BackupSource[];
   try {
     status = await invoke<StatusResult>("get_status", { binDir });
+    sources = await invoke<BackupSource[]>("list_sources");
   } catch (err) {
     renderError(String(err), () => void renderDashboard(binDir));
     return;
   }
-  app.replaceChildren(
-    el("h1", {}, ["bmug2"]),
+  const children: (Node | string)[] = [el("h1", {}, ["bmug2"])];
+  if (banner) children.push(buildRunBanner(banner));
+  children.push(
+    buildSourcesSection(sources, status, binDir),
     buildStatusSection(status, binDir),
     buildSearchSection(binDir),
   );
+  app.replaceChildren(...children);
+}
+
+function buildRunBanner(banner: RunBanner): HTMLElement {
+  const cls = banner.ok ? "run-banner run-banner-ok" : "run-banner run-banner-error";
+  const children: (Node | string)[] = [el("p", {}, [banner.message])];
+  if (banner.log) children.push(el("pre", { class: "log log-error" }, [banner.log]));
+  return el("div", { class: cls }, children);
 }
 
 function renderError(message: string, retry: () => void) {

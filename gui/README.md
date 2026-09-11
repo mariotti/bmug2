@@ -9,8 +9,7 @@ are independent consumers of the same core.
 
 ## Status
 
-v1's scope (read-only: status + search, no mutating actions) is
-built. On launch, the app checks a small config it owns
+On launch, the app checks a small config it owns
 (`app_data_dir()/config.json` — it never auto-uses a discovered
 install without an explicit click, matching `mcp/`'s "no single
 well-known install location" stance):
@@ -30,14 +29,25 @@ well-known install location" stance):
   per-project status table (`backmeup.status.sh --json`) with a
   Refresh button, and a search box (`backmeup.locate.sh --json`)
   tagging results by source (indexed vs. archived-snapshot fallback).
+- **Backup Sources** (`gui/src-tauri/src/sources.rs`): a small
+  GUI-owned list of folders to back up, persisted in `config.json` -
+  bmug2 itself has no equivalent (`backmeup.sh <dir>` takes a
+  directory argument each call and doesn't remember it, and
+  `backmeup.status.sh` only reports projects already backed up at
+  least once, with no record of their original source path). Add a
+  folder via the native picker, then **Run Now**
+  (`gui/src-tauri/src/run.rs`, a thin wrapper around `backmeup.sh`)
+  to back it up on demand.
 
 Still missing:
 
-- No mutating actions (backup/archive/unarchive/migrate buttons) —
-  by design for v1; use the CLI for those.
+- No scheduling UI (cron/launchd/systemd-timer setup) - see
+  `../docs/SCHEDULING.md` for the manual/CLI recipe in the meantime;
+  a GUI equivalent is a planned follow-up.
+- No other mutating actions (archive/unarchive/migrate buttons,
+  or on-demand `updatedb`/`replicate`) - use the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`
   directly for that, same as the CLI-only flow.
-- No packaging/release pipeline yet.
 
 ## Why native Rust, not the `mcp/` Python server
 

@@ -1,10 +1,14 @@
 mod config;
 mod dashboard;
 mod install;
+mod run;
+mod sources;
 mod version;
 
+use config::BackupSource;
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome};
+use run::RunOutput;
 use serde::Deserialize;
 use tauri::AppHandle;
 
@@ -70,6 +74,26 @@ fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, String
     dashboard::search(&bin_dir, &patterns)
 }
 
+#[tauri::command]
+fn list_sources(app: AppHandle) -> Vec<BackupSource> {
+    sources::list(&app)
+}
+
+#[tauri::command]
+fn add_source(app: AppHandle, path: String, name: Option<String>) -> Result<BackupSource, String> {
+    sources::add(&app, &path, name.as_deref())
+}
+
+#[tauri::command]
+fn remove_source(app: AppHandle, path: String) -> Result<(), String> {
+    sources::remove(&app, &path)
+}
+
+#[tauri::command]
+fn run_backup_now(bin_dir: String, source_path: String) -> Result<RunOutput, String> {
+    run::run_backup_now(&bin_dir, &source_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -81,7 +105,11 @@ pub fn run() {
             find_existing_installs,
             install_bmug2,
             get_status,
-            search
+            search,
+            list_sources,
+            add_source,
+            remove_source,
+            run_backup_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
