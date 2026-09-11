@@ -38,14 +38,25 @@ well-known install location" stance):
   folder via the native picker, then **Run Now**
   (`gui/src-tauri/src/run.rs`, a thin wrapper around `backmeup.sh`)
   to back it up on demand.
+- **Scheduling** (`gui/src-tauri/src/schedule.rs`): each Backup Source
+  can independently get a real daily launchd (macOS) or systemd user
+  timer (Linux) schedule - no plist/unit file to hand-write, matching
+  the recipes in `../docs/SCHEDULING.md`. `updatedb`/`replicate` stay a
+  separate, optional "Housekeeping" schedule rather than running on
+  every source's own timer (avoids redundant reindexing when sources
+  have different times). The installed artifact is the source of
+  truth for "is this actually scheduled" - `config.json`'s copy is
+  just a UI mirror, self-corrected on load if it drifts. cron/`at`
+  stay CLI-only; this only ever writes each platform's native,
+  preferred mechanism.
 
 Still missing:
 
-- No scheduling UI (cron/launchd/systemd-timer setup) - see
-  `../docs/SCHEDULING.md` for the manual/CLI recipe in the meantime;
-  a GUI equivalent is a planned follow-up.
-- No other mutating actions (archive/unarchive/migrate buttons,
-  or on-demand `updatedb`/`replicate`) - use the CLI for those.
+- No auto-staggering of overlapping per-source schedule times -
+  visibility only (the dashboard lists already-scheduled times so you
+  can self-stagger); bmug2 itself takes no lock.
+- No other mutating actions (archive/unarchive/migrate buttons) - use
+  the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`
   directly for that, same as the CLI-only flow.
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 // First-run flow: check for a saved install, otherwise offer to
 // install a new copy or point at an existing one. Wording below is
@@ -46,9 +47,15 @@ interface LocateResult {
   results: LocateHit[];
 }
 
+interface Schedule {
+  hour: number;
+  minute: number;
+}
+
 interface BackupSource {
   name: string;
   path: string;
+  schedule: Schedule | null;
 }
 
 interface RunOutput {
@@ -151,6 +158,20 @@ function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
   return el("section", {}, [header, table, ...oldLayoutNotes]);
 }
 
+function formatSchedule(schedule: Schedule): string {
+  return `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
+}
+
+function timeInputValue(schedule: Schedule): string {
+  return formatSchedule(schedule);
+}
+
+function parseTimeInput(value: string): Schedule | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
 // bmug2 itself has no memory of "which folders to back up" -
 // backmeup.sh takes a directory argument each call and doesn't
 // persist it, and get_status only reports projects already backed up
@@ -158,6 +179,12 @@ function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
 // original source path. This section is the GUI's own tracked list
 // (list_sources/add_source/remove_source), cross-referenced against
 // status.projects by name for a "last run" display when available.
+// Each row's own Schedule cell installs a real per-source launchd/
+// systemd-timer entry via set_source_schedule/clear_source_schedule -
+// bmug2 takes no lock, so independent per-source times *can* overlap;
+// this isn't auto-solved, just made visible (see the summary line
+// below the table) so the user can self-stagger like a shell user
+// would with a crontab.
 function buildSourcesSection(
   sources: BackupSource[],
   status: StatusResult,
@@ -178,20 +205,66 @@ function buildSourcesSection(
     ]);
   }
 
-  const rows = sources.map((source) => {
+  const rows: HTMLElement[] = [];
+  for (const source of sources) {
     const known = status.projects.find((p) => p.name === source.name);
     const runBtn = el("button", { type: "button" }, ["Run now"]);
     runBtn.addEventListener("click", () => void runBackupNow(binDir, source));
     const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
     removeBtn.addEventListener("click", () => void removeSource(binDir, source));
 
-    return el("tr", {}, [
-      el("td", {}, [source.name]),
-      el("td", {}, [el("code", {}, [source.path])]),
-      el("td", {}, [known?.last_run ?? "never run yet"]),
-      el("td", { class: "actions" }, [runBtn, removeBtn]),
-    ]);
-  });
+    const scheduleCell = el("td", {}, []);
+    const editRow = el("tr", { class: "schedule-edit-row" }, []);
+    editRow.style.display = "none";
+
+    const showEditRow = () => {
+      const timeInput = el("input", {
+        type: "time",
+        value: source.schedule ? timeInputValue(source.schedule) : "02:00",
+      }) as HTMLInputElement;
+      const saveBtn = el("button", { type: "button" }, ["Save"]);
+      const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+      saveBtn.addEventListener("click", () => {
+        const parsed = parseTimeInput(timeInput.value);
+        if (!parsed) return;
+        void setSourceSchedule(binDir, source, parsed);
+      });
+      cancelBtn.addEventListener("click", () => {
+        editRow.style.display = "none";
+      });
+      editRow.replaceChildren(
+        el("td", { colspan: "5", class: "schedule-edit" }, [timeInput, saveBtn, cancelBtn]),
+      );
+      editRow.style.display = "";
+    };
+
+    if (source.schedule) {
+      const editBtn = el("button", { type: "button" }, ["Edit"]);
+      editBtn.addEventListener("click", showEditRow);
+      const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
+      offBtn.addEventListener("click", () => void clearSourceSchedule(binDir, source));
+      scheduleCell.replaceChildren(
+        `Daily at ${formatSchedule(source.schedule)} `,
+        editBtn,
+        offBtn,
+      );
+    } else {
+      const setBtn = el("button", { type: "button" }, ["Set schedule"]);
+      setBtn.addEventListener("click", showEditRow);
+      scheduleCell.replaceChildren("Off ", setBtn);
+    }
+
+    rows.push(
+      el("tr", {}, [
+        el("td", {}, [source.name]),
+        el("td", {}, [el("code", {}, [source.path])]),
+        el("td", {}, [known?.last_run ?? "never run yet"]),
+        scheduleCell,
+        el("td", { class: "actions" }, [runBtn, removeBtn]),
+      ]),
+      editRow,
+    );
+  }
 
   const table = el("table", { class: "sources-table" }, [
     el("thead", {}, [
@@ -199,13 +272,47 @@ function buildSourcesSection(
         el("th", {}, ["Name"]),
         el("th", {}, ["Folder"]),
         el("th", {}, ["Last run"]),
+        el("th", {}, ["Schedule"]),
         el("th", {}, [""]),
       ]),
     ]),
     el("tbody", {}, rows),
   ]);
 
-  return el("section", {}, [header, table]);
+  const scheduled = sources.filter((s) => s.schedule);
+  const summary =
+    scheduled.length > 0
+      ? el("p", { class: "schedule-summary" }, [
+          `Already scheduled: ${scheduled
+            .map((s) => `${s.name} at ${formatSchedule(s.schedule!)}`)
+            .join(", ")}.`,
+        ])
+      : "";
+
+  return el("section", {}, [header, table, summary]);
+}
+
+async function setSourceSchedule(binDir: string, source: BackupSource, time: Schedule) {
+  try {
+    await invoke("set_source_schedule", {
+      binDir,
+      sourcePath: source.path,
+      hour: time.hour,
+      minute: time.minute,
+    });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+async function clearSourceSchedule(binDir: string, source: BackupSource) {
+  try {
+    await invoke("clear_source_schedule", { sourcePath: source.path });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
 }
 
 async function addSource(binDir: string) {
@@ -332,9 +439,11 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, ["Loading status…"]));
   let status: StatusResult;
   let sources: BackupSource[];
+  let housekeeping: Schedule | null;
   try {
     status = await invoke<StatusResult>("get_status", { binDir });
     sources = await invoke<BackupSource[]>("list_sources");
+    housekeeping = await invoke<Schedule | null>("get_housekeeping_schedule");
   } catch (err) {
     renderError(String(err), () => void renderDashboard(binDir));
     return;
@@ -343,10 +452,118 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   if (banner) children.push(buildRunBanner(banner));
   children.push(
     buildSourcesSection(sources, status, binDir),
+    buildHousekeepingSection(housekeeping, binDir),
+    buildScheduleInfoPanel(),
     buildStatusSection(status, binDir),
     buildSearchSection(binDir),
   );
   app.replaceChildren(...children);
+}
+
+// A single optional schedule for updatedb+replicate, separate from
+// per-source schedules - running these on every individual source's
+// own timer would mean redundant reindexing whenever sources have
+// different times (see docs/SCHEDULING.md's own crontab examples:
+// several backup lines, then one updatedb line, then optionally
+// replicate).
+function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HTMLElement {
+  const header = el("h2", {}, ["Housekeeping"]);
+  const desc = el("p", {}, [
+    "Keeps search indexed and (if configured) replicates off-site. Runs independently of the schedules above.",
+  ]);
+
+  const container = el("div", { class: "housekeeping-control" }, []);
+  const editRow = el("div", { class: "schedule-edit" }, []);
+  editRow.style.display = "none";
+
+  const showEdit = () => {
+    const timeInput = el("input", {
+      type: "time",
+      value: schedule ? timeInputValue(schedule) : "02:30",
+    }) as HTMLInputElement;
+    const saveBtn = el("button", { type: "button" }, ["Save"]);
+    const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+    saveBtn.addEventListener("click", () => {
+      const parsed = parseTimeInput(timeInput.value);
+      if (!parsed) return;
+      void setHousekeepingSchedule(binDir, parsed);
+    });
+    cancelBtn.addEventListener("click", () => {
+      editRow.style.display = "none";
+    });
+    editRow.replaceChildren(timeInput, saveBtn, cancelBtn);
+    editRow.style.display = "";
+  };
+
+  if (schedule) {
+    const editBtn = el("button", { type: "button" }, ["Edit"]);
+    editBtn.addEventListener("click", showEdit);
+    const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
+    offBtn.addEventListener("click", () => void clearHousekeepingSchedule(binDir));
+    container.replaceChildren(`Daily at ${formatSchedule(schedule)} `, editBtn, offBtn);
+  } else {
+    const setBtn = el("button", { type: "button" }, ["Set schedule"]);
+    setBtn.addEventListener("click", showEdit);
+    container.replaceChildren("Off ", setBtn);
+  }
+
+  return el("section", {}, [header, desc, container, editRow]);
+}
+
+async function setHousekeepingSchedule(binDir: string, time: Schedule) {
+  try {
+    await invoke("set_housekeeping_schedule", { binDir, hour: time.hour, minute: time.minute });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+async function clearHousekeepingSchedule(binDir: string) {
+  try {
+    await invoke("clear_housekeeping_schedule");
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+// A schedule is real background OS state the GUI installs - two
+// platform-specific gotchas worth surfacing right where schedules are
+// created, both already documented in docs/SCHEDULING.md/MANUAL.md's
+// Troubleshooting section: macOS's Full Disk Access (TCC) can
+// silently block a scheduled run from reading ~/Documents-style
+// folders even though it works fine run by hand; Linux stops a user
+// timer when you log out unless lingering is enabled. Neither is
+// something the GUI can safely do on the user's behalf - opening the
+// Privacy pane is just navigation, not a settings change, and
+// enabling linger is a real session-policy change that stays a
+// manual, explicit step.
+function buildScheduleInfoPanel(): HTMLElement {
+  if (isMac()) {
+    const openBtn = el("button", { type: "button" }, ["Open Full Disk Access settings"]);
+    openBtn.addEventListener("click", () => {
+      void openUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
+    });
+    return el("div", { class: "schedule-info" }, [
+      el("p", {}, [
+        "Scheduled runs may need Full Disk Access to read folders like ~/Documents, " +
+          "even though the same backup works fine when run by hand or via Run Now.",
+      ]),
+      openBtn,
+    ]);
+  }
+  return el("div", { class: "schedule-info" }, [
+    el("p", {}, [
+      "A schedule stops running once you log out unless lingering is enabled for " +
+        "your account. Run this once in a terminal to keep it running while logged out:",
+    ]),
+    el("code", {}, ["loginctl enable-linger $USER"]),
+  ]);
+}
+
+function isMac(): boolean {
+  return navigator.platform.toLowerCase().includes("mac");
 }
 
 function buildRunBanner(banner: RunBanner): HTMLElement {

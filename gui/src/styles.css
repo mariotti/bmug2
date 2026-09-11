@@ -286,6 +286,91 @@ form button[type="submit"] {
   color: #c0392b;
 }
 
+.schedule-edit-row td {
+  border-bottom: 1px solid #ddd;
+  padding: 0.5em 0.6em;
+}
+
+.schedule-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  white-space: nowrap;
+}
+
+.schedule-edit input[type="time"] {
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  padding: 0.3em 0.5em;
+}
+
+.schedule-edit button {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.3em 0.7em;
+  cursor: pointer;
+}
+
+.schedule-summary {
+  font-size: 0.85em;
+  text-align: left;
+  color: #555;
+  margin-top: -0.8em;
+  margin-bottom: 1.5em;
+}
+
+.housekeeping-control {
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin-bottom: 0.6em;
+}
+
+.housekeeping-control button {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.3em 0.7em;
+  cursor: pointer;
+}
+
+.housekeeping-control .remove-btn {
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+.schedule-info {
+  text-align: left;
+  background-color: #fff8e1;
+  border-radius: 8px;
+  padding: 0.7em 1em;
+  margin-bottom: 1.5em;
+  font-size: 0.85em;
+}
+
+.schedule-info button {
+  margin-top: 0.4em;
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.3em 0.7em;
+  cursor: pointer;
+}
+
+.schedule-info code {
+  display: inline-block;
+  margin-top: 0.3em;
+  background-color: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
 .badge-old-layout {
   margin-right: 0.3em;
 }
@@ -379,15 +464,43 @@ form button[type="submit"] {
 
   .dashboard-header button,
   .sources-header button,
-  .sources-table .actions button {
+  .sources-table .actions button,
+  .schedule-edit button,
+  .housekeeping-control button,
+  .schedule-info button {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
   }
 
-  .sources-table .actions .remove-btn {
+  .sources-table .actions .remove-btn,
+  .housekeeping-control .remove-btn {
     color: #ff8a80;
     border-color: #ff8a80;
+  }
+
+  .schedule-edit-row td {
+    border-color: #444;
+  }
+
+  .schedule-edit input[type="time"] {
+    background-color: #1f1f1f98;
+    color: #f6f6f6;
+    border-color: #444;
+  }
+
+  .schedule-summary {
+    color: #aaa;
+  }
+
+  .schedule-info {
+    background-color: #4d3f1a98;
+  }
+
+  .schedule-info code {
+    background-color: #1f1f1f98;
+    color: #f6f6f6;
+    border-color: #444;
   }
 
   .run-banner-ok {
