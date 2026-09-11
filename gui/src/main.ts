@@ -189,8 +189,9 @@ function parseTimeInput(value: string): DailySchedule | null {
 
 // The exact intervals the "thesis writer" use case names (see
 // docs/EXAMPLES.md) - a fixed choice rather than a free-form number
-// input, since those are the granularities bmug2 taking no lock
-// actually tolerates comfortably for most folder sizes.
+// input, since those are the granularities that make sense for most
+// folder sizes. A too-short interval just means backmeup.sh's own
+// per-project lock skips more overlapping firings, not corruption.
 const INTERVAL_OPTIONS_MINUTES = [5, 10, 30, 60];
 
 // Shared by both the per-source and Housekeeping schedule editors - a
@@ -261,11 +262,15 @@ function buildScheduleEditor(
 // (list_sources/add_source/remove_source), cross-referenced against
 // status.projects by name for a "last run" display when available.
 // Each row's own Schedule cell installs a real per-source launchd/
-// systemd-timer entry via set_source_schedule/clear_source_schedule -
-// bmug2 takes no lock, so independent per-source times *can* overlap;
-// this isn't auto-solved, just made visible (see the summary line
-// below the table) so the user can self-stagger like a shell user
-// would with a crontab.
+// systemd-timer entry via set_source_schedule/clear_source_schedule.
+// backmeup.sh itself now refuses a second overlapping run of the same
+// project (a per-project lock - see docs/MANUAL.md's Troubleshooting
+// entry), so two triggers hitting the *same* source just means one of
+// them cleanly fails instead of corrupting a snapshot. Different
+// sources' schedules landing close together is a separate thing that
+// isn't auto-solved, just made visible (see the summary line below the
+// table) so the user can self-stagger like a shell user would with a
+// crontab.
 function buildSourcesSection(
   sources: BackupSource[],
   status: StatusResult,

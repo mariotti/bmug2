@@ -54,7 +54,9 @@ Still missing:
 
 - No auto-staggering of overlapping per-source schedule times -
   visibility only (the dashboard lists already-scheduled times so you
-  can self-stagger); bmug2 itself takes no lock.
+  can self-stagger). `backmeup.sh` refuses a second overlapping run of
+  the *same* project on its own (a per-project lock), so this is about
+  wasted/failed runs from bad timing, not data corruption.
 - No other mutating actions (archive/unarchive/migrate buttons) - use
   the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`

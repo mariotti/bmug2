@@ -81,16 +81,34 @@ in the scheduler entry (shown in every example below) still isn't a
 bad habit regardless — it's just no longer the only thing standing
 between you and the openrsync problem above.
 
-**3. Order, and no lock.** Run backups first, `backmeup.updatedb.sh`
-once after they've all finished, `backmeup.replicate.sh` last — the
-same "replication only sees a finished tree" reasoning as
+**3. Order, and a lock that covers one thing.** Run backups first,
+`backmeup.updatedb.sh` once after they've all finished,
+`backmeup.replicate.sh` last — the same "replication only sees a
+finished tree" reasoning as
 [DESTINATIONS.md](DESTINATIONS.md#what-to-do-instead-replicate-dont-mount).
-bmug2 takes no lock of its own: cron will happily start a second
-overlapping run if one job takes longer than the interval between
-jobs; systemd and launchd units, in contrast, refuse to start a second
-instance of a unit that's still running (Tier 2). If two cron jobs for
-the *same* project could overlap on your schedule, stagger them
-generously rather than relying on bmug2 to notice.
+`backmeup.sh` itself now refuses to start a second overlapping run of
+the *same* project (a `mkdir`-based per-project lock, since neither
+`flock` nor `lockf` is available on both platforms this doc covers) —
+a real gap closed after GUI interval schedules and Run Now made it
+easy to actually trigger: cron would happily have started a second
+overlapping run before, and even systemd/launchd's own "refuse a
+second instance of a unit that's still running" (Tier 2) only helps if
+every trigger for a project goes through one unit, which Run Now and
+an ad-hoc terminal call never did. A run that loses the race exits 1
+with `ERROR: another backmeup.sh run for '<project>' is already in
+progress.` — see
+[MANUAL.md](MANUAL.md#troubleshooting) if you see it unexpectedly.
+
+**This lock is scoped to `backmeup.sh` and one project only.**
+`backmeup.updatedb.sh`/`backmeup.replicate.sh`/`backmeup.archive.sh`
+don't take it (out of scope for now — `archive.sh` in particular
+only ever touches snapshots already older than its cutoff, so it
+doesn't actually contend with a concurrently-running backup), and two
+*different* projects' backups still run fully in parallel, same as
+always. If two cron jobs for the same project could overlap on your
+schedule, staggering them generously is still worth doing — the lock
+turns a corrupted snapshot into a clean, visible failure instead of
+silent corruption, it doesn't make overlapping runs free.
 
 **4. Make failure visible.** A backup that silently stops running is
 worse than one that never ran — it looks fine from a distance
@@ -433,10 +451,12 @@ A few things that exist but aren't covered in depth here:
 - **Trigger-based scheduling** — launchd's `StartOnMount`/`WatchPaths`,
   systemd `.path` units, udev rules: "back up the instant this drive is
   plugged in," rather than on a timer. Deliberately not given a recipe
-  here yet — it interacts badly with bmug2 taking no lock (point 3
-  above) if the same drive triggers a run while a timer-based one is
-  already in flight, and that combination hasn't actually been tried
-  against bmug2. Worth its own doc once it has.
+  here yet — the per-project lock (point 3 above) now stops a
+  mount-triggered run from corrupting a snapshot if it collides with a
+  timer-based one already in flight, but it would still just fail with
+  the lock error rather than doing anything useful, and that specific
+  combination hasn't actually been tried against bmug2. Worth its own
+  doc once it has.
 
 ## Putting it together
 

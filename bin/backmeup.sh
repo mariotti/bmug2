@@ -16,6 +16,7 @@ BMU_PATH=${MY_PATH}
 #
 # SETUP
 . "${BMU_PATH}/backmeup.setup.sh"
+. "${BMU_PATH}/backmeup.shellfunctions.sh"
 #
 # Set up the current date
 mydate=`date +%Y%m%d-%H%M%S`
@@ -67,6 +68,17 @@ l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
 #and the dir-exists checks below still tell whether anything was backed up.
 if [ -z "${l_BMU_DRYRUN}" ]; then
     mkdir -p "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
+    #Per-project lock: GUI interval schedules, GUI Run Now, and a cron/
+    #launchd/systemd entry can all target this same project, and two
+    #overlapping runs would collide on the same second-granularity
+    #B-${mydate} snapshot dir. Different projects are never serialized
+    #against each other - only this same lock path is.
+    l_BMU_LOCKDIR="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/.bmulock"
+    if ! bmuAcquireLock "${l_BMU_LOCKDIR}"; then
+        echo "ERROR: another backmeup.sh run for '${l_BMU_PRJDIR}' is already in progress."
+        exit 1
+    fi
+    trap 'bmuReleaseLock "${l_BMU_LOCKDIR}"' EXIT
 fi;
 #
 #Trailing slash on the source: mirror the project content directly into
