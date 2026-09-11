@@ -72,7 +72,24 @@ fn replication_configured(bin_dir: &Path) -> bool {
     })
 }
 
-pub fn build_plist(label: &str, wrapper_path: &str, hour: u32, minute: u32, log_path: &str) -> String {
+/// Daily emits the existing StartCalendarInterval dict; Interval emits
+/// a StartInterval integer (seconds) instead - a different launchd key
+/// entirely, not just a different value, per `man launchd.plist`:
+/// "StartInterval ... causes the job to be started every N seconds ...
+/// If the job is running during an interval firing, that interval
+/// firing will likewise be missed" (verified on this machine) - so
+/// launchd itself guarantees no overlapping concurrent runs of the
+/// same schedule.
+pub fn build_plist(label: &str, wrapper_path: &str, schedule: &Schedule, log_path: &str) -> String {
+    let trigger = match *schedule {
+        Schedule::Daily { hour, minute } => format!(
+            "    <key>StartCalendarInterval</key>\n    <dict>\n        <key>Hour</key>\n        <integer>{hour}</integer>\n        <key>Minute</key>\n        <integer>{minute}</integer>\n    </dict>\n"
+        ),
+        Schedule::Interval { minutes } => format!(
+            "    <key>StartInterval</key>\n    <integer>{}</integer>\n",
+            minutes * 60
+        ),
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -90,14 +107,7 @@ pub fn build_plist(label: &str, wrapper_path: &str, hour: u32, minute: u32, log_
         <key>PATH</key>
         <string>{PATH_ENV_MACOS}</string>
     </dict>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>{hour}</integer>
-        <key>Minute</key>
-        <integer>{minute}</integer>
-    </dict>
-    <key>StandardOutPath</key>
+{trigger}    <key>StandardOutPath</key>
     <string>{log_path}</string>
     <key>StandardErrorPath</key>
     <string>{log_path}</string>
@@ -109,13 +119,18 @@ pub fn build_plist(label: &str, wrapper_path: &str, hour: u32, minute: u32, log_
     )
 }
 
-/// Reads Hour/Minute back out of a plist written by build_plist - a
+/// Reads the schedule back out of a plist written by build_plist - a
 /// simple string scan (matching version.rs's own "not a full parser"
-/// philosophy), not a plist crate.
+/// philosophy), not a plist crate. Tries StartInterval (Interval)
+/// first since it's the more specific/unambiguous shape, falls back
+/// to Hour/Minute (Daily).
 pub fn parse_plist_schedule(contents: &str) -> Option<Schedule> {
+    if let Some(seconds) = extract_plist_integer(contents, "StartInterval") {
+        return Some(Schedule::Interval { minutes: seconds / 60 });
+    }
     let hour = extract_plist_integer(contents, "Hour")?;
     let minute = extract_plist_integer(contents, "Minute")?;
-    Some(Schedule { hour, minute })
+    Some(Schedule::Daily { hour, minute })
 }
 
 fn extract_plist_integer(contents: &str, key: &str) -> Option<u32> {
@@ -132,22 +147,39 @@ pub fn build_service(description: &str, wrapper_path: &str) -> String {
     )
 }
 
-pub fn build_timer(description: &str, hour: u32, minute: u32) -> String {
+/// Both variants use OnCalendar= - not a different directive, just a
+/// different value shape. Daily keeps the wall-clock form; Interval
+/// uses systemd's "*:0/N" step syntax (verified for real: inside an
+/// Ubuntu 24.04 container, `systemd-analyze verify` accepts it and
+/// `systemd-analyze calendar --iterations=3 '*:0/5'` confirms real
+/// 5-minute-apart firings at :00/:05/:10/...), the same mechanism
+/// cron's `*/N * * * *` provides.
+pub fn build_timer(description: &str, schedule: &Schedule) -> String {
+    let on_calendar = match *schedule {
+        Schedule::Daily { hour, minute } => format!("*-*-* {hour:02}:{minute:02}:00"),
+        Schedule::Interval { minutes } => format!("*:0/{minutes}"),
+    };
     format!(
-        "[Unit]\nDescription={description}\n\n[Timer]\nOnCalendar=*-*-* {hour:02}:{minute:02}:00\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n"
+        "[Unit]\nDescription={description}\n\n[Timer]\nOnCalendar={on_calendar}\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n"
     )
 }
 
-/// Reads the time back out of a .timer file written by build_timer.
+/// Reads the schedule back out of a .timer file written by
+/// build_timer. Tries the interval shape first (unambiguous - no
+/// other OnCalendar= value bmug2 ever generates starts with "*:0/"),
+/// falls back to the daily wall-clock shape.
 pub fn parse_timer_schedule(contents: &str) -> Option<Schedule> {
     let line = contents
         .lines()
-        .find_map(|l| l.trim().strip_prefix("OnCalendar=*-*-* "))?;
-    let time = line.split(' ').next()?;
+        .find_map(|l| l.trim().strip_prefix("OnCalendar="))?;
+    if let Some(minutes) = line.strip_prefix("*:0/").and_then(|m| m.parse().ok()) {
+        return Some(Schedule::Interval { minutes });
+    }
+    let time = line.strip_prefix("*-*-* ")?.split(' ').next()?;
     let mut parts = time.split(':');
     let hour = parts.next()?.parse().ok()?;
     let minute = parts.next()?.parse().ok()?;
-    Some(Schedule { hour, minute })
+    Some(Schedule::Daily { hour, minute })
 }
 
 #[cfg(target_os = "macos")]
@@ -178,8 +210,7 @@ mod platform {
     pub fn install(
         label: &str,
         wrapper_content: &str,
-        hour: u32,
-        minute: u32,
+        schedule: &Schedule,
         _description: &str,
     ) -> Result<(), String> {
         let wrapper = wrapper_path(label)?;
@@ -191,7 +222,7 @@ mod platform {
 
         let log = log_path(label)?;
         let plist = plist_path(label)?;
-        let content = build_plist(label, wrapper.to_str().unwrap(), hour, minute, log.to_str().unwrap());
+        let content = build_plist(label, wrapper.to_str().unwrap(), schedule, log.to_str().unwrap());
         std::fs::write(&plist, content).map_err(|e| format!("cannot write {}: {e}", plist.display()))?;
 
         // A stale load from a previous install (e.g. re-scheduling at
@@ -272,8 +303,7 @@ mod platform {
     pub fn install(
         label: &str,
         wrapper_content: &str,
-        hour: u32,
-        minute: u32,
+        schedule: &Schedule,
         description: &str,
     ) -> Result<(), String> {
         let wrapper = wrapper_path(label)?;
@@ -290,7 +320,7 @@ mod platform {
         let timer_path = dir.join(format!("{name}.timer"));
         std::fs::write(&service_path, build_service(description, wrapper.to_str().unwrap()))
             .map_err(|e| format!("cannot write {}: {e}", service_path.display()))?;
-        std::fs::write(&timer_path, build_timer(description, hour, minute))
+        std::fs::write(&timer_path, build_timer(description, schedule))
             .map_err(|e| format!("cannot write {}: {e}", timer_path.display()))?;
 
         run_systemctl(&["--user", "daemon-reload"])?;
@@ -346,14 +376,19 @@ mod platform {
 pub fn install(
     label: &str,
     wrapper_content: &str,
-    hour: u32,
-    minute: u32,
+    schedule: &Schedule,
     description: &str,
 ) -> Result<(), String> {
-    if hour > 23 || minute > 59 {
-        return Err(format!("invalid time {hour:02}:{minute:02}"));
+    match *schedule {
+        Schedule::Daily { hour, minute } if hour > 23 || minute > 59 => {
+            return Err(format!("invalid time {hour:02}:{minute:02}"));
+        }
+        Schedule::Interval { minutes: 0 } => {
+            return Err("interval must be at least 1 minute".to_string());
+        }
+        _ => {}
     }
-    platform::install(label, wrapper_content, hour, minute, description)
+    platform::install(label, wrapper_content, schedule, description)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -413,17 +448,40 @@ mod tests {
     }
 
     #[test]
-    fn plist_round_trips_hour_and_minute() {
-        let plist = build_plist("test.label", "/opt/bmu/wrapper.sh", 2, 5, "/tmp/test.log");
+    fn plist_round_trips_daily() {
+        let daily = Schedule::Daily { hour: 2, minute: 5 };
+        let plist = build_plist("test.label", "/opt/bmu/wrapper.sh", &daily, "/tmp/test.log");
+        assert!(plist.contains("StartCalendarInterval"));
+        assert!(!plist.contains("StartInterval"));
         let parsed = parse_plist_schedule(&plist).expect("should parse");
-        assert_eq!(parsed, Schedule { hour: 2, minute: 5 });
+        assert_eq!(parsed, daily);
     }
 
     #[test]
-    fn timer_round_trips_hour_and_minute() {
-        let timer = build_timer("bmug2 backup", 23, 59);
+    fn plist_round_trips_interval() {
+        let interval = Schedule::Interval { minutes: 30 };
+        let plist = build_plist("test.label", "/opt/bmu/wrapper.sh", &interval, "/tmp/test.log");
+        assert!(plist.contains("<key>StartInterval</key>\n    <integer>1800</integer>"));
+        assert!(!plist.contains("StartCalendarInterval"));
+        let parsed = parse_plist_schedule(&plist).expect("should parse");
+        assert_eq!(parsed, interval);
+    }
+
+    #[test]
+    fn timer_round_trips_daily() {
+        let daily = Schedule::Daily { hour: 23, minute: 59 };
+        let timer = build_timer("bmug2 backup", &daily);
         let parsed = parse_timer_schedule(&timer).expect("should parse");
-        assert_eq!(parsed, Schedule { hour: 23, minute: 59 });
+        assert_eq!(parsed, daily);
+    }
+
+    #[test]
+    fn timer_round_trips_interval() {
+        let interval = Schedule::Interval { minutes: 5 };
+        let timer = build_timer("bmug2 backup", &interval);
+        assert!(timer.contains("OnCalendar=*:0/5"));
+        let parsed = parse_timer_schedule(&timer).expect("should parse");
+        assert_eq!(parsed, interval);
     }
 
     #[test]
@@ -456,14 +514,29 @@ mod macos_real_tests {
 
     #[test]
     #[ignore]
-    fn install_and_uninstall_a_real_launchd_agent() {
-        let label = format!("io.github.mariotti.bmug2.test.{}", std::process::id());
+    fn install_and_uninstall_a_real_daily_launchd_agent() {
+        let label = format!("io.github.mariotti.bmug2.test.daily.{}", std::process::id());
         let _cleanup = Cleanup(label.clone());
+        let daily = Schedule::Daily { hour: 3, minute: 30 };
 
-        install(&label, "#!/bin/sh\nexit 0\n", 3, 30, "bmug2 schedule test")
-            .expect("install should succeed");
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test").expect("install should succeed");
         let found = status(&label).expect("status should read back what was just installed");
-        assert_eq!(found, Schedule { hour: 3, minute: 30 });
+        assert_eq!(found, daily);
+
+        uninstall(&label).expect("uninstall should succeed");
+        assert!(status(&label).is_none(), "status should be gone after uninstall");
+    }
+
+    #[test]
+    #[ignore]
+    fn install_and_uninstall_a_real_interval_launchd_agent() {
+        let label = format!("io.github.mariotti.bmug2.test.interval.{}", std::process::id());
+        let _cleanup = Cleanup(label.clone());
+        let interval = Schedule::Interval { minutes: 15 };
+
+        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test").expect("install should succeed");
+        let found = status(&label).expect("status should read back what was just installed");
+        assert_eq!(found, interval);
 
         uninstall(&label).expect("uninstall should succeed");
         assert!(status(&label).is_none(), "status should be gone after uninstall");

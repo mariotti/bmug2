@@ -298,7 +298,8 @@ form button[type="submit"] {
   white-space: nowrap;
 }
 
-.schedule-edit input[type="time"] {
+.schedule-edit input[type="time"],
+.schedule-edit select {
   border-radius: 6px;
   border: 1px solid #ccc;
   padding: 0.3em 0.5em;
@@ -483,7 +484,8 @@ form button[type="submit"] {
     border-color: #444;
   }
 
-  .schedule-edit input[type="time"] {
+  .schedule-edit input[type="time"],
+  .schedule-edit select {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;

@@ -47,9 +47,21 @@ interface LocateResult {
   results: LocateHit[];
 }
 
-interface Schedule {
+// Mirrors config.rs's untagged Schedule enum exactly: Daily serializes
+// as {hour, minute}, Interval as {minutes} - no "kind" wrapper key, so
+// the two are told apart structurally, same as serde does on the Rust
+// side.
+interface DailySchedule {
   hour: number;
   minute: number;
+}
+interface IntervalSchedule {
+  minutes: number;
+}
+type Schedule = DailySchedule | IntervalSchedule;
+
+function isDaily(schedule: Schedule): schedule is DailySchedule {
+  return "hour" in schedule;
 }
 
 interface BackupSource {
@@ -159,17 +171,86 @@ function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
 }
 
 function formatSchedule(schedule: Schedule): string {
+  if (isDaily(schedule)) {
+    return `Daily at ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
+  }
+  return `Every ${schedule.minutes} minutes`;
+}
+
+function timeInputValue(schedule: DailySchedule): string {
   return `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
 }
 
-function timeInputValue(schedule: Schedule): string {
-  return formatSchedule(schedule);
-}
-
-function parseTimeInput(value: string): Schedule | null {
+function parseTimeInput(value: string): DailySchedule | null {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
   if (!match) return null;
   return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+// The exact intervals the "thesis writer" use case names (see
+// docs/EXAMPLES.md) - a fixed choice rather than a free-form number
+// input, since those are the granularities bmug2 taking no lock
+// actually tolerates comfortably for most folder sizes.
+const INTERVAL_OPTIONS_MINUTES = [5, 10, 30, 60];
+
+// Shared by both the per-source and Housekeeping schedule editors - a
+// kind selector (Daily / Every N minutes) toggling between the
+// existing <input type="time"> and a preset interval <select>, plus
+// Save/Cancel. Returns the editor element; onSave receives whichever
+// Schedule shape the user picked.
+function buildScheduleEditor(
+  current: Schedule | null,
+  onSave: (schedule: Schedule) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const startAsInterval = current !== null && !isDaily(current);
+
+  const kindSelect = el("select", {}) as HTMLSelectElement;
+  kindSelect.append(
+    new Option("Daily at a time", "daily", !startAsInterval, !startAsInterval),
+    new Option("Every N minutes", "interval", startAsInterval, startAsInterval),
+  );
+
+  const timeInput = el("input", {
+    type: "time",
+    value: current && isDaily(current) ? timeInputValue(current) : "02:00",
+  }) as HTMLInputElement;
+
+  const currentMinutes = current && !isDaily(current) ? current.minutes : 30;
+  const intervalSelect = el("select", {}) as HTMLSelectElement;
+  for (const minutes of INTERVAL_OPTIONS_MINUTES) {
+    const selected = minutes === currentMinutes;
+    intervalSelect.append(new Option(`${minutes} minutes`, String(minutes), selected, selected));
+  }
+
+  const updateVisibility = () => {
+    const daily = kindSelect.value === "daily";
+    timeInput.style.display = daily ? "" : "none";
+    intervalSelect.style.display = daily ? "none" : "";
+  };
+  updateVisibility();
+  kindSelect.addEventListener("change", updateVisibility);
+
+  const saveBtn = el("button", { type: "button" }, ["Save"]);
+  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+  saveBtn.addEventListener("click", () => {
+    if (kindSelect.value === "daily") {
+      const parsed = parseTimeInput(timeInput.value);
+      if (!parsed) return;
+      onSave(parsed);
+    } else {
+      onSave({ minutes: Number(intervalSelect.value) });
+    }
+  });
+  cancelBtn.addEventListener("click", onCancel);
+
+  return el("span", { class: "schedule-edit" }, [
+    kindSelect,
+    timeInput,
+    intervalSelect,
+    saveBtn,
+    cancelBtn,
+  ]);
 }
 
 // bmug2 itself has no memory of "which folders to back up" -
@@ -218,23 +299,14 @@ function buildSourcesSection(
     editRow.style.display = "none";
 
     const showEditRow = () => {
-      const timeInput = el("input", {
-        type: "time",
-        value: source.schedule ? timeInputValue(source.schedule) : "02:00",
-      }) as HTMLInputElement;
-      const saveBtn = el("button", { type: "button" }, ["Save"]);
-      const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
-      saveBtn.addEventListener("click", () => {
-        const parsed = parseTimeInput(timeInput.value);
-        if (!parsed) return;
-        void setSourceSchedule(binDir, source, parsed);
-      });
-      cancelBtn.addEventListener("click", () => {
-        editRow.style.display = "none";
-      });
-      editRow.replaceChildren(
-        el("td", { colspan: "5", class: "schedule-edit" }, [timeInput, saveBtn, cancelBtn]),
+      const editor = buildScheduleEditor(
+        source.schedule,
+        (schedule) => void setSourceSchedule(binDir, source, schedule),
+        () => {
+          editRow.style.display = "none";
+        },
       );
+      editRow.replaceChildren(el("td", { colspan: "5" }, [editor]));
       editRow.style.display = "";
     };
 
@@ -243,11 +315,7 @@ function buildSourcesSection(
       editBtn.addEventListener("click", showEditRow);
       const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
       offBtn.addEventListener("click", () => void clearSourceSchedule(binDir, source));
-      scheduleCell.replaceChildren(
-        `Daily at ${formatSchedule(source.schedule)} `,
-        editBtn,
-        offBtn,
-      );
+      scheduleCell.replaceChildren(`${formatSchedule(source.schedule)} `, editBtn, offBtn);
     } else {
       const setBtn = el("button", { type: "button" }, ["Set schedule"]);
       setBtn.addEventListener("click", showEditRow);
@@ -284,7 +352,7 @@ function buildSourcesSection(
     scheduled.length > 0
       ? el("p", { class: "schedule-summary" }, [
           `Already scheduled: ${scheduled
-            .map((s) => `${s.name} at ${formatSchedule(s.schedule!)}`)
+            .map((s) => `${s.name} (${formatSchedule(s.schedule!)})`)
             .join(", ")}.`,
         ])
       : "";
@@ -292,14 +360,9 @@ function buildSourcesSection(
   return el("section", {}, [header, table, summary]);
 }
 
-async function setSourceSchedule(binDir: string, source: BackupSource, time: Schedule) {
+async function setSourceSchedule(binDir: string, source: BackupSource, schedule: Schedule) {
   try {
-    await invoke("set_source_schedule", {
-      binDir,
-      sourcePath: source.path,
-      hour: time.hour,
-      minute: time.minute,
-    });
+    await invoke("set_source_schedule", { binDir, sourcePath: source.path, schedule });
     void renderDashboard(binDir);
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
@@ -473,25 +536,18 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
   ]);
 
   const container = el("div", { class: "housekeeping-control" }, []);
-  const editRow = el("div", { class: "schedule-edit" }, []);
+  const editRow = el("div", {}, []);
   editRow.style.display = "none";
 
   const showEdit = () => {
-    const timeInput = el("input", {
-      type: "time",
-      value: schedule ? timeInputValue(schedule) : "02:30",
-    }) as HTMLInputElement;
-    const saveBtn = el("button", { type: "button" }, ["Save"]);
-    const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
-    saveBtn.addEventListener("click", () => {
-      const parsed = parseTimeInput(timeInput.value);
-      if (!parsed) return;
-      void setHousekeepingSchedule(binDir, parsed);
-    });
-    cancelBtn.addEventListener("click", () => {
-      editRow.style.display = "none";
-    });
-    editRow.replaceChildren(timeInput, saveBtn, cancelBtn);
+    const editor = buildScheduleEditor(
+      schedule,
+      (chosen) => void setHousekeepingSchedule(binDir, chosen),
+      () => {
+        editRow.style.display = "none";
+      },
+    );
+    editRow.replaceChildren(editor);
     editRow.style.display = "";
   };
 
@@ -500,7 +556,7 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
     editBtn.addEventListener("click", showEdit);
     const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
     offBtn.addEventListener("click", () => void clearHousekeepingSchedule(binDir));
-    container.replaceChildren(`Daily at ${formatSchedule(schedule)} `, editBtn, offBtn);
+    container.replaceChildren(`${formatSchedule(schedule)} `, editBtn, offBtn);
   } else {
     const setBtn = el("button", { type: "button" }, ["Set schedule"]);
     setBtn.addEventListener("click", showEdit);
@@ -510,9 +566,9 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
   return el("section", {}, [header, desc, container, editRow]);
 }
 
-async function setHousekeepingSchedule(binDir: string, time: Schedule) {
+async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
   try {
-    await invoke("set_housekeeping_schedule", { binDir, hour: time.hour, minute: time.minute });
+    await invoke("set_housekeeping_schedule", { binDir, schedule });
     void renderDashboard(binDir);
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
