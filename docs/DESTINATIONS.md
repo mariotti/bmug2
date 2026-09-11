@@ -191,3 +191,44 @@ object storage bills and performs by request/object count, and
 `archive.sh` turns many small loose snapshot files into one `.tar.gz`
 per old snapshot — fewer, larger objects for the replication step to
 push, and cheaper to keep out there long-term.
+
+## Backing up more than one machine
+
+A laptop and a desktop belonging to the same person aren't a "shared
+installation" to design for — they're two completely independent bmug2
+installs that happen to belong to one person, and the two should stay
+that way. Making them aware of each other would mean solving real
+distributed-conflict resolution (whose version wins, what "in sync"
+even means when both were offline) — a fundamentally different, much
+riskier kind of feature than anything else in this project, and not
+one bmug2 attempts. The "one writer" rule above already rules out two
+machines sharing a live SYNC/HISTORY pair; the pattern below is what to
+do instead, and it needs no new mechanism — just a naming and
+destination convention on top of what already exists:
+
+ - **Each machine gets its own SYNC/HISTORY**, wherever makes sense for
+   that machine — nothing needs to match between them. The desktop
+   might use a permanently-attached external drive; the laptop, a
+   smaller drive that travels with it, or nothing local at all if it's
+   rarely at a desk.
+ - **The same logical folder on two machines needs two project
+   names.** `backmeup.sh`'s project name is just the directory's own
+   name — two machines both backing up their own `~/Documents` would
+   otherwise both write into a project literally called `Documents`,
+   which is fine right up until their replicas or destinations ever
+   meet. Back up a differently-named or hostname-qualified directory
+   instead of relying on the two never colliding.
+ - **The only place the two machines should ever meet is an off-site
+   replica, and even there, each gets its own sub-path.** Point each
+   machine's [`backmeup.replicate.sh`](MANUAL.md#backmeupreplicatesh)
+   (its `BMU_REPLICATE_REMOTE_SYNC`/`BMU_REPLICATE_REMOTE_BACKUPS`,
+   set by `backmeup.configure.sh`) at its own prefix under the shared
+   remote — `remote:bucket/laptop/` vs. `remote:bucket/desktop/` —
+   never the same remote path from two machines' independent replicate
+   runs.
+
+The tradeoff is real and worth naming: there's no single "all my
+machines" view anywhere. Recovering something means knowing which
+machine's HISTORY or replica actually has the version you need. That's
+the right price for never asking bmug2 to solve a problem — merging
+two machines' independent histories — it was never designed to solve.
