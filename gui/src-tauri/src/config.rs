@@ -6,9 +6,20 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackupSource {
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub bin_dir: String,
+    // Missing in any config.json written before this field existed -
+    // defaults to empty rather than failing to parse the rest of an
+    // otherwise-valid saved config.
+    #[serde(default)]
+    pub sources: Vec<BackupSource>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -33,11 +44,35 @@ pub fn load(app: &AppHandle) -> Option<Config> {
 }
 
 pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
+    // Preserves any already-saved sources rather than wiping them -
+    // this runs on both first install and "use an existing install",
+    // and a user re-pointing at the same bin_dir shouldn't lose their
+    // tracked backup sources.
+    let sources = load(app).map(|cfg| cfg.sources).unwrap_or_default();
+    write(
+        app,
+        &Config {
+            bin_dir: bin_dir.to_string(),
+            sources,
+        },
+    )
+}
+
+// Sources are a separate concern from the install-flow's bin_dir -
+// this rewrites only that slice of the saved config, loading whatever
+// bin_dir is already there. Callers only reach this after install has
+// already run (the frontend has no UI path to it before that), so a
+// missing config here means something upstream is broken, not a
+// state this needs to paper over.
+pub fn save_sources(app: &AppHandle, sources: &[BackupSource]) -> Result<(), String> {
+    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+    cfg.sources = sources.to_vec();
+    write(app, &cfg)
+}
+
+fn write(app: &AppHandle, cfg: &Config) -> Result<(), String> {
     let path = config_path(app)?;
-    let cfg = Config {
-        bin_dir: bin_dir.to_string(),
-    };
-    let data = serde_json::to_string_pretty(&cfg)
+    let data = serde_json::to_string_pretty(cfg)
         .map_err(|e| format!("cannot serialize config: {e}"))?;
     std::fs::write(&path, data)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
