@@ -179,7 +179,11 @@ still CLI-only.
 
 ## Future directions
 
- - Content indexing (codesearch/zindex) on top of the filename index
+ - Full-text search over archived (compressed) history: a plain-text
+   sidecar dump kept next to each `.tar.gz`, the same "keep it
+   uncompressed for grep" trick `.filelist` already uses — no new
+   index format, no external tool. Live/unarchived snapshots already
+   get this for free via `grep -r` on the real files.
 
 ## Contributing
 

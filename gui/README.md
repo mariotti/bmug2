@@ -37,18 +37,29 @@ well-known install location" stance):
   least once, with no record of their original source path). Add a
   folder via the native picker, then **Run Now**
   (`gui/src-tauri/src/run.rs`, a thin wrapper around `backmeup.sh`)
-  to back it up on demand.
+  to back it up on demand. The dashboard also cross-checks
+  `backmeup.status.sh`'s project list against this: any project with
+  real backup history that isn't a tracked Backup Source yet
+  (typically backed up from the CLI before this app was installed)
+  gets a notice offering to point it at its source folder and link it
+  under its existing project name, rather than starting it over as a
+  new one (`findUntrackedProjects`/`linkExistingProject` in
+  `main.ts`) - projects still on bmug2's old pre-migration layout are
+  excluded, since `backmeup.sh` refuses to run against those until
+  `backmeup.migrate.sh` is run first (CLI-only).
 - **Scheduling** (`gui/src-tauri/src/schedule.rs`): each Backup Source
-  can independently get a real daily launchd (macOS) or systemd user
-  timer (Linux) schedule - no plist/unit file to hand-write, matching
-  the recipes in `../docs/SCHEDULING.md`. `updatedb`/`replicate` stay a
-  separate, optional "Housekeeping" schedule rather than running on
-  every source's own timer (avoids redundant reindexing when sources
-  have different times). The installed artifact is the source of
-  truth for "is this actually scheduled" - `config.json`'s copy is
-  just a UI mirror, self-corrected on load if it drifts. cron/`at`
-  stay CLI-only; this only ever writes each platform's native,
-  preferred mechanism.
+  can independently get a real launchd (macOS) or systemd user timer
+  (Linux) schedule - daily at a set time, or every N minutes for a
+  fast-changing project (`config.rs`'s `Schedule` enum) - no plist/unit
+  file to hand-write, matching the recipes in `../docs/SCHEDULING.md`.
+  `updatedb`/`replicate` stay a separate, optional "Housekeeping"
+  schedule (same daily-or-interval choice) rather than running on every
+  source's own timer (avoids redundant reindexing when sources have
+  different times). The installed artifact is the source of truth for
+  "is this actually scheduled" - `config.json`'s copy is just a UI
+  mirror, self-corrected on load if it drifts. cron/`at` stay
+  CLI-only; this only ever writes each platform's native, preferred
+  mechanism.
 
 Still missing:
 

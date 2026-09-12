@@ -11,10 +11,15 @@ single maintainer:
 4. Wait for CI: GitHub Actions runs four required jobs — the shell
    suite on Linux (rsync + plocate) and macOS (Homebrew rsync +
    findutils), and the `mcp/` pytest suite on both platforms too — all
-   four must pass.
+   four must pass. Two more jobs, `gui-linux`/`gui-macos` (type-check +
+   build the `gui/` frontend, then `cargo test` the Tauri backend), run
+   on every PR too and should stay green, but aren't part of branch
+   protection yet — a PR that only touches `bin/`/`mcp/` won't wait on
+   them. (`gui-release.yml`, the packaging workflow that builds actual
+   installers, is separate again: tag-triggered only, not run on PRs.)
 5. Squash-merge the PR once it's reviewed. `main` is protected: direct
-   pushes are rejected, and merging requires all four checks green and
-   the branch up to date with `main`.
+   pushes are rejected, and merging requires all four required checks
+   green and the branch up to date with `main`.
 
 The branch is deleted automatically on merge.
 
