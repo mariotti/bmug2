@@ -271,6 +271,52 @@ function buildScheduleEditor(
 // isn't auto-solved, just made visible (see the summary line below the
 // table) so the user can self-stagger like a shell user would with a
 // crontab.
+// A project can already exist in `status.projects` (backed up for
+// real, via the CLI or a bmug2 install that predates Backup Sources)
+// without ever having been added here - bmug2 has no record of a
+// project's original source path, so the GUI can't auto-fill it and
+// has to ask once. old_layout projects are excluded: backmeup.sh
+// refuses to run against them until backmeup.migrate.sh is run first
+// (CLI-only, no GUI action for it), so offering to track and Run Now
+// them here would just set up a source whose every run fails.
+function findUntrackedProjects(
+  status: StatusResult,
+  sources: BackupSource[],
+): StatusProject[] {
+  return status.projects.filter(
+    (p) => !p.old_layout && !sources.some((s) => s.name === p.name),
+  );
+}
+
+function buildUntrackedProjectsNotice(
+  untracked: StatusProject[],
+  binDir: string,
+): HTMLElement | null {
+  if (untracked.length === 0) return null;
+  const rows = untracked.map((project) => {
+    const locateBtn = el("button", { type: "button" }, ["Locate folder…"]);
+    locateBtn.addEventListener("click", () => void linkExistingProject(binDir, project));
+    return el("li", {}, [`${project.name} `, locateBtn]);
+  });
+  return el("div", { class: "untracked-notice" }, [
+    el("p", {}, [
+      `Already backed up but not tracked here yet - point each at its source folder to get Run Now and scheduling for it:`,
+    ]),
+    el("ul", {}, rows),
+  ]);
+}
+
+async function linkExistingProject(binDir: string, project: StatusProject) {
+  const selected = await open({ directory: true });
+  if (typeof selected !== "string") return;
+  try {
+    await invoke("add_source", { path: selected, name: project.name });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
 function buildSourcesSection(
   sources: BackupSource[],
   status: StatusResult,
@@ -284,9 +330,13 @@ function buildSourcesSection(
     addBtn,
   ]);
 
+  const untracked = findUntrackedProjects(status, sources);
+  const notice = buildUntrackedProjectsNotice(untracked, binDir);
+
   if (sources.length === 0) {
     return el("section", {}, [
       header,
+      ...(notice ? [notice] : []),
       el("p", {}, ["No backup sources yet — add a folder to get started."]),
     ]);
   }
@@ -362,7 +412,7 @@ function buildSourcesSection(
         ])
       : "";
 
-  return el("section", {}, [header, table, summary]);
+  return el("section", {}, [header, ...(notice ? [notice] : []), table, summary]);
 }
 
 async function setSourceSchedule(binDir: string, source: BackupSource, schedule: Schedule) {

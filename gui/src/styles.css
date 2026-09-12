@@ -353,6 +353,33 @@ form button[type="submit"] {
   font-size: 0.85em;
 }
 
+.untracked-notice {
+  text-align: left;
+  background-color: #eaf2ff;
+  border-radius: 8px;
+  padding: 0.7em 1em;
+  margin-bottom: 1em;
+  font-size: 0.9em;
+}
+
+.untracked-notice ul {
+  margin: 0.4em 0 0;
+  padding-left: 1.2em;
+}
+
+.untracked-notice li {
+  margin-bottom: 0.3em;
+}
+
+.untracked-notice button {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.2em 0.6em;
+  cursor: pointer;
+}
+
 .schedule-info button {
   margin-top: 0.4em;
   border-radius: 6px;
@@ -503,6 +530,16 @@ form button[type="submit"] {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;
+  }
+
+  .untracked-notice {
+    background-color: #1a2f4d98;
+  }
+
+  .untracked-notice button {
+    background-color: transparent;
+    color: #6fa8ff;
+    border-color: #6fa8ff;
   }
 
   .run-banner-ok {
