@@ -9,7 +9,17 @@ use std::path::Path;
 /// Bumped whenever the GUI starts depending on a newer bmug2 flag or
 /// behavior - kept in sync with bin/backmeup.configure.sh's own
 /// BMU_VERSION literal at release time (see gui/README.md).
-pub const MIN_COMPATIBLE_VERSION: (u32, u32, u32) = (2, 6, 0);
+///
+/// 2.11.0: the GUI's Ignore settings editor (ignore.rs) writes
+/// HISTORY/<project>/.bmuconfig and <source>/.bmuignore regardless of
+/// the installed CLI's version - both writes always succeed, so
+/// without this gate an older backmeup.sh (which never reads
+/// .bmuconfig at all) would silently ignore every toggle a user sets
+/// in the GUI, with no error anywhere to explain why backups keep
+/// including everything. Same failure shape as the two incidents
+/// above, just newly possible now that a GUI-only write can outpace
+/// what the paired CLI install actually understands.
+pub const MIN_COMPATIBLE_VERSION: (u32, u32, u32) = (2, 11, 0);
 
 pub fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let mut parts = s.trim().split('.');
@@ -127,7 +137,7 @@ mod tests {
 
     #[test]
     fn check_compatible_accepts_matching_version() {
-        let dir = sandbox_with_version(Some("2.6.0"));
+        let dir = sandbox_with_version(Some("2.11.0"));
         assert!(check_compatible(&dir).is_ok());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -145,7 +155,7 @@ mod tests {
         let err = check_compatible(&dir).unwrap_err();
         assert!(err.contains("2.3.0"), "message should name the found version: {err}");
         assert!(
-            err.contains("2.6.0"),
+            err.contains("2.11.0"),
             "message should name the required version: {err}"
         );
         std::fs::remove_dir_all(&dir).ok();
