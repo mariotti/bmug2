@@ -5,6 +5,12 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  // jsdom: main.ts's DOM-builder functions (buildUntrackedProjectsNotice
+  // etc.) construct real elements via document.createElement - a plain
+  // node environment has no `document` at all.
+  test: {
+    environment: "jsdom",
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

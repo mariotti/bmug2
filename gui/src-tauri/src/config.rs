@@ -148,4 +148,45 @@ mod tests {
         assert!(looks_installed(&tmp));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
+
+    // The whole reason Schedule is #[serde(untagged)]: a config.json
+    // written before Interval existed has no "kind" discriminator at
+    // all, just the bare {"hour":N,"minute":N} shape. If this ever
+    // regressed (e.g. someone added a tag to the enum), an existing
+    // user's saved per-source schedule would silently fail to parse -
+    // load() would swallow the error and fall back to "not scheduled".
+    #[test]
+    fn pre_interval_json_still_parses_as_daily() {
+        let schedule: Schedule = serde_json::from_str(r#"{"hour":9,"minute":30}"#).unwrap();
+        assert_eq!(schedule, Schedule::Daily { hour: 9, minute: 30 });
+    }
+
+    #[test]
+    fn interval_json_parses_as_interval() {
+        let schedule: Schedule = serde_json::from_str(r#"{"minutes":30}"#).unwrap();
+        assert_eq!(schedule, Schedule::Interval { minutes: 30 });
+    }
+
+    #[test]
+    fn schedule_round_trips_through_json_for_both_variants() {
+        for schedule in [
+            Schedule::Daily { hour: 2, minute: 0 },
+            Schedule::Interval { minutes: 5 },
+        ] {
+            let json = serde_json::to_string(&schedule).unwrap();
+            let back: Schedule = serde_json::from_str(&json).unwrap();
+            assert_eq!(schedule, back);
+        }
+    }
+
+    // BackupSource.schedule is #[serde(default)] specifically so a
+    // source saved before this field existed at all (not just before
+    // Interval existed) still loads, as "not scheduled" rather than a
+    // parse failure.
+    #[test]
+    fn backup_source_without_a_schedule_key_defaults_to_none() {
+        let source: BackupSource =
+            serde_json::from_str(r#"{"name":"docs","path":"/home/docs"}"#).unwrap();
+        assert_eq!(source.schedule, None);
+    }
 }

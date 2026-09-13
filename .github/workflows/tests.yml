@@ -80,6 +80,9 @@ jobs:
       - name: Type-check and build frontend
         working-directory: gui
         run: npm run build
+      - name: Run frontend unit tests
+        working-directory: gui
+        run: npm test
       - name: Run Rust test suite
         working-directory: gui/src-tauri
         run: cargo test
@@ -104,6 +107,9 @@ jobs:
       - name: Type-check and build frontend
         working-directory: gui
         run: npm run build
+      - name: Run frontend unit tests
+        working-directory: gui
+        run: npm test
       - name: Run Rust test suite
         working-directory: gui/src-tauri
         run: cargo test
