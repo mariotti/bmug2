@@ -46,7 +46,13 @@ well-known install location" stance):
   new one (`findUntrackedProjects`/`linkExistingProject` in
   `main.ts`) - projects still on bmug2's old pre-migration layout are
   excluded, since `backmeup.sh` refuses to run against those until
-  `backmeup.migrate.sh` is run first (CLI-only).
+  `backmeup.migrate.sh` is run first (CLI-only). Each source also has
+  an **Ignore settings** editor (`gui/src-tauri/src/ignore.rs`):
+  toggle whether `.gitignore` is respected and whether `.bmuignore` is
+  consulted (both default to `backmeup.sh`'s own CLI defaults - see
+  `../docs/EXAMPLES.md`), plus a plain textarea over the raw
+  `.bmuignore` file itself - deliberately just text, no filesystem
+  browser.
 - **Scheduling** (`gui/src-tauri/src/schedule.rs`): each Backup Source
   can independently get a real launchd (macOS) or systemd user timer
   (Linux) schedule - daily at a set time, or every N minutes for a

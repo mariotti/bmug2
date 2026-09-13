@@ -1,5 +1,6 @@
 mod config;
 mod dashboard;
+mod ignore;
 mod install;
 mod run;
 mod schedule;
@@ -137,6 +138,20 @@ fn clear_housekeeping_schedule(app: AppHandle) -> Result<(), String> {
     config::set_housekeeping_schedule(&app, None)
 }
 
+#[tauri::command]
+fn get_ignore_settings(bin_dir: String, source_path: String) -> Result<ignore::IgnoreSettings, String> {
+    ignore::get(std::path::Path::new(&bin_dir), &source_path)
+}
+
+#[tauri::command]
+fn set_ignore_settings(
+    bin_dir: String,
+    source_path: String,
+    settings: ignore::IgnoreSettingsInput,
+) -> Result<(), String> {
+    ignore::set(std::path::Path::new(&bin_dir), &source_path, settings)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -157,7 +172,9 @@ pub fn run() {
             clear_source_schedule,
             get_housekeeping_schedule,
             set_housekeeping_schedule,
-            clear_housekeeping_schedule
+            clear_housekeeping_schedule,
+            get_ignore_settings,
+            set_ignore_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
