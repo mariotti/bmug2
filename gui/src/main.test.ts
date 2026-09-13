@@ -9,7 +9,8 @@ import {
   buildScheduleEditor,
   findUntrackedProjects,
   buildUntrackedProjectsNotice,
-  buildIgnoreEditor,
+  buildIgnoreToggles,
+  buildBmuignoreEditor,
   sourceLabel,
   isMac,
   type Schedule,
@@ -232,60 +233,59 @@ describe("buildScheduleEditor", () => {
   });
 });
 
-describe("buildIgnoreEditor", () => {
+describe("buildIgnoreToggles", () => {
   it("reflects the current gitignore/bmuignore checkbox state", () => {
-    const editor = buildIgnoreEditor(
-      ignoreSettings({ gitignore: false, bmuignore: true }),
-      vi.fn(),
-      vi.fn(),
-    );
-    const [gitignoreCheck, bmuignoreCheck] = editor.querySelectorAll(
+    const toggles = buildIgnoreToggles(ignoreSettings({ gitignore: false, bmuignore: true }), vi.fn());
+    const [gitignoreCheck, bmuignoreCheck] = toggles.querySelectorAll(
       "input[type=checkbox]",
     ) as NodeListOf<HTMLInputElement>;
     expect(gitignoreCheck.checked).toBe(false);
     expect(bmuignoreCheck.checked).toBe(true);
   });
 
+  it("notes when .gitignore isn't present in the folder", () => {
+    const toggles = buildIgnoreToggles(ignoreSettings({ gitignore_exists: false }), vi.fn());
+    expect(toggles.textContent).toContain("not present in this folder");
+  });
+
+  it("fires onToggle with the field and new value on change, not on render", () => {
+    const onToggle = vi.fn();
+    const toggles = buildIgnoreToggles(ignoreSettings(), onToggle);
+    const [gitignoreCheck, bmuignoreCheck] = toggles.querySelectorAll(
+      "input[type=checkbox]",
+    ) as NodeListOf<HTMLInputElement>;
+    expect(onToggle).not.toHaveBeenCalled();
+
+    bmuignoreCheck.checked = true;
+    bmuignoreCheck.dispatchEvent(new Event("change"));
+    expect(onToggle).toHaveBeenCalledWith("bmuignore", true);
+
+    gitignoreCheck.checked = false;
+    gitignoreCheck.dispatchEvent(new Event("change"));
+    expect(onToggle).toHaveBeenCalledWith("gitignore", false);
+  });
+});
+
+describe("buildBmuignoreEditor", () => {
   it("pre-fills the textarea with the current .bmuignore content", () => {
-    const editor = buildIgnoreEditor(
-      ignoreSettings({ bmuignore_content: "node_modules/\n*.log\n" }),
-      vi.fn(),
-      vi.fn(),
-    );
+    const editor = buildBmuignoreEditor("node_modules/\n*.log\n", vi.fn(), vi.fn());
     const textarea = editor.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("node_modules/\n*.log\n");
   });
 
-  it("notes when .gitignore isn't present in the folder", () => {
-    const editor = buildIgnoreEditor(
-      ignoreSettings({ gitignore_exists: false }),
-      vi.fn(),
-      vi.fn(),
-    );
-    expect(editor.textContent).toContain("not present in this folder");
-  });
-
-  it("Save calls onSave with the current checkbox and textarea state", () => {
+  it("Save calls onSave with the current textarea content", () => {
     const onSave = vi.fn();
-    const editor = buildIgnoreEditor(ignoreSettings(), onSave, vi.fn());
-    const [gitignoreCheck, bmuignoreCheck] = editor.querySelectorAll(
-      "input[type=checkbox]",
-    ) as NodeListOf<HTMLInputElement>;
+    const editor = buildBmuignoreEditor("", onSave, vi.fn());
     const textarea = editor.querySelector("textarea") as HTMLTextAreaElement;
-    bmuignoreCheck.checked = true;
     textarea.value = "*.tmp\n";
     const [saveBtn] = editor.querySelectorAll("button");
     saveBtn.dispatchEvent(new Event("click"));
-    expect(onSave).toHaveBeenCalledWith({
-      gitignore: gitignoreCheck.checked,
-      bmuignore: true,
-      bmuignore_content: "*.tmp\n",
-    });
+    expect(onSave).toHaveBeenCalledWith("*.tmp\n");
   });
 
   it("Cancel calls onCancel", () => {
     const onCancel = vi.fn();
-    const editor = buildIgnoreEditor(ignoreSettings(), vi.fn(), onCancel);
+    const editor = buildBmuignoreEditor("", vi.fn(), onCancel);
     const [, cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
