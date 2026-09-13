@@ -53,6 +53,10 @@ HISTORY/<project>/.bmulastrun         timestamp of the last successful run
 HISTORY/<project>/.bmulock            present only while a backmeup.sh run for
                                        this project is in progress; removed when
                                        it finishes - see Troubleshooting below
+HISTORY/<project>/.bmuconfig          optional - BMU_GITIGNORE="no"/
+                                       BMU_BMUIGNORE="yes" to override this
+                                       project's .gitignore/.bmuignore handling,
+                                       see docs/EXAMPLES.md
 HISTORY/<project>.filelist            plain-text listing of the current mirror,
                                        refreshed on every successful run - lets
                                        search find just-backed-up files instantly,
@@ -157,6 +161,13 @@ up immediately, without waiting for a full reindex.
 `-n`/`--dry-run` previews the transfer (what would be copied, deleted,
 archived) without changing anything on disk — safety checks below still
 run, so it also works as a pre-flight check.
+
+Respects the project's own `.gitignore` by default (per-directory,
+recursively — files matching it are never copied or archived); an
+opt-in `.bmuignore` adds further project-specific excludes on top. Both
+can be tuned per project via `HISTORY/<project>/.bmuconfig` — see
+[docs/EXAMPLES.md](EXAMPLES.md#special-setting-respecting-gitignore-and-bmuignore-per-project)
+for the how-to and two real gotchas worth knowing before relying on it.
 
 Refuses to run (exit 1) when:
  - no usable rsync is found (only Apple's openrsync) — install a real one

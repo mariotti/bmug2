@@ -199,6 +199,78 @@ usual rsync exclude-syntax rules and gotchas apply (leading slash for
 project-root-only, trailing slash for directories, etc.) — see `man
 rsync`.
 
+## Special setting: respecting .gitignore and .bmuignore per project
+
+Since bmug2 2.11, every project's own `.gitignore` is honored
+automatically — no setup needed. Drop a `.gitignore` anywhere in the
+directory you back up (including subdirectories — each one's own
+`.gitignore` governs itself and below, exactly like git) and matching
+files simply won't be copied into the mirror or history:
+
+```
+$ cat ~/code/hobby-site/.gitignore
+node_modules/
+*.log
+$ backmeup.sh ~/code/hobby-site
+sending incremental file list
+./
+.gitignore
+
+sent 168 bytes  received 45 bytes  426.00 bytes/sec
+total size is 22  speedup is 0.09
+$ find ~/Backups/rsyncBackup/hobby-site -type f
+/Users/alex/Backups/rsyncBackup/hobby-site/.gitignore
+/Users/alex/Backups/rsyncBackup/hobby-site/src/app.py
+```
+
+`node_modules/` and `app.log` never made it in — same effect as the
+manual `--exclude` recipe above, without hand-editing `BMU_OPTRSYNC`.
+`.gitignore` itself gets backed up too, same as a real git checkout
+would show it.
+
+**Want an extra, backup-specific ignore list without touching your
+real `.gitignore`?** Add a `.bmuignore` file (same syntax, same
+per-directory scoping) anywhere in the project. Unlike `.gitignore`,
+it's **off by default per project** — a stray file named `.bmuignore`
+left over from something else won't silently start excluding things.
+Turn it on for one project by creating
+`HISTORY/<project>/.bmuconfig` (on the *destination* side — it's a
+setting about how bmug2 backs the project up, not part of the
+project's own content) with:
+
+```
+$ echo 'BMU_BMUIGNORE="yes"' > ~/Backups/rsyncBackup-BP/hobby-site/.bmuconfig
+```
+
+`.bmuignore` only ever *adds* exclusions on top of `.gitignore` — it
+can't un-exclude something `.gitignore` already excludes, so the two
+never fight each other.
+
+**Turning `.gitignore`-respecting off for one project** (the note this
+whole feature started from — "uncheck it if we really need to include
+all") uses the same file:
+
+```
+$ echo 'BMU_GITIGNORE="no"' > ~/Backups/rsyncBackup-BP/hobby-site/.bmuconfig
+```
+
+Two things worth knowing before relying on either:
+
+ - **`.gitignore`'s `!` negation syntax does not work the way git
+   treats it.** rsync's own filter language gives a bare `!` a
+   different meaning (clear the current rule list), not git's
+   per-pattern re-include. Verified for real: a `.gitignore` containing
+   `*.log` followed by `!important.log` excludes **both** files under
+   bmug2 — `important.log` is not rescued the way `git status` would
+   show it. If your project's `.gitignore` relies on negation lines,
+   assume bmug2 won't honor them the way git does.
+ - **Enabling `.bmuignore`/`.gitignore` for a project that already has
+   matching files in its mirror cleans them out on the very next run,
+   not silently forever** — verified for real: they move into that
+   run's `B-<date>` snapshot exactly like any other deletion, they
+   don't just vanish. Still worth knowing before you flip the switch:
+   the file leaves the *live* mirror immediately.
+
 ## Special setting: backing up to an external or network drive
 
 `backmeup.configure.sh` just asks for a directory; it can be anywhere

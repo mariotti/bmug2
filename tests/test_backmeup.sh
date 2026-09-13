@@ -1550,6 +1550,102 @@ testUnarchiveLeavesArchiveOnExtractFailure() {
 }
 
 #
+# .gitignore / .bmuignore support
+# --------------------------------
+testGitignoreExcludedByDefault() {
+    l_src="${SB}/src/giproj"
+    mkdir -p "${l_src}/sub"
+    echo "keep" > "${l_src}/keep.txt"
+    echo "secret" > "${l_src}/secret.log"
+    echo "*.log" > "${l_src}/.gitignore"
+    echo "nested-secret" > "${l_src}/sub/debug.tmp"
+    echo "*.tmp" > "${l_src}/sub/.gitignore"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/gi.log" 2>&1
+    assertEquals "backup with a .gitignore must still succeed" 0 $?
+    assertTrue "keep.txt missing from the mirror" \
+        "[ -f '${SB}/sync/giproj/keep.txt' ]"
+    assertTrue ".gitignore itself should still be backed up, same as a real checkout" \
+        "[ -f '${SB}/sync/giproj/.gitignore' ]"
+    [ -e "${SB}/sync/giproj/secret.log" ]
+    assertFalse "top-level .gitignore pattern was not honored" $?
+    [ -e "${SB}/sync/giproj/sub/debug.tmp" ]
+    assertFalse "nested .gitignore pattern was not honored" $?
+}
+
+testBmuignoreNotConsultedByDefault() {
+    l_src="${SB}/src/bmuiproj"
+    mkdir -p "${l_src}"
+    echo "content" > "${l_src}/extra.dat"
+    echo "extra.dat" > "${l_src}/.bmuignore"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/bmui.log" 2>&1
+    assertEquals 0 $?
+    assertTrue ".bmuignore must be inert until explicitly activated per project" \
+        "[ -f '${SB}/sync/bmuiproj/extra.dat' ]"
+}
+
+testBmuignoreConsultedWhenEnabled() {
+    l_src="${SB}/src/bmuionproj"
+    mkdir -p "${l_src}"
+    echo "content" > "${l_src}/extra.dat"
+    echo "extra.dat" > "${l_src}/.bmuignore"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    echo 'BMU_BMUIGNORE="yes"' > "${SB}/sync-BP/bmuionproj/.bmuconfig"
+    sleep 1
+    echo "content2" > "${l_src}/other.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/bmuion.log" 2>&1
+    assertEquals 0 $?
+    assertTrue "other.txt missing from the mirror" \
+        "[ -f '${SB}/sync/bmuionproj/other.txt' ]"
+    [ -e "${SB}/sync/bmuionproj/extra.dat" ]
+    assertFalse ".bmuignore not honored once BMU_BMUIGNORE=yes" $?
+}
+
+testGitignoreCanBeDisabledPerProject() {
+    l_src="${SB}/src/gioffproj"
+    mkdir -p "${l_src}"
+    echo "keep" > "${l_src}/keep.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    echo 'BMU_GITIGNORE="no"' > "${SB}/sync-BP/gioffproj/.bmuconfig"
+    echo "secret" > "${l_src}/secret.log"
+    echo "*.log" > "${l_src}/.gitignore"
+    sleep 1
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/gioff.log" 2>&1
+    assertEquals 0 $?
+    assertTrue "secret.log should be backed up once BMU_GITIGNORE=no" \
+        "[ -f '${SB}/sync/gioffproj/secret.log' ]"
+}
+
+testNewlyIgnoredFileMovesToHistory() {
+    # A file that was already backed up and then gets newly excluded is
+    # not the same as it never existing: --delete removes it from the
+    # live mirror, but --backup (already unconditionally active) must
+    # still catch it into a B-<date> snapshot, exactly like any other
+    # deletion - verified for real against rsync 3.5.0 before relying
+    # on it here.
+    l_src="${SB}/src/gimoveproj"
+    mkdir -p "${l_src}"
+    echo "will be ignored later" > "${l_src}/later.log"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    assertTrue "later.log missing after the first (pre-gitignore) run" \
+        "[ -f '${SB}/sync/gimoveproj/later.log' ]"
+
+    echo "*.log" > "${l_src}/.gitignore"
+    sleep 1
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/gimove.log" 2>&1
+    assertEquals 0 $?
+    [ -e "${SB}/sync/gimoveproj/later.log" ]
+    assertFalse "later.log still in the live mirror after being gitignored" $?
+
+    l_bdir=`ls -d "${SB}/sync-BP/gimoveproj"/B-*/ 2>/dev/null | head -1`
+    l_bdir=${l_bdir%/}
+    assertNotNull "no snapshot created when later.log was newly ignored" "${l_bdir}"
+    assertEquals "will be ignored later" \
+        "`cat \"${l_bdir}/later.log\" 2>/dev/null`"
+}
+
+#
 # load shunit2
 # ------------
 . "${TESTS_PATH}/shunit2"
