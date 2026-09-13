@@ -10,3 +10,6 @@ __pycache__/
 # never meant to be committed here, only in an actual install directory.
 /bin/backmeup.setup.sh
 /bin/backmeup.setup.sh.old
+
+# Personal shell-activity dumps (not project-generated), wherever they land
+hist.*
