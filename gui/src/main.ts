@@ -272,51 +272,59 @@ export function buildScheduleEditor(
   ]);
 }
 
-// A plain textarea over the raw .bmuignore file, one pattern per line -
-// deliberately not a filesystem browser/picker, just an honest editor
-// over what rsync's own dir-merge filter will read (see
-// docs/EXAMPLES.md for the exact syntax and its one real gotcha:
-// rsync's filter language doesn't treat a real .gitignore's `!`
-// negation lines the way git does).
-export function buildIgnoreEditor(
+// Always-visible per-source toggles (a source's "options" line) - each
+// fires immediately on change rather than needing a separate Save,
+// matching how the schedule Off/On state is already just live status,
+// not something you save. onToggle receives the one field that
+// changed; the caller merges it with the source's other current
+// settings before persisting.
+export function buildIgnoreToggles(
   current: IgnoreSettings,
-  onSave: (input: IgnoreSettingsInput) => void,
-  onCancel: () => void,
+  onToggle: (field: "gitignore" | "bmuignore", value: boolean) => void,
 ): HTMLElement {
   const gitignoreCheck = el("input", { type: "checkbox" }) as HTMLInputElement;
   gitignoreCheck.checked = current.gitignore;
+  gitignoreCheck.addEventListener("change", () => onToggle("gitignore", gitignoreCheck.checked));
 
   const bmuignoreCheck = el("input", { type: "checkbox" }) as HTMLInputElement;
   bmuignoreCheck.checked = current.bmuignore;
+  bmuignoreCheck.addEventListener("change", () => onToggle("bmuignore", bmuignoreCheck.checked));
 
-  const textarea = el("textarea", {
-    rows: "6",
-    placeholder: "one pattern per line, e.g. node_modules/",
-  }) as HTMLTextAreaElement;
-  textarea.value = current.bmuignore_content;
-
-  const saveBtn = el("button", { type: "button" }, ["Save"]);
-  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
-  saveBtn.addEventListener("click", () =>
-    onSave({
-      gitignore: gitignoreCheck.checked,
-      bmuignore: bmuignoreCheck.checked,
-      bmuignore_content: textarea.value,
-    }),
-  );
-  cancelBtn.addEventListener("click", onCancel);
-
-  return el("div", { class: "ignore-edit" }, [
+  return el("div", { class: "source-toggles" }, [
     el("label", {}, [
       gitignoreCheck,
       current.gitignore_exists
         ? " Respect .gitignore"
         : " Respect .gitignore (not present in this folder)",
     ]),
-    el("label", {}, [bmuignoreCheck, " Use .bmuignore (patterns below)"]),
-    textarea,
-    el("div", {}, [saveBtn, cancelBtn]),
+    el("label", {}, [bmuignoreCheck, " Use .bmuignore"]),
   ]);
+}
+
+// A plain textarea over the raw .bmuignore file, one pattern per line -
+// deliberately not a filesystem browser/picker, just an honest editor
+// over what rsync's own dir-merge filter will read (see
+// docs/EXAMPLES.md for the exact syntax and its one real gotcha:
+// rsync's filter language doesn't treat a real .gitignore's `!`
+// negation lines the way git does). Only the pattern text itself is
+// edited here - respecting/consulting it at all is the toggles above.
+export function buildBmuignoreEditor(
+  content: string,
+  onSave: (content: string) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const textarea = el("textarea", {
+    rows: "6",
+    placeholder: "one pattern per line, e.g. node_modules/",
+  }) as HTMLTextAreaElement;
+  textarea.value = content;
+
+  const saveBtn = el("button", { type: "button" }, ["Save"]);
+  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+  saveBtn.addEventListener("click", () => onSave(textarea.value));
+  cancelBtn.addEventListener("click", onCancel);
+
+  return el("div", { class: "ignore-edit" }, [textarea, el("div", {}, [saveBtn, cancelBtn])]);
 }
 
 // bmug2 itself has no memory of "which folders to back up" -
@@ -382,9 +390,17 @@ async function linkExistingProject(binDir: string, project: StatusProject) {
   }
 }
 
+// Each source renders as three lines - info, then always-on option
+// toggles, then commands - plus two rows that only appear once you
+// click into them (the schedule editor, the .bmuignore text editor).
+// Table columns still apply to the info line (four things worth
+// scanning across sources at a glance); the rest are full-width rows
+// under it, same colspan-row trick already used for the expandable
+// editors themselves.
 function buildSourcesSection(
   sources: BackupSource[],
   status: StatusResult,
+  ignoreSettings: Map<string, IgnoreSettings>,
   binDir: string,
 ): HTMLElement {
   const addBtn = el("button", { type: "button" }, ["+ Add folder"]);
@@ -409,54 +425,74 @@ function buildSourcesSection(
   const rows: HTMLElement[] = [];
   for (const source of sources) {
     const known = status.projects.find((p) => p.name === source.name);
+    const settings = ignoreSettings.get(source.path);
+
     const runBtn = el("button", { type: "button" }, ["Run now"]);
     runBtn.addEventListener("click", () => void runBackupNow(binDir, source));
     const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
     removeBtn.addEventListener("click", () => void removeSource(binDir, source));
 
-    const scheduleCell = el("td", {}, []);
-    const editRow = el("tr", { class: "schedule-edit-row" }, []);
-    editRow.style.display = "none";
-
-    const showEditRow = () => {
+    const scheduleRow = el("tr", { class: "schedule-edit-row" }, []);
+    scheduleRow.style.display = "none";
+    const showScheduleRow = () => {
       const editor = buildScheduleEditor(
         source.schedule,
         (schedule) => void setSourceSchedule(binDir, source, schedule),
         () => {
-          editRow.style.display = "none";
+          scheduleRow.style.display = "none";
         },
       );
-      editRow.replaceChildren(el("td", { colspan: "5" }, [editor]));
-      editRow.style.display = "";
+      scheduleRow.replaceChildren(el("td", { colspan: "4" }, [editor]));
+      scheduleRow.style.display = "";
     };
-
+    const scheduleBtn = source.schedule
+      ? el("button", { type: "button" }, ["Edit schedule"])
+      : el("button", { type: "button" }, ["Set schedule"]);
+    scheduleBtn.addEventListener("click", showScheduleRow);
+    const commandBtns = [runBtn, scheduleBtn];
     if (source.schedule) {
-      const editBtn = el("button", { type: "button" }, ["Edit"]);
-      editBtn.addEventListener("click", showEditRow);
       const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
       offBtn.addEventListener("click", () => void clearSourceSchedule(binDir, source));
-      scheduleCell.replaceChildren(`${formatSchedule(source.schedule)} `, editBtn, offBtn);
-    } else {
-      const setBtn = el("button", { type: "button" }, ["Set schedule"]);
-      setBtn.addEventListener("click", showEditRow);
-      scheduleCell.replaceChildren("Off ", setBtn);
+      commandBtns.push(offBtn);
     }
 
-    const ignoreRow = el("tr", { class: "schedule-edit-row" }, []);
-    ignoreRow.style.display = "none";
-    const ignoreBtn = el("button", { type: "button" }, ["Ignore settings…"]);
-    ignoreBtn.addEventListener("click", () => void showIgnoreRow(binDir, source, ignoreRow));
+    const bmuignoreRow = el("tr", { class: "schedule-edit-row" }, []);
+    bmuignoreRow.style.display = "none";
+    const bmuignoreBtn = el("button", { type: "button" }, ["Edit .bmuignore"]);
+    if (settings) {
+      bmuignoreBtn.addEventListener("click", () => {
+        const editor = buildBmuignoreEditor(
+          settings.bmuignore_content,
+          (content) => void saveIgnoreSettings(binDir, source, { ...settings, bmuignore_content: content }),
+          () => {
+            bmuignoreRow.style.display = "none";
+          },
+        );
+        bmuignoreRow.replaceChildren(el("td", { colspan: "4" }, [editor]));
+        bmuignoreRow.style.display = "";
+      });
+    }
+    commandBtns.push(bmuignoreBtn, removeBtn);
+
+    const togglesRow = el("tr", { class: "schedule-edit-row" }, []);
+    if (settings) {
+      const toggles = buildIgnoreToggles(settings, (field, value) =>
+        void saveIgnoreSettings(binDir, source, { ...settings, [field]: value }),
+      );
+      togglesRow.replaceChildren(el("td", { colspan: "4" }, [toggles]));
+    }
 
     rows.push(
       el("tr", {}, [
         el("td", {}, [source.name]),
         el("td", {}, [el("code", {}, [source.path])]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
-        scheduleCell,
-        el("td", { class: "actions" }, [runBtn, ignoreBtn, removeBtn]),
+        el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),
       ]),
-      editRow,
-      ignoreRow,
+      togglesRow,
+      el("tr", {}, [el("td", { class: "source-commands", colspan: "4" }, commandBtns)]),
+      scheduleRow,
+      bmuignoreRow,
     );
   }
 
@@ -467,7 +503,6 @@ function buildSourcesSection(
         el("th", {}, ["Folder"]),
         el("th", {}, ["Last run"]),
         el("th", {}, ["Schedule"]),
-        el("th", {}, [""]),
       ]),
     ]),
     el("tbody", {}, rows),
@@ -502,26 +537,6 @@ async function clearSourceSchedule(binDir: string, source: BackupSource) {
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
   }
-}
-
-// Fetches fresh settings on each open rather than reusing whatever was
-// last rendered - the .bmuconfig/.bmuignore files can change between
-// dashboard loads independently of the GUI (hand-edited via the CLI,
-// or a .gitignore added/removed in the source folder directly).
-async function showIgnoreRow(binDir: string, source: BackupSource, row: HTMLElement) {
-  const settings = await invoke<IgnoreSettings>("get_ignore_settings", {
-    binDir,
-    sourcePath: source.path,
-  });
-  const editor = buildIgnoreEditor(
-    settings,
-    (input) => void saveIgnoreSettings(binDir, source, input),
-    () => {
-      row.style.display = "none";
-    },
-  );
-  row.replaceChildren(el("td", { colspan: "5" }, [editor]));
-  row.style.display = "";
 }
 
 async function saveIgnoreSettings(binDir: string, source: BackupSource, settings: IgnoreSettingsInput) {
@@ -658,10 +673,23 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   let status: StatusResult;
   let sources: BackupSource[];
   let housekeeping: Schedule | null;
+  let ignoreSettings: Map<string, IgnoreSettings>;
   try {
     status = await invoke<StatusResult>("get_status", { binDir });
     sources = await invoke<BackupSource[]>("list_sources");
     housekeeping = await invoke<Schedule | null>("get_housekeeping_schedule");
+    // Fetched eagerly, one per source, so the always-visible option
+    // toggles have real state to show on first render rather than a
+    // loading flicker per row.
+    const pairs = await Promise.all(
+      sources.map(
+        async (s): Promise<[string, IgnoreSettings]> => [
+          s.path,
+          await invoke<IgnoreSettings>("get_ignore_settings", { binDir, sourcePath: s.path }),
+        ],
+      ),
+    );
+    ignoreSettings = new Map(pairs);
   } catch (err) {
     renderError(String(err), () => void renderDashboard(binDir));
     return;
@@ -669,7 +697,7 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   const children: (Node | string)[] = [el("h1", {}, ["bmug2"])];
   if (banner) children.push(buildRunBanner(banner));
   children.push(
-    buildSourcesSection(sources, status, binDir),
+    buildSourcesSection(sources, status, ignoreSettings, binDir),
     buildHousekeepingSection(housekeeping, binDir),
     buildScheduleInfoPanel(),
     buildStatusSection(status, binDir),
