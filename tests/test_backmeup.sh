@@ -1981,6 +1981,35 @@ testNewlyIgnoredFileMovesToHistory() {
         "`cat \"${l_bdir}/later.log\" 2>/dev/null`"
 }
 
+testGuiVersionStaysInSyncWithBmuVersion() {
+    # The GUI ships as its own app bundle (macOS .dmg, Linux .deb/
+    # AppImage) with its own version metadata in three separate files -
+    # nothing ties them to BMU_VERSION by default, so a shell-only
+    # version bump silently leaves the app bundle reporting a stale
+    # version forever (it shipped at 0.1.0 through every 2.x release
+    # until this test existed). Fail loudly instead.
+    l_bmu_version=`grep '^BMU_VERSION="' "${BMU_BIN_SRC}/backmeup.configure.sh" \
+        | sed -e 's/^BMU_VERSION="//' -e 's/"$//'`
+    assertNotNull "could not read BMU_VERSION from backmeup.configure.sh" "${l_bmu_version}"
+
+    l_gui_dir="${TESTS_PATH}/../gui"
+
+    l_pkg_version=`python3 -c \
+        "import json; print(json.load(open('${l_gui_dir}/package.json'))['version'])"`
+    assertEquals "gui/package.json version out of sync with BMU_VERSION" \
+        "${l_bmu_version}" "${l_pkg_version}"
+
+    l_tauri_version=`python3 -c \
+        "import json; print(json.load(open('${l_gui_dir}/src-tauri/tauri.conf.json'))['version'])"`
+    assertEquals "gui/src-tauri/tauri.conf.json version out of sync with BMU_VERSION" \
+        "${l_bmu_version}" "${l_tauri_version}"
+
+    l_cargo_version=`grep '^version = "' "${l_gui_dir}/src-tauri/Cargo.toml" | head -1 \
+        | sed -e 's/^version = "//' -e 's/"$//'`
+    assertEquals "gui/src-tauri/Cargo.toml version out of sync with BMU_VERSION" \
+        "${l_bmu_version}" "${l_cargo_version}"
+}
+
 #
 # load shunit2
 # ------------

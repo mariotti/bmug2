@@ -1,6 +1,6 @@
 [package]
 name = "gui"
-version = "0.1.0"
+version = "2.12.2"
 description = "Desktop GUI for bmug2"
 authors = ["bmug2 contributors"]
 edition = "2021"
