@@ -111,14 +111,21 @@ mod tests {
         dir
     }
 
-    // No real random crate here (would be a new dependency for a test
-    // helper) - a nanosecond-based suffix is unique enough to avoid
-    // collisions between tests run in the same process.
-    fn rand_suffix() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    // A real, reproduced CI failure (not theoretical): this used to be
+    // a nanosecond timestamp, on the assumption that was unique enough
+    // between tests in the same process - it isn't, on a busy/
+    // virtualized runner's clock, confirmed for real by
+    // check_compatible_rejects_missing_marker_with_clear_message
+    // finding v2.3.0 (another test's fixture) instead of its own
+    // no-marker-at-all sandbox. process::id() alone contributes
+    // nothing here either - cargo test runs every test as a thread in
+    // one process, not a separate process, so every call in this
+    // binary already shares the same pid. A plain atomic counter is
+    // the only thing actually guaranteed unique per call regardless of
+    // clock resolution or thread timing.
+    fn rand_suffix() -> u64 {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     #[test]
