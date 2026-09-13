@@ -6,10 +6,11 @@ my backup status" as natural language instead of shell commands.
 
 ## Status
 
-All 8 tools are implemented: 4 read-only, 4 mutating. Not yet exposed
-at all: `backmeup.install.sh`/`configure.sh` (interactive-only by
-design) and `backmeup.updatedb.sh` (a multi-minute reindex doesn't fit
-a blocking tool call) — see Non-goals below.
+All 10 tools are implemented: 6 read-only, 4 mutating (`bmug2_retrieve`
+writes to disk but can't destroy or overwrite anything - see its own
+row below). Not yet exposed at all: `backmeup.install.sh`/`configure.sh`
+(interactive-only by design) and `backmeup.updatedb.sh` (a multi-minute
+reindex doesn't fit a blocking tool call) — see Non-goals below.
 
 ## Requirements
 
@@ -60,16 +61,23 @@ current need for a network-exposed server.
 | `bmug2_locate` | No | Search current mirror, history, and archived snapshots for one or more patterns. |
 | `bmug2_backup_preview` | No | Preview (`--dry-run`) what backing up a directory would do. |
 | `bmug2_archive_preview` | No | Preview (`--dry-run`) which snapshots of a project would be archived. |
+| `bmug2_retrieve_preview` | No | Preview extracting a file (or a whole snapshot) from a project's history. |
 | `bmug2_backup` | **Yes** | Back up a directory: copy new/changed files, move changed/deleted files into a dated snapshot. |
 | `bmug2_archive` | **Yes** | Compress a project's old snapshots into `.tar.gz`, verified before the original directory is removed. |
 | `bmug2_unarchive` | **Yes** | Restore an archived snapshot back to a live directory. |
 | `bmug2_migrate` | **Yes** | One-time fix for a project still in the pre-bmug2 nested layout. |
+| `bmug2_retrieve` | Writes to disk, but can't destroy/overwrite anything | Extract a file (or a whole snapshot) from a project's history - live or archived - to a destination you choose. Not a restore: it never touches the live mirror or history itself. |
 
 The read-only tools carry `readOnlyHint: true` in their MCP annotations
 so a well-behaved client can call them without a confirmation prompt.
 The mutating tools carry `destructiveHint: true` — and, since not every
 client surfaces annotations in its own consent UI yet, their
-descriptions also open with `"MUTATING:"` in plain text.
+descriptions also open with `"MUTATING:"` in plain text. `bmug2_retrieve`
+is deliberately a third category: `readOnlyHint: false` (it's a real
+action worth tracking, not a query) but `destructiveHint: false` (it
+refuses rather than overwriting anything, and never touches `SYNC`/
+`HISTORY` at all) — see `mcp/src/bmug2_mcp/server.py`'s module
+docstring for why that's the honest signal, not an oversight.
 
 ## Safety
 
@@ -85,6 +93,12 @@ descriptions also open with `"MUTATING:"` in plain text.
   directory, and `bmug2_migrate` refuses ambiguous or already-flat
   layouts — both mirror the underlying scripts' own safety checks
   exactly (see `docs/MANUAL.md`), the MCP layer adds no new leniency.
+- `bmug2_retrieve` is extraction, not restoration: it only ever reads
+  from a project's history and writes to the destination you name,
+  never touching the live mirror or modifying history itself, and
+  refuses rather than overwriting anything already at the destination.
+  Making a retrieved file live again is a separate, deliberate step
+  it doesn't do for you.
 - Every tool call returns the real `success`/`exit_code` from the
   underlying script, never a result silently coerced to look
   successful — a failed operation is reported as failed.

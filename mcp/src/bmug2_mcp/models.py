@@ -110,3 +110,25 @@ class UnarchiveResult(CommandResult):
 
 class MigrateResult(CommandResult):
     project: str
+
+
+class RetrievePreviewResult(CommandResult):
+    project: str
+    snapshot: str
+    destination: str
+    relative_path: str | None = Field(
+        default=None,
+        description="Path within the snapshot that was (or would be) "
+        "retrieved. Null means the whole snapshot.",
+    )
+
+
+class RetrieveResult(CommandResult):
+    project: str
+    snapshot: str
+    destination: str
+    relative_path: str | None = Field(
+        default=None,
+        description="Path within the snapshot that was retrieved. Null "
+        "means the whole snapshot.",
+    )

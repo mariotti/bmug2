@@ -19,6 +19,7 @@ excluding files, cron, upgrading an old bmu disk), see
    - [backmeup.updatedb.sh](#backmeupupdatedbsh)
    - [backmeup.archive.sh](#backmeuparchivesh)
    - [backmeup.unarchive.sh](#backmeupunarchivesh)
+   - [backmeup.retrieve.sh](#backmeupretrievesh)
    - [backmeup.replicate.sh](#backmeupreplicatesh)
    - [backmeup.migrate.sh](#backmeupmigratesh)
    - [bmu](#bmu)
@@ -290,6 +291,25 @@ Exact inverse of archiving: extracts `<snapshot>.tar.gz` (accepts the
 snapshot name with or without its `B-` prefix) back into
 `HISTORY/<project>/`, then removes the tarball. Refuses to overwrite an
 existing snapshot directory.
+
+### backmeup.retrieve.sh
+
+```
+backmeup.retrieve.sh [-n|--dry-run] <project> <snapshot> [relative-path] <destination>
+```
+
+Safe **extraction**, not restoration: pulls one file - or, without
+`relative-path`, a whole snapshot - out of `HISTORY` to `<destination>`
+(created if missing), whether that snapshot is still a live directory
+or already archived into a `.tar.gz`. Never touches `SYNC`, never
+modifies `HISTORY` itself, and refuses outright rather than overwriting
+anything already at the destination. Making a retrieved file live
+again (replacing the current one in `SYNC`) is a deliberate manual step
+this command intentionally doesn't automate - copy it yourself once
+you've looked at it.
+
+`-n`/`--dry-run` reports what would be retrieved and where, without
+creating anything.
 
 ### backmeup.replicate.sh
 

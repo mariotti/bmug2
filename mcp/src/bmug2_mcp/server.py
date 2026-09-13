@@ -5,8 +5,15 @@ read_only_hint=true and never touch disk. Mutating tools (real backup,
 archive, unarchive, migrate) carry destructive_hint=true so a
 well-behaved client gates them behind confirmation; their descriptions
 open with "MUTATING:" too, since not every client surfaces annotations
-in its own consent UI yet. The server itself never enforces
-preview-before-mutate sequencing - that's the client's job.
+in its own consent UI yet. bmug2_retrieve is a third, deliberately
+distinct case: it does write to disk (read_only_hint=false - a real
+tool call worth tracking, not a query), but it cannot destroy or
+overwrite anything (verified by bin/backmeup.retrieve.sh's own test
+suite: refuses rather than clobbering an existing destination, never
+touches SYNC/HISTORY at all), so destructive_hint=false is the honest
+signal, not an oversight - overclaiming risk here would be as
+inaccurate as underclaiming it elsewhere. The server itself never
+enforces preview-before-mutate sequencing - that's the client's job.
 """
 
 from __future__ import annotations
@@ -26,6 +33,8 @@ from .models import (
     BackupResult,
     LocateResult,
     MigrateResult,
+    RetrievePreviewResult,
+    RetrieveResult,
     StatusResult,
     UnarchiveResult,
 )
@@ -39,6 +48,10 @@ _MUTATING_BACKUP = ToolAnnotations(read_only_hint=False, destructive_hint=True, 
 _MUTATING_ARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True)
 _MUTATING_UNARCHIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
 _MUTATING_MIGRATE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False)
+# Writes to disk (not a query) but cannot destroy or overwrite anything -
+# see the module docstring for why this is its own category, not a
+# rounding-up to _MUTATING_* or a rounding-down to _READ_ONLY.
+_MUTATING_RETRIEVE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False)
 
 
 def create_server(config: Config) -> MCPServer:
@@ -96,6 +109,29 @@ def create_server(config: Config) -> MCPServer:
         nested mirror layout. An instant rename; refuses if there's
         nothing to migrate or the layout is ambiguous."""
         return commands.run_migrate(config.bin_dir, project)
+
+    @server.tool(annotations=_READ_ONLY)
+    def bmug2_retrieve_preview(
+        project: str, snapshot: str, destination: str, relative_path: str | None = None
+    ) -> RetrievePreviewResult:
+        """Read-only. Preview extracting `relative_path` (or, if omitted,
+        the whole snapshot) from `project`'s history - live or already
+        archived - to `destination`, without writing anything."""
+        return commands.run_retrieve_preview(config.bin_dir, project, snapshot, destination, relative_path)
+
+    @server.tool(annotations=_MUTATING_RETRIEVE)
+    def bmug2_retrieve(
+        project: str, snapshot: str, destination: str, relative_path: str | None = None
+    ) -> RetrieveResult:
+        """Extraction, not restoration: copies `relative_path` (or, if
+        omitted, the whole snapshot) from `project`'s history - live or
+        already archived - to `destination`. Never touches the live
+        mirror or modifies history itself, and refuses rather than
+        overwriting anything already at `destination`. Making a
+        retrieved file live again (replacing what's currently in the
+        project) is a separate, deliberate step this tool does not do -
+        call it once, look at what came back, then copy it yourself."""
+        return commands.run_retrieve(config.bin_dir, project, snapshot, destination, relative_path)
 
     return server
 

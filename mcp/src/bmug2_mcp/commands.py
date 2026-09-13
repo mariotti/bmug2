@@ -19,6 +19,8 @@ from .models import (
     BackupResult,
     CommandResult,
     MigrateResult,
+    RetrievePreviewResult,
+    RetrieveResult,
     UnarchiveResult,
 )
 
@@ -99,3 +101,43 @@ def run_unarchive(bin_dir: Path, project: str, snapshot: str) -> UnarchiveResult
 
 def run_migrate(bin_dir: Path, project: str) -> MigrateResult:
     return _run_script(bin_dir, "backmeup.migrate.sh", [project], MigrateResult, "Migration", project=project)
+
+
+def _retrieve_args(project: str, snapshot: str, destination: str, relative_path: str | None) -> list[str]:
+    args = [project, snapshot]
+    if relative_path:
+        args.append(relative_path)
+    args.append(destination)
+    return args
+
+
+def run_retrieve_preview(
+    bin_dir: Path, project: str, snapshot: str, destination: str, relative_path: str | None = None
+) -> RetrievePreviewResult:
+    return _run_script(
+        bin_dir,
+        "backmeup.retrieve.sh",
+        ["--dry-run", *_retrieve_args(project, snapshot, destination, relative_path)],
+        RetrievePreviewResult,
+        "Dry run",
+        project=project,
+        snapshot=snapshot,
+        destination=destination,
+        relative_path=relative_path,
+    )
+
+
+def run_retrieve(
+    bin_dir: Path, project: str, snapshot: str, destination: str, relative_path: str | None = None
+) -> RetrieveResult:
+    return _run_script(
+        bin_dir,
+        "backmeup.retrieve.sh",
+        _retrieve_args(project, snapshot, destination, relative_path),
+        RetrieveResult,
+        "Retrieve",
+        project=project,
+        snapshot=snapshot,
+        destination=destination,
+        relative_path=relative_path,
+    )
