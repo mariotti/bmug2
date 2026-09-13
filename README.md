@@ -2,6 +2,8 @@
 
 <!-- unofficially, also a "Beer MUG for 2" -->
 
+[![Tests](https://github.com/mariotti/bmug2/actions/workflows/tests.yml/badge.svg)](https://github.com/mariotti/bmug2/actions/workflows/tests.yml)
+
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
 search — readable with nothing more than `ls`, `find` and `grep`.
