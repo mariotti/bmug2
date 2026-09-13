@@ -157,6 +157,14 @@ PATH gotcha that trips up most scheduled jobs:
    via `rclone`) — the local versioned mirror stays fast and local;
    copying it off-site is a deliberate second hop, not the same
    destination. See [docs/DESTINATIONS.md](docs/DESTINATIONS.md).
+ - `.gitignore` respected automatically, per project — build artifacts
+   and caches never make it into the mirror or history in the first
+   place, not just "excluded from search." An opt-in `.bmuignore` adds
+   backup-specific excludes on top without touching the real
+   `.gitignore`. See
+   [docs/EXAMPLES.md](docs/EXAMPLES.md#special-setting-respecting-gitignore-and-bmuignore-per-project)
+   (including a real gotcha: rsync's filter language doesn't treat
+   `.gitignore`'s `!` negation lines the way git does).
 
 ## MCP server
 

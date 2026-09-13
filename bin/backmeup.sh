@@ -62,6 +62,19 @@ fi;
 
 #Define a rsync backup dir. It is new at each time we run up to mydate granularity
 l_BMU_DIRBKUP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/B-${mydate}"
+#
+#Optional per-project settings (BMU_GITIGNORE/BMU_BMUIGNORE below) - a
+#plain sourced shell file, same idiom backmeup.setup.sh itself uses.
+#Lives on the destination side (HISTORY/<project>/), not in the source
+#tree, since it's a setting about how bmug2 backs the project up, not
+#part of the project's own content. Read unconditionally (not gated on
+#dry-run) so a --dry-run preview reflects the project's real settings;
+#safe to read even before HISTORY/<project>/ has ever been created (the
+#-f test just fails and the defaults below apply).
+l_BMU_PRJCONFIG="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}/.bmuconfig"
+if [ -f "${l_BMU_PRJCONFIG}" ]; then
+    . "${l_BMU_PRJCONFIG}"
+fi
 #Pre-create the project level: rsync (>=3.4) fails delete-phase backups with
 #"File exists" when the --backup-dir path has 2+ missing components. With the
 #project dir in place only B-${mydate} is missing, which rsync handles fine,
@@ -83,8 +96,39 @@ fi;
 #
 #Trailing slash on the source: mirror the project content directly into
 #${BMU_DIRRSYNC}/<project> instead of the old nested <project>/<project>
-${BMU_CMDRSYNC} ${l_BMU_DRYRUN} ${BMU_OPTRSYNC} --backup-dir="${l_BMU_DIRBKUP}" \
-    "${l_BMU_TOBACKUP}/" "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
+#
+#Built via `set --`/"$@" rather than appended to a plain variable: the
+#dir-merge filter values below each need a required internal space
+#("dir-merge,- .gitignore") preserved as one argv word. Word-splitting
+#an unquoted variable can't do that - confirmed for real that rsync
+#rejects it as "unknown option" if appended to BMU_OPTRSYNC's own
+#word-split expansion instead. A literal quoted string in the script's
+#own source (below) is parsed correctly once, at parse time, then
+#`set --` keeps it as a single positional parameter from then on.
+#--delete-excluded: without it, toggling BMU_GITIGNORE/BMU_BMUIGNORE
+#"on" for a project that already has matching files sitting in the
+#mirror leaves them there forever - confirmed for real that rsync's
+#default --delete only re-derives deletions when the merge file
+#(.gitignore/.bmuignore) itself changes, not when the *command-line*
+#filter referencing an unchanged merge file is newly added. Harmless
+#no-op whenever no filter below is actually active (nothing "excluded"
+#to force-delete), so always included rather than conditioned on them.
+set -- ${BMU_CMDRSYNC} ${l_BMU_DRYRUN} ${BMU_OPTRSYNC} --delete-excluded --backup-dir="${l_BMU_DIRBKUP}"
+#.gitignore respected by default (BMU_GITIGNORE unset or anything but
+#"no"); .bmuignore is a pure superset on top and off by default (must
+#be explicitly activated per project) - both live in the source tree
+#itself, walked per-directory by rsync same as a real git checkout.
+#Note: rsync's dir-merge filter language isn't byte-identical to git's -
+#confirmed a real `!pattern` negation line does NOT re-include a file
+#the way git itself would (see docs/EXAMPLES.md).
+if [ "${BMU_GITIGNORE:-yes}" != "no" ]; then
+    set -- "$@" --filter='dir-merge,- .gitignore'
+fi
+if [ "${BMU_BMUIGNORE:-no}" = "yes" ]; then
+    set -- "$@" --filter='dir-merge,- .bmuignore'
+fi
+set -- "$@" "${l_BMU_TOBACKUP}/" "${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
+"$@"
 l_BMU_RSYNCRC=$?
 #
 #In a dry run rsync only reported what it would do: skip the filelist and
