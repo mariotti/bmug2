@@ -17,7 +17,9 @@
 use crate::config::Schedule;
 use std::path::{Path, PathBuf};
 
+#[cfg(any(target_os = "macos", test))]
 const PATH_ENV_MACOS: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+#[cfg(any(target_os = "linux", test))]
 const PATH_ENV_LINUX: &str = "/usr/bin:/bin:/usr/local/bin";
 
 // A stable, version-independent hash - std::hash::DefaultHasher's
@@ -80,6 +82,7 @@ fn replication_configured(bin_dir: &Path) -> bool {
 /// firing will likewise be missed" (verified on this machine) - so
 /// launchd itself guarantees no overlapping concurrent runs of the
 /// same schedule.
+#[cfg(any(target_os = "macos", test))]
 pub fn build_plist(label: &str, wrapper_path: &str, schedule: &Schedule, log_path: &str) -> String {
     let trigger = match *schedule {
         Schedule::Daily { hour, minute } => format!(
@@ -124,6 +127,7 @@ pub fn build_plist(label: &str, wrapper_path: &str, schedule: &Schedule, log_pat
 /// philosophy), not a plist crate. Tries StartInterval (Interval)
 /// first since it's the more specific/unambiguous shape, falls back
 /// to Hour/Minute (Daily).
+#[cfg(any(target_os = "macos", test))]
 pub fn parse_plist_schedule(contents: &str) -> Option<Schedule> {
     if let Some(seconds) = extract_plist_integer(contents, "StartInterval") {
         return Some(Schedule::Interval { minutes: seconds / 60 });
@@ -133,6 +137,7 @@ pub fn parse_plist_schedule(contents: &str) -> Option<Schedule> {
     Some(Schedule::Daily { hour, minute })
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn extract_plist_integer(contents: &str, key: &str) -> Option<u32> {
     let key_tag = format!("<key>{key}</key>");
     let after_key = &contents[contents.find(&key_tag)? + key_tag.len()..];
@@ -141,6 +146,7 @@ fn extract_plist_integer(contents: &str, key: &str) -> Option<u32> {
     value.trim().parse().ok()
 }
 
+#[cfg(any(target_os = "linux", test))]
 pub fn build_service(description: &str, wrapper_path: &str) -> String {
     format!(
         "[Unit]\nDescription={description}\n\n[Service]\nType=oneshot\nEnvironment=PATH={PATH_ENV_LINUX}\nExecStart={wrapper_path}\nNice=10\nIOSchedulingClass=idle\n"
@@ -154,6 +160,7 @@ pub fn build_service(description: &str, wrapper_path: &str) -> String {
 /// `systemd-analyze calendar --iterations=3 '*:0/5'` confirms real
 /// 5-minute-apart firings at :00/:05/:10/...), the same mechanism
 /// cron's `*/N * * * *` provides.
+#[cfg(any(target_os = "linux", test))]
 pub fn build_timer(description: &str, schedule: &Schedule) -> String {
     let on_calendar = match *schedule {
         Schedule::Daily { hour, minute } => format!("*-*-* {hour:02}:{minute:02}:00"),
@@ -168,6 +175,7 @@ pub fn build_timer(description: &str, schedule: &Schedule) -> String {
 /// build_timer. Tries the interval shape first (unambiguous - no
 /// other OnCalendar= value bmug2 ever generates starts with "*:0/"),
 /// falls back to the daily wall-clock shape.
+#[cfg(any(target_os = "linux", test))]
 pub fn parse_timer_schedule(contents: &str) -> Option<Schedule> {
     let line = contents
         .lines()
