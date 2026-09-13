@@ -138,6 +138,10 @@ Skipped the PATH offer, or calling this from cron/a script? Every `bmu
 `backmeup.<subcommand>.sh`, callable directly by full path from the
 install directory instead — see the manual.
 
+One page covering install through ongoing upkeep (reindexing,
+archiving, upgrading) without needing the rest of this doc set:
+**[docs/QUICK_START_AND_MAINTENANCE.md](docs/QUICK_START_AND_MAINTENANCE.md)**.
+
 Full command reference, directory layout, and troubleshooting:
 **[docs/MANUAL.md](docs/MANUAL.md)**. Real usage recipes — multiple
 projects, excluding files, external drives, cron, upgrading an old bmu
