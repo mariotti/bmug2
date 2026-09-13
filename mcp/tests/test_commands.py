@@ -211,3 +211,87 @@ def test_migrate_nothing_to_migrate_fails(real_sandbox):
     result = commands.run_migrate(config.bin_dir, "myproject")
     assert result.success is False
     assert result.exit_code == 1
+
+
+def test_retrieve_single_file_from_live_snapshot(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    snapshot_dir = next(p for p in (config.history_dir / "myproject").glob("B-*") if p.is_dir())
+    destination = tmp_path / "recovered"
+
+    result = commands.run_retrieve(
+        config.bin_dir, "myproject", snapshot_dir.name, str(destination), relative_path="sub/file2.txt"
+    )
+    assert result.success is True
+    assert result.relative_path == "sub/file2.txt"
+    assert (destination / "file2.txt").is_file()
+    # the real snapshot must be untouched
+    assert (snapshot_dir / "sub" / "file2.txt").is_file()
+
+
+def test_retrieve_single_file_from_archived_snapshot(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    archived = commands.run_archive(config.bin_dir, "myproject", days=0)
+    assert archived.success is True
+    snapshot_name = next(
+        p.name.removesuffix(".tar.gz") for p in (config.history_dir / "myproject").glob("B-*.tar.gz")
+    )
+    tarball = config.history_dir / "myproject" / f"{snapshot_name}.tar.gz"
+    size_before = tarball.stat().st_size
+    destination = tmp_path / "recovered"
+
+    result = commands.run_retrieve(
+        config.bin_dir, "myproject", snapshot_name, str(destination), relative_path="sub/file2.txt"
+    )
+    assert result.success is True
+    assert (destination / "file2.txt").is_file()
+    # retrieval must be read-only against the archive and leave no live
+    # snapshot directory behind as a side effect
+    assert tarball.stat().st_size == size_before
+    assert not (config.history_dir / "myproject" / snapshot_name).exists()
+
+
+def test_retrieve_whole_snapshot(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    snapshot_dir = next(p for p in (config.history_dir / "myproject").glob("B-*") if p.is_dir())
+    destination = tmp_path / "recovered"
+
+    result = commands.run_retrieve(config.bin_dir, "myproject", snapshot_dir.name, str(destination))
+    assert result.success is True
+    assert result.relative_path is None
+    assert (destination / snapshot_dir.name / "sub" / "file2.txt").is_file()
+
+
+def test_retrieve_missing_snapshot_fails(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    result = commands.run_retrieve(
+        config.bin_dir, "myproject", "B-19700101-000000", str(tmp_path / "recovered")
+    )
+    assert result.success is False
+    assert result.exit_code == 1
+
+
+def test_retrieve_refuses_to_overwrite_destination(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    snapshot_dir = next(p for p in (config.history_dir / "myproject").glob("B-*") if p.is_dir())
+    destination = tmp_path / "recovered"
+    destination.mkdir()
+    (destination / "file2.txt").write_text("already here\n")
+
+    result = commands.run_retrieve(
+        config.bin_dir, "myproject", snapshot_dir.name, str(destination), relative_path="sub/file2.txt"
+    )
+    assert result.success is False
+    assert result.exit_code == 1
+    assert (destination / "file2.txt").read_text() == "already here\n"
+
+
+def test_retrieve_preview_creates_nothing(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    snapshot_dir = next(p for p in (config.history_dir / "myproject").glob("B-*") if p.is_dir())
+    destination = tmp_path / "recovered"
+
+    result = commands.run_retrieve_preview(
+        config.bin_dir, "myproject", snapshot_dir.name, str(destination), relative_path="sub/file2.txt"
+    )
+    assert result.success is True
+    assert not destination.exists()

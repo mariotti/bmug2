@@ -59,15 +59,27 @@ def test_all_read_only_tools_over_real_stdio_transport(real_sandbox):
         "bmug2_archive",
         "bmug2_unarchive",
         "bmug2_migrate",
+        "bmug2_retrieve_preview",
+        "bmug2_retrieve",
     }
 
     by_name = {t.name: t.annotations for t in tools.tools}
-    for name in ("bmug2_status", "bmug2_locate", "bmug2_backup_preview", "bmug2_archive_preview"):
+    for name in (
+        "bmug2_status",
+        "bmug2_locate",
+        "bmug2_backup_preview",
+        "bmug2_archive_preview",
+        "bmug2_retrieve_preview",
+    ):
         assert by_name[name].read_only_hint is True
         assert by_name[name].destructive_hint is False
     for name in ("bmug2_backup", "bmug2_archive", "bmug2_unarchive", "bmug2_migrate"):
         assert by_name[name].read_only_hint is False
         assert by_name[name].destructive_hint is True
+    # bmug2_retrieve: writes to disk (not read-only) but can't destroy or
+    # overwrite anything - its own category, see server.py's docstring.
+    assert by_name["bmug2_retrieve"].read_only_hint is False
+    assert by_name["bmug2_retrieve"].destructive_hint is False
 
     assert status_r.is_error is not True
     assert any(p["name"] == "myproject" for p in status_r.structured_content["projects"])
@@ -135,3 +147,61 @@ def test_unarchive_and_migrate_over_real_stdio_transport(real_sandbox):
     assert migrate_r.is_error is not True
     assert migrate_r.structured_content["success"] is False
     assert migrate_r.structured_content["exit_code"] == 1
+
+
+async def _call_retrieve(bin_dir, destination):
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "bmug2_mcp.server", "--bin-dir", str(bin_dir)],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            archive_r = await session.call_tool(
+                "bmug2_archive", {"project": "myproject", "days": 0}
+            )
+            snapshot = archive_r.structured_content["stdout"].split(" -> ")[0].split()[-1]
+            preview_r = await session.call_tool(
+                "bmug2_retrieve_preview",
+                {
+                    "project": "myproject",
+                    "snapshot": snapshot,
+                    "destination": str(destination),
+                    "relative_path": "sub/file2.txt",
+                },
+            )
+            # Checked here, between the two calls - checking it after
+            # retrieve_r has also run would trivially pass regardless of
+            # whether preview itself created anything, since retrieve
+            # creates the destination for real right after.
+            preview_created_nothing = not destination.exists()
+            retrieve_r = await session.call_tool(
+                "bmug2_retrieve",
+                {
+                    "project": "myproject",
+                    "snapshot": snapshot,
+                    "destination": str(destination),
+                    "relative_path": "sub/file2.txt",
+                },
+            )
+            return snapshot, preview_r, preview_created_nothing, retrieve_r
+
+
+def test_retrieve_over_real_stdio_transport(real_sandbox, tmp_path):
+    config = real_sandbox.config
+    destination = tmp_path / "recovered"
+    snapshot, preview_r, preview_created_nothing, retrieve_r = asyncio.run(
+        _call_retrieve(config.bin_dir, destination)
+    )
+
+    assert preview_r.is_error is not True
+    assert preview_r.structured_content["success"] is True
+    assert preview_r.structured_content["snapshot"] == snapshot
+    assert preview_created_nothing, "preview must not have created anything"
+
+    assert retrieve_r.is_error is not True
+    assert retrieve_r.structured_content["success"] is True
+    assert (destination / "file2.txt").is_file()
+    # the archived snapshot itself must be untouched by retrieval
+    assert (config.history_dir / "myproject" / f"{snapshot}.tar.gz").exists()
+    assert not (config.history_dir / "myproject" / snapshot).exists()
