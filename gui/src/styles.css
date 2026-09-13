@@ -314,6 +314,38 @@ form button[type="submit"] {
   cursor: pointer;
 }
 
+.ignore-edit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5em;
+  text-align: left;
+}
+
+.ignore-edit label {
+  font-size: 0.9em;
+}
+
+.ignore-edit textarea {
+  width: 100%;
+  max-width: 28em;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 0.85em;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  padding: 0.4em 0.6em;
+}
+
+.ignore-edit button {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.3em 0.7em;
+  cursor: pointer;
+}
+
 .schedule-summary {
   font-size: 0.85em;
   text-align: left;
@@ -494,6 +526,7 @@ form button[type="submit"] {
   .sources-header button,
   .sources-table .actions button,
   .schedule-edit button,
+  .ignore-edit button,
   .housekeeping-control button,
   .schedule-info button {
     background-color: transparent;
@@ -513,6 +546,12 @@ form button[type="submit"] {
 
   .schedule-edit input[type="time"],
   .schedule-edit select {
+    background-color: #1f1f1f98;
+    color: #f6f6f6;
+    border-color: #444;
+  }
+
+  .ignore-edit textarea {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;

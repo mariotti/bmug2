@@ -70,6 +70,24 @@ export interface BackupSource {
   schedule: Schedule | null;
 }
 
+// Mirrors ignore.rs's IgnoreSettings/IgnoreSettingsInput exactly -
+// gitignore/bmuignore respecting is per Backup Source, stored in
+// HISTORY/<project>/.bmuconfig; bmuignore_content is the raw
+// <source>/.bmuignore file content, same place a real .gitignore
+// lives (see docs/EXAMPLES.md).
+export interface IgnoreSettings {
+  gitignore: boolean;
+  gitignore_exists: boolean;
+  bmuignore: boolean;
+  bmuignore_content: string;
+}
+
+export interface IgnoreSettingsInput {
+  gitignore: boolean;
+  bmuignore: boolean;
+  bmuignore_content: string;
+}
+
 interface RunOutput {
   log: string;
   ok: boolean;
@@ -254,6 +272,53 @@ export function buildScheduleEditor(
   ]);
 }
 
+// A plain textarea over the raw .bmuignore file, one pattern per line -
+// deliberately not a filesystem browser/picker, just an honest editor
+// over what rsync's own dir-merge filter will read (see
+// docs/EXAMPLES.md for the exact syntax and its one real gotcha:
+// rsync's filter language doesn't treat a real .gitignore's `!`
+// negation lines the way git does).
+export function buildIgnoreEditor(
+  current: IgnoreSettings,
+  onSave: (input: IgnoreSettingsInput) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const gitignoreCheck = el("input", { type: "checkbox" }) as HTMLInputElement;
+  gitignoreCheck.checked = current.gitignore;
+
+  const bmuignoreCheck = el("input", { type: "checkbox" }) as HTMLInputElement;
+  bmuignoreCheck.checked = current.bmuignore;
+
+  const textarea = el("textarea", {
+    rows: "6",
+    placeholder: "one pattern per line, e.g. node_modules/",
+  }) as HTMLTextAreaElement;
+  textarea.value = current.bmuignore_content;
+
+  const saveBtn = el("button", { type: "button" }, ["Save"]);
+  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+  saveBtn.addEventListener("click", () =>
+    onSave({
+      gitignore: gitignoreCheck.checked,
+      bmuignore: bmuignoreCheck.checked,
+      bmuignore_content: textarea.value,
+    }),
+  );
+  cancelBtn.addEventListener("click", onCancel);
+
+  return el("div", { class: "ignore-edit" }, [
+    el("label", {}, [
+      gitignoreCheck,
+      current.gitignore_exists
+        ? " Respect .gitignore"
+        : " Respect .gitignore (not present in this folder)",
+    ]),
+    el("label", {}, [bmuignoreCheck, " Use .bmuignore (patterns below)"]),
+    textarea,
+    el("div", {}, [saveBtn, cancelBtn]),
+  ]);
+}
+
 // bmug2 itself has no memory of "which folders to back up" -
 // backmeup.sh takes a directory argument each call and doesn't
 // persist it, and get_status only reports projects already backed up
@@ -377,15 +442,21 @@ function buildSourcesSection(
       scheduleCell.replaceChildren("Off ", setBtn);
     }
 
+    const ignoreRow = el("tr", { class: "schedule-edit-row" }, []);
+    ignoreRow.style.display = "none";
+    const ignoreBtn = el("button", { type: "button" }, ["Ignore settings…"]);
+    ignoreBtn.addEventListener("click", () => void showIgnoreRow(binDir, source, ignoreRow));
+
     rows.push(
       el("tr", {}, [
         el("td", {}, [source.name]),
         el("td", {}, [el("code", {}, [source.path])]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
         scheduleCell,
-        el("td", { class: "actions" }, [runBtn, removeBtn]),
+        el("td", { class: "actions" }, [runBtn, ignoreBtn, removeBtn]),
       ]),
       editRow,
+      ignoreRow,
     );
   }
 
@@ -427,6 +498,35 @@ async function setSourceSchedule(binDir: string, source: BackupSource, schedule:
 async function clearSourceSchedule(binDir: string, source: BackupSource) {
   try {
     await invoke("clear_source_schedule", { sourcePath: source.path });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+// Fetches fresh settings on each open rather than reusing whatever was
+// last rendered - the .bmuconfig/.bmuignore files can change between
+// dashboard loads independently of the GUI (hand-edited via the CLI,
+// or a .gitignore added/removed in the source folder directly).
+async function showIgnoreRow(binDir: string, source: BackupSource, row: HTMLElement) {
+  const settings = await invoke<IgnoreSettings>("get_ignore_settings", {
+    binDir,
+    sourcePath: source.path,
+  });
+  const editor = buildIgnoreEditor(
+    settings,
+    (input) => void saveIgnoreSettings(binDir, source, input),
+    () => {
+      row.style.display = "none";
+    },
+  );
+  row.replaceChildren(el("td", { colspan: "5" }, [editor]));
+  row.style.display = "";
+}
+
+async function saveIgnoreSettings(binDir: string, source: BackupSource, settings: IgnoreSettingsInput) {
+  try {
+    await invoke("set_ignore_settings", { binDir, sourcePath: source.path, settings });
     void renderDashboard(binDir);
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
