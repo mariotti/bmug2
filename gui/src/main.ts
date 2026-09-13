@@ -423,7 +423,14 @@ function buildSourcesSection(
   }
 
   const rows: HTMLElement[] = [];
-  for (const source of sources) {
+  sources.forEach((source, sourceIndex) => {
+    // Each source spans several rows (info, options, commands, and up
+    // to two more once an editor is opened) - without a shared visual
+    // cue tying them together, a multi-source list reads as one flat
+    // stack of near-identical lines rather than distinct groups.
+    // Alternating shading per source (not per row) plus a border above
+    // each group's first row makes the boundaries obvious at a glance.
+    const groupClass = sourceIndex % 2 === 0 ? "source-group-even" : "source-group-odd";
     const known = status.projects.find((p) => p.name === source.name);
     const settings = ignoreSettings.get(source.path);
 
@@ -432,7 +439,7 @@ function buildSourcesSection(
     const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
     removeBtn.addEventListener("click", () => void removeSource(binDir, source));
 
-    const scheduleRow = el("tr", { class: "schedule-edit-row" }, []);
+    const scheduleRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, []);
     scheduleRow.style.display = "none";
     const showScheduleRow = () => {
       const editor = buildScheduleEditor(
@@ -456,7 +463,7 @@ function buildSourcesSection(
       commandBtns.push(offBtn);
     }
 
-    const bmuignoreRow = el("tr", { class: "schedule-edit-row" }, []);
+    const bmuignoreRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, []);
     bmuignoreRow.style.display = "none";
     const bmuignoreBtn = el("button", { type: "button" }, ["Edit .bmuignore"]);
     if (settings) {
@@ -474,7 +481,7 @@ function buildSourcesSection(
     }
     commandBtns.push(bmuignoreBtn, removeBtn);
 
-    const togglesRow = el("tr", { class: "schedule-edit-row" }, []);
+    const togglesRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, []);
     if (settings) {
       const toggles = buildIgnoreToggles(settings, (field, value) =>
         void saveIgnoreSettings(binDir, source, { ...settings, [field]: value }),
@@ -483,18 +490,20 @@ function buildSourcesSection(
     }
 
     rows.push(
-      el("tr", {}, [
-        el("td", {}, [source.name]),
+      el("tr", { class: `source-info-row ${groupClass}` }, [
+        el("td", {}, [el("strong", {}, [source.name])]),
         el("td", {}, [el("code", {}, [source.path])]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
         el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),
       ]),
       togglesRow,
-      el("tr", {}, [el("td", { class: "source-commands", colspan: "4" }, commandBtns)]),
+      el("tr", { class: groupClass }, [
+        el("td", { class: "source-commands", colspan: "4" }, commandBtns),
+      ]),
       scheduleRow,
       bmuignoreRow,
     );
-  }
+  });
 
   const table = el("table", { class: "sources-table" }, [
     el("thead", {}, [

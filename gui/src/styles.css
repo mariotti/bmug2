@@ -283,6 +283,19 @@ form button[type="submit"] {
   white-space: nowrap;
 }
 
+/* Each source spans several rows (info, options, commands, and up to
+   two more once an editor is open) - shading the whole group and
+   marking where it starts is what makes a multi-source list read as
+   distinct blocks instead of one flat stack of near-identical lines. */
+.source-group-even {
+  background-color: #f6f8fc;
+}
+
+.source-info-row td {
+  border-top: 2px solid #ccc;
+  padding-top: 0.6em;
+}
+
 .source-toggles {
   display: flex;
   gap: 1em;
@@ -544,6 +557,14 @@ form button[type="submit"] {
   .sources-table td,
   .search-result-list li {
     border-color: #444;
+  }
+
+  .source-group-even {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  .source-info-row td {
+    border-top-color: #555;
   }
 
   .dashboard-header button,
