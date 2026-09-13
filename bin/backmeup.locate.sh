@@ -65,35 +65,32 @@ if [ -z "${l_BMU_JSON}" ]; then
     exit 0
 fi;
 #
-# JSON mode: same sources as above, captured instead of printed.
+# JSON mode: same sources as above, but formatted via one native awk
+# pass per result set instead of a shell subprocess (bmuJsonEscape,
+# two forks: printf+sed) plus a string that grows one result at a
+# time. Fine for a handful of hits, but confirmed for real to be
+# catastrophic at realistic scale: a 20k-line filelist matched against
+# an unselective single-letter pattern ("a" - about as bad a case as
+# search gets) never finished in 3 minutes with the old code, from
+# tens of thousands of forks plus the growing-string's own quadratic
+# cost. awk parses each whole match set in one process instead.
+# mktemp -d (not a fixed/predictable path) avoids a symlink race in a
+# shared /tmp; falls back to a PID-based dir if mktemp is unavailable,
+# same "prefer the safe tool, still work without it" spirit as the
+# rsync/indexer/rclone detection above.
 l_indexed="false"
-l_idxcount=0
-l_archcount=0
-l_livecount=0
-l_results=""
-#
-bmuJsonAddResult() {
-    # $1=path $2=source
-    l_jaresc=`bmuJsonEscape "$1"`
-    [ -n "${l_results}" ] && l_results="${l_results},"
-    l_results="${l_results}{\"path\":\"${l_jaresc}\",\"source\":\"$2\"}"
-}
+l_bmu_tmpdir=`mktemp -d "${TMPDIR:-/tmp}/bmulocate.XXXXXX" 2>/dev/null` || l_bmu_tmpdir="${TMPDIR:-/tmp}/bmulocate.$$"
+mkdir -p "${l_bmu_tmpdir}"
+trap 'rm -rf "${l_bmu_tmpdir}"' EXIT
+: > "${l_bmu_tmpdir}/idx"
+: > "${l_bmu_tmpdir}/arch"
+: > "${l_bmu_tmpdir}/live"
 #
 if [ -n "${BMU_CMDLOCATE}" ]; then
     l_indexed="true"
-    l_hits=`{ ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@" 2>/dev/null; \
-              ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@" 2>/dev/null; }`
-    if [ -n "${l_hits}" ]; then
-        l_oldifs="${IFS}"
-        IFS='
-'
-        for l_path in ${l_hits}; do
-            [ -n "${l_path}" ] || continue
-            bmuJsonAddResult "${l_path}" "index"
-            l_idxcount=`expr ${l_idxcount} + 1`
-        done
-        IFS="${l_oldifs}"
-    fi;
+    { ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@" 2>/dev/null; \
+      ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@" 2>/dev/null; } \
+      > "${l_bmu_tmpdir}/idx"
 fi;
 #
 for l_fl in "${BMU_DIRBACKUPS}"/*/B-*.filelist; do
@@ -101,36 +98,47 @@ for l_fl in "${BMU_DIRBACKUPS}"/*/B-*.filelist; do
     l_bdir="${l_fl%.filelist}"
     [ -d "${l_bdir}" ] && continue
     for l_pat in "$@"; do
-        l_ahits=`grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null`
-        [ -z "${l_ahits}" ] && continue
-        l_oldifs="${IFS}"
-        IFS='
-'
-        for l_apath in ${l_ahits}; do
-            [ -n "${l_apath}" ] || continue
-            bmuJsonAddResult "${BMU_DIRBACKUPS}/${l_apath}" "archived_filelist"
-            l_archcount=`expr ${l_archcount} + 1`
-        done
-        IFS="${l_oldifs}"
+        grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null | \
+            sed "s|^|${BMU_DIRBACKUPS}/|" >> "${l_bmu_tmpdir}/arch"
     done
 done
 #
 for l_fl in "${BMU_DIRBACKUPS}"/*.filelist; do
     [ -f "${l_fl}" ] || continue
     for l_pat in "$@"; do
-        l_lhits=`grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null`
-        [ -z "${l_lhits}" ] && continue
-        l_oldifs="${IFS}"
-        IFS='
-'
-        for l_lpath in ${l_lhits}; do
-            [ -n "${l_lpath}" ] || continue
-            bmuJsonAddResult "${BMU_DIRRSYNC}/${l_lpath}" "live"
-            l_livecount=`expr ${l_livecount} + 1`
-        done
-        IFS="${l_oldifs}"
+        grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null | \
+            sed "s|^|${BMU_DIRRSYNC}/|" >> "${l_bmu_tmpdir}/live"
     done
 done
+#
+l_idxcount=`wc -l < "${l_bmu_tmpdir}/idx" | tr -d ' '`
+l_archcount=`wc -l < "${l_bmu_tmpdir}/arch" | tr -d ' '`
+l_livecount=`wc -l < "${l_bmu_tmpdir}/live" | tr -d ' '`
+#
+# Same escaping bmuJsonEscape does (backslash first, then quote - so a
+# literal backslash in a path doesn't get double-escaped by the second
+# substitution), just applied to every line of all three files in one
+# process instead of once per line. srctag=X between files is standard
+# awk: file arguments are processed in order, and a var=value argument
+# is assigned at the point awk reaches it, so srctag is "index" while
+# reading idx, then reassigned before arch, then live.
+# $(...) here, not backticks: backtick command substitution has its
+# own legacy backslash pre-processing that reaches through nested
+# single quotes - confirmed for real that it mangled the awk regex
+# below (a stray "newline in regular expression" syntax error) even
+# though the exact same script text runs correctly on its own. $(...)
+# doesn't have that quirk.
+l_results=$(awk '
+{
+    path = $0
+    gsub(/\\/, "\\\\", path)
+    gsub(/"/, "\\\"", path)
+    if (n++ > 0) printf ","
+    printf "{\"path\":\"%s\",\"source\":\"%s\"}", path, srctag
+}
+' srctag=index "${l_bmu_tmpdir}/idx" \
+  srctag=archived_filelist "${l_bmu_tmpdir}/arch" \
+  srctag=live "${l_bmu_tmpdir}/live")
 #
 l_patjson=""
 for l_pat in "$@"; do
