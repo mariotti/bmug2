@@ -19,7 +19,7 @@ interface InstallOutcome {
   log: string;
 }
 
-interface StatusProject {
+export interface StatusProject {
   name: string;
   last_run: string | null;
   last_change: string | null;
@@ -29,7 +29,7 @@ interface StatusProject {
   old_layout: boolean;
 }
 
-interface StatusResult {
+export interface StatusResult {
   sync_dir: string;
   history_dir: string;
   projects: StatusProject[];
@@ -51,20 +51,20 @@ interface LocateResult {
 // as {hour, minute}, Interval as {minutes} - no "kind" wrapper key, so
 // the two are told apart structurally, same as serde does on the Rust
 // side.
-interface DailySchedule {
+export interface DailySchedule {
   hour: number;
   minute: number;
 }
-interface IntervalSchedule {
+export interface IntervalSchedule {
   minutes: number;
 }
-type Schedule = DailySchedule | IntervalSchedule;
+export type Schedule = DailySchedule | IntervalSchedule;
 
-function isDaily(schedule: Schedule): schedule is DailySchedule {
+export function isDaily(schedule: Schedule): schedule is DailySchedule {
   return "hour" in schedule;
 }
 
-interface BackupSource {
+export interface BackupSource {
   name: string;
   path: string;
   schedule: Schedule | null;
@@ -87,7 +87,7 @@ type InstallRequest =
 
 const app = document.querySelector<HTMLElement>("#app")!;
 
-function el<K extends keyof HTMLElementTagNameMap>(
+export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Record<string, string> = {},
   children: (Node | string)[] = [],
@@ -102,7 +102,7 @@ function renderLoading() {
   app.replaceChildren(el("p", {}, ["Loading…"]));
 }
 
-function formatKb(kb: number | null): string {
+export function formatKb(kb: number | null): string {
   if (kb === null) return "-";
   if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
   return `${kb} KB`;
@@ -170,18 +170,18 @@ function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
   return el("section", {}, [header, table, ...oldLayoutNotes]);
 }
 
-function formatSchedule(schedule: Schedule): string {
+export function formatSchedule(schedule: Schedule): string {
   if (isDaily(schedule)) {
     return `Daily at ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
   }
   return `Every ${schedule.minutes} minutes`;
 }
 
-function timeInputValue(schedule: DailySchedule): string {
+export function timeInputValue(schedule: DailySchedule): string {
   return `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
 }
 
-function parseTimeInput(value: string): DailySchedule | null {
+export function parseTimeInput(value: string): DailySchedule | null {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
   if (!match) return null;
   return { hour: Number(match[1]), minute: Number(match[2]) };
@@ -199,7 +199,7 @@ const INTERVAL_OPTIONS_MINUTES = [5, 10, 30, 60];
 // existing <input type="time"> and a preset interval <select>, plus
 // Save/Cancel. Returns the editor element; onSave receives whichever
 // Schedule shape the user picked.
-function buildScheduleEditor(
+export function buildScheduleEditor(
   current: Schedule | null,
   onSave: (schedule: Schedule) => void,
   onCancel: () => void,
@@ -279,7 +279,7 @@ function buildScheduleEditor(
 // refuses to run against them until backmeup.migrate.sh is run first
 // (CLI-only, no GUI action for it), so offering to track and Run Now
 // them here would just set up a source whose every run fails.
-function findUntrackedProjects(
+export function findUntrackedProjects(
   status: StatusResult,
   sources: BackupSource[],
 ): StatusProject[] {
@@ -288,7 +288,7 @@ function findUntrackedProjects(
   );
 }
 
-function buildUntrackedProjectsNotice(
+export function buildUntrackedProjectsNotice(
   untracked: StatusProject[],
   binDir: string,
 ): HTMLElement | null {
@@ -518,7 +518,7 @@ async function runSearch(
 // "archived_filelist") is display-shortened to "archived" - matches
 // the source-tag CSS class name (source-${hit.source}) staying the
 // raw backend value, only the visible label gets the friendlier text.
-function sourceLabel(source: string): string {
+export function sourceLabel(source: string): string {
   if (source === "index" || source === "live") return source;
   return "archived";
 }
@@ -673,7 +673,7 @@ function buildScheduleInfoPanel(): HTMLElement {
   ]);
 }
 
-function isMac(): boolean {
+export function isMac(): boolean {
   return navigator.platform.toLowerCase().includes("mac");
 }
 
