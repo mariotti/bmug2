@@ -64,9 +64,7 @@ them urgent, none of them frequent:
   change it) into one `.tar.gz`, still fully searchable, without
   needing the original directory kept around. There's no
   deduplication, so a large file that changes often is the main thing
-  worth watching — see README's
-  [Storage growth](../README.md#storage-growth) if disk use looks
-  higher than expected.
+  worth watching if disk use looks higher than expected.
 - **Off-site replication**, if you set it up during install (or later
   via `backmeup.configure.sh`). `backmeup.replicate.sh` pushes SYNC and
   HISTORY to wherever you configured (S3, Drive, a remote host, …) —

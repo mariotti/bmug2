@@ -202,6 +202,36 @@ Refuses to run (exit 1) when:
  - the project's mirror is still in the old bmu layout — see
    [backmeup.migrate.sh](#backmeupmigratesh)
 
+**What's preserved and what isn't.** bmug2's rsync options are `-av
+--delete --backup` — `-a` (archive mode) is exactly `-rlptgoD` (verified
+against a real rsync 3.5.0: recursion, symlinks, permissions,
+modification times, group, owner, device files), and rsync's own manual
+is explicit that `-a` **does not** include ACLs (`-A`), extended
+attributes (`-X`), access times (`-U`), creation times (`-N`), or
+hardlink detection (`-H`). Concretely, on macOS: Finder tags, color
+labels, and quarantine flags are all stored as extended attributes on
+APFS, so none of them survive a backup. File creation ("date added")
+times don't either — only the modification time does. Permission bits
+(`-p`) transfer regardless of privilege, but **owner (`-o`) only
+actually transfers when the receiving rsync runs as root** (verified
+against a real rsync manual) — for a typical, non-root personal backup
+(the normal way to run bmug2), files in the mirror end up owned by
+whichever user ran `backmeup.sh`, not necessarily the source file's
+original owner.
+
+`--modify-window` (which controls how close two timestamps have to be
+to count as "the same") is commented out in the shipped rsync options,
+i.e. effectively `0` — exact-second matching. That's fine on a normal
+filesystem, but if `BMU_DIRRSYNC` lives on FAT/exFAT, some SMB shares,
+or certain cloud-sync mounts (coarser mtime resolution than one
+second), every file can look "changed" on every run even when nothing
+touched it — spurious re-transfers and needless `--backup` snapshot
+churn, not a bug in bmug2 itself. If you hit that, add
+`--modify-window=1` (or higher) to `BMU_OPTRSYNC` in your
+`backmeup.setup.sh`. See [DESTINATIONS.md](DESTINATIONS.md) for the
+fuller picture on which destination types behave like a normal
+filesystem and which don't.
+
 ### backmeup.status.sh
 
 ```

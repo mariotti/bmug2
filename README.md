@@ -16,47 +16,30 @@ version history.
 
 ## Status
 
-Personal-use software, actively developed. All issues known from the
-original bmu are fixed and covered by a 66-test shell regression suite
-(`sh tests/test_backmeup.sh`) plus 48 Python tests for the MCP server,
-both running in CI on Linux and macOS. It has not seen long-term use at
-large scale yet — read [Requirements](#requirements) and
-[What's preserved and what isn't](#whats-preserved-and-what-isnt)
+Personal-use software, actively developed, covered by a real regression
+suite (shell + Python for the MCP server, both running in CI on Linux
+and macOS — see the badge above). It has not seen long-term use at
+large scale yet — read [Requirements](#requirements) below and
+[what bmug2's rsync options do and don't preserve](docs/MANUAL.md#backmeupsh)
 before pointing it at real data, and try
 [`--dry-run`](docs/MANUAL.md#backmeupsh) first.
 
 ## Why you can trust it with real data
 
-Not marketing — the specific, defensive things the code actually does,
-so you can go verify them yourself:
+Not marketing — real, verified, defensive behavior, detailed with the
+exact bug each one closed in [docs/MANUAL.md](docs/MANUAL.md) and
+[docs/SCHEDULING.md](docs/SCHEDULING.md):
 
- - **It refuses to run somewhere it would silently lose data.** On
-   modern macOS, Apple's `/usr/bin/rsync` is actually **openrsync**,
-   which drops `--delete` the moment `--backup` is also active —
-   deleted files would just never reach the backup dir, with no error.
-   `backmeup.sh` detects this specifically and refuses to run instead
-   of backing up "successfully" while quietly not doing what you asked.
- - **Every run takes a lock for its own project**, so a scheduled run,
-   a manual `bmu`, and the GUI's Run Now can never race each other into
-   corrupting the same snapshot — one of them just cleanly fails
-   instead.
- - **`backmeup.archive.sh` never deletes before it's verified.** It
-   `tar`s a snapshot to a `.part` file, counts the entries inside that
-   archive, and compares that count against the real directory — only
-   on a match does it commit the `.tar.gz` and remove the original. Any
-   mismatch leaves the snapshot exactly as it was. Most small backup
-   scripts delete first and hope; this one only ever removes what it
-   just proved it captured.
- - **Absolute paths, baked-in commands, PATH gotchas closed.** A
-   scheduled job's minimal PATH can't silently swap in the wrong
-   `rsync`/`updatedb`/`rclone` binary — see
-   [docs/SCHEDULING.md](docs/SCHEDULING.md) for the real bug this
-   closed and how it was found.
- - **Getting a file back can't make things worse.** `backmeup.retrieve.sh`
-   only ever reads from `HISTORY` and writes to a destination you name —
-   it never touches the live mirror or archived history itself. Making
-   a retrieved file live again stays a manual step on purpose; see
-   [docs/EXAMPLES.md](docs/EXAMPLES.md#getting-a-file-back).
+ - Refuses to run somewhere it would silently lose data (Apple's
+   `openrsync` masquerading as `rsync` on macOS is the real example).
+ - Every run takes a per-project lock, so a schedule, a manual `bmu`,
+   and the GUI's Run Now can never race into corrupting a snapshot.
+ - `backmeup.archive.sh` never deletes before it's verified the tarball
+   actually captured everything.
+ - Absolute paths baked in at configure time — a scheduled job's
+   minimal PATH can't silently swap in the wrong binary.
+ - `backmeup.retrieve.sh` can only ever add files to a destination you
+   name; it can't touch `SYNC`/`HISTORY` or overwrite anything.
 
 ## Why another backup tool?
 
@@ -69,62 +52,13 @@ the destination filesystem, not on bmug2 itself.
 
 ## Requirements
 
- - **A real rsync (>= 3.x).** On modern macOS, Apple ships **openrsync**
-   as `/usr/bin/rsync`, which silently ignores `--delete` when
-   `--backup` is active — deleted files would never reach the backup
-   dir. `backmeup.sh` detects this and refuses to run with only
-   openrsync available. Fix: `brew install rsync`.
- - **`updatedb`/`locate`** (findutils) for indexing — optional. Without
-   it, backups still work and stay searchable via plain `grep` over the
-   `.filelist` files; only `gupdatedb`/`glocate` (GNU, via
-   `brew install findutils` on macOS), GNU `updatedb`/`locate`, and
-   mlocate/plocate are auto-detected.
-
-## What's preserved and what isn't
-
-bmug2's rsync options are `-av --delete --backup` — `-a` (archive mode)
-is exactly `-rlptgoD` (verified against this machine's real rsync
-3.5.0: recursion, symlinks, permissions, modification times, group,
-owner, device files), and rsync's own manual is explicit that `-a`
-**does not** include ACLs (`-A`), extended attributes (`-X`), access
-times (`-U`), creation times (`-N`), or hardlink detection (`-H`).
-Concretely, on macOS: Finder tags, color labels, and quarantine flags
-are all stored as extended attributes on APFS, so none of them survive
-a backup. File creation ("date added") times don't either — only the
-modification time does. Permission bits (`-p`) transfer regardless of
-privilege, but **owner (`-o`) only actually transfers when the
-receiving rsync runs as root** (verified against this machine's real
-rsync manual) — for a typical, non-root personal backup (the normal
-way to run bmug2), files in the mirror end up owned by whichever user
-ran `backmeup.sh`, not necessarily the source file's original owner.
-
-`--modify-window` (which controls how close two timestamps have to be
-to count as "the same") is commented out in the shipped rsync options,
-i.e. effectively `0` — exact-second matching. That's fine on a normal
-filesystem, but if `BMU_DIRRSYNC` lives on FAT/exFAT, some SMB shares,
-or certain cloud-sync mounts (coarser mtime resolution than one
-second), every file can look "changed" on every run even when nothing
-touched it — spurious re-transfers and needless `--backup` snapshot
-churn, not a bug in bmug2 itself. If you hit that, add
-`--modify-window=1` (or higher) to `BMU_OPTRSYNC` in your
-`backmeup.setup.sh`. See
-[docs/DESTINATIONS.md](docs/DESTINATIONS.md) for the fuller picture on
-which destination types behave like a normal filesystem and which
-don't.
-
-## Storage growth
-
-There's no deduplication. A large file changed repeatedly lands as
-that many full copies in `HISTORY`, one per run that changed it — a
-video file edited daily for a month is roughly a month's worth of full
-copies, not a month of diffs. `backmeup.archive.sh` only compresses
-snapshots older than its cutoff (180 days by default), so recent
-history grows uncompressed. This was always true, but interval
-scheduling (see [docs/SCHEDULING.md](docs/SCHEDULING.md)) makes it
-easier to generate many snapshots quickly for a fast-changing project —
-know the disk math for what you're backing up, and consider running
-`backmeup.archive.sh` with a shorter cutoff for large files that
-change often, rather than waiting for the default 180 days.
+A real rsync (>= 3.x) — `backmeup.sh` detects and refuses to run with
+only Apple's openrsync. `updatedb`/`locate` (findutils) for fast
+indexing is optional; without it, backups stay searchable via plain
+`grep`. See [docs/MANUAL.md](docs/MANUAL.md) for exactly what's
+detected and how, and what bmug2's rsync options do and don't preserve
+(ACLs, extended attributes, ownership) — worth a read before pointing
+this at real data.
 
 ## Quick start
 
@@ -170,21 +104,16 @@ PATH gotcha that trips up most scheduled jobs:
    destination. See [docs/DESTINATIONS.md](docs/DESTINATIONS.md).
  - `.gitignore` respected automatically, per project — build artifacts
    and caches never make it into the mirror or history in the first
-   place, not just "excluded from search." An opt-in `.bmuignore` adds
-   backup-specific excludes on top without touching the real
-   `.gitignore`. See
-   [docs/EXAMPLES.md](docs/EXAMPLES.md#special-setting-respecting-gitignore-and-bmuignore-per-project)
-   (including a real gotcha: rsync's filter language doesn't treat
-   `.gitignore`'s `!` negation lines the way git does).
+   place. An opt-in `.bmuignore` adds backup-specific excludes on top.
+   See [docs/EXAMPLES.md](docs/EXAMPLES.md#special-setting-respecting-gitignore-and-bmuignore-per-project).
 
 ## MCP server
 
 [`mcp/`](mcp/README.md) exposes bmug2 as tools an LLM assistant can call
-— "back this up", "find that file", "what's my backup status" as
-natural language. Read-only tools (status, search, dry-run previews)
-and mutating ones (backup, archive, unarchive, migrate) are both
-implemented; the mutating tools are clearly flagged as such in both
-their MCP annotations and their descriptions.
+— "back this up", "find that file", "pull the most important match out
+to my Desktop" as natural language instead of shell commands. Every
+tool's real risk level (read-only, mutating, or safe-but-not-a-query)
+is flagged accurately in its MCP annotations, not just its description.
 
 ## Desktop GUI
 
