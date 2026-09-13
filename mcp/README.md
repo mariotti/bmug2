@@ -6,11 +6,12 @@ my backup status" as natural language instead of shell commands.
 
 ## Status
 
-All 10 tools are implemented: 6 read-only, 4 mutating (`bmug2_retrieve`
-writes to disk but can't destroy or overwrite anything - see its own
-row below). Not yet exposed at all: `backmeup.install.sh`/`configure.sh`
-(interactive-only by design) and `backmeup.updatedb.sh` (a multi-minute
-reindex doesn't fit a blocking tool call) — see Non-goals below.
+All 10 tools are implemented: 5 read-only, 4 destructive-mutating, and
+`bmug2_retrieve` (writes to disk but can't destroy or overwrite
+anything - see its own row below). Not yet exposed at all:
+`backmeup.install.sh`/`configure.sh` (interactive-only by design) and
+`backmeup.updatedb.sh` (a multi-minute reindex doesn't fit a blocking
+tool call) — see Non-goals below.
 
 ## Requirements
 
