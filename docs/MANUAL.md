@@ -141,6 +141,33 @@ work the same way at either entry point:
     --index-dir=/mnt/backup/sync/.locate.dir --install-dir="$HOME/usr/bmu"
 ```
 
+## Upgrading an existing install
+
+**Backup data itself needs nothing done to it.** Every new per-project
+file bmug2 has ever added (`.bmulock`, `.bmuconfig`, `.bmumeta`, …) is
+optional and defaults sensibly when missing — a `HISTORY`/`SYNC` tree
+from an older version opens fine under a newer one, and nothing about
+the snapshot or `.filelist` format has ever changed.
+
+**To upgrade the scripts themselves**, re-run `./install.sh` from a
+freshly cloned or `git pull`ed checkout, same as a first install.
+`install.sh` looks for a real existing install at the target directory
+first — printing `Found an existing install at <path> - using its
+settings as defaults` — and pre-fills every prompt from it, so pressing
+enter through all of them reproduces your exact current configuration
+with the newer script code copied in. Answer differently at any prompt
+if you actually want to change that setting; nothing about the
+detection stops you.
+
+If you point it at a directory that already holds a *different,
+real* configuration you didn't mean to touch (a mismatched
+`--install-dir=`, or a typo), it refuses outright rather than silently
+overwriting it — you'll see `ERROR: <dir>/bin already has a real bmug2
+install with different settings`. If that happens: run
+`<that install>/bin/backmeup.configure.sh` directly instead (it always
+preserves that specific install's own settings), or use `./install.sh`
+against the *correct* directory.
+
 ## Commands
 
 ### backmeup.sh
@@ -368,6 +395,13 @@ installed; `brew install rsync` (or your distro's real rsync package).
 
 **`ERROR: old bmu layout detected`** — run
 [backmeup.migrate.sh](#backmeupmigratesh) for that project.
+
+**`ERROR: <dir>/bin already has a real bmug2 install with different
+settings`** — `install.sh` was pointed at a directory that already
+holds a real, differently-configured install (see
+[Upgrading an existing install](#upgrading-an-existing-install)).
+Re-run `<dir>/bin/backmeup.configure.sh` directly instead if you meant
+to reconfigure it, or re-run `install.sh` against the right directory.
 
 **`WARNING: no updatedb found, skipping indexing`** — backups still
 work; install findutils to enable fast indexed search, or rely on

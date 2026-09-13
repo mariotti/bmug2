@@ -28,6 +28,33 @@ else
     . "${BMU_PATH}/backmeup.setup.sh.template"
     echo "Installing a new system without existing configuration."
 fi
+#
+# Reinstall/upgrade safety net, part 1: if the actual TARGET install
+# directory already has a real config, copy it into this checkout
+# before configure.sh runs, so its own "previous setup file -> use as
+# defaults" logic (see backmeup.configure.sh's header) offers the real
+# existing settings instead of generic template ones. Without this,
+# re-running install.sh from a fresh checkout against an existing,
+# differently-configured install silently proposed brand-new default
+# SYNC/HISTORY/IndexDB paths - confirmed for real: exit 0, no warning,
+# and the previous backup history became unreachable ("no projects
+# found") because everything was now looking in the wrong place.
+# $BMU_INSTDIR is already set above (from the setup/template source);
+# an explicit --install-dir= flag (scripted/GUI callers) takes
+# priority over it, matching configure.sh's own flag precedence.
+l_bmu_target_instdir="${BMU_INSTDIR}"
+for l_bmu_arg in "$@"; do
+    case "$l_bmu_arg" in
+        --install-dir=*) l_bmu_target_instdir="${l_bmu_arg#--install-dir=}" ;;
+    esac
+done
+l_bmu_preseeded=""
+if [ -f "${l_bmu_target_instdir}/bin/backmeup.setup.sh" ]; then
+    cp -p "${l_bmu_target_instdir}/bin/backmeup.setup.sh" "${BMU_PATH}/backmeup.setup.sh"
+    . "${BMU_PATH}/backmeup.setup.sh"
+    l_bmu_preseeded="yes"
+    echo "Found an existing install at ${l_bmu_target_instdir} - using its settings as defaults."
+fi
 echo ""
 #
 echo "You are installing BMU from: ${BMU_PATH}"
@@ -54,6 +81,29 @@ else
     echo "ERROR: backmeup.setup.sh was not created by configure.sh."
     exit 1
 fi;
+#
+# Reinstall/upgrade safety net, part 2: the one case part 1 above can't
+# pre-empt - a custom install directory typed interactively (not the
+# default, no --install-dir= flag) that happens to already hold a
+# real, differently-configured install. Refuse rather than silently
+# overwrite it, matching this project's existing refuse-and-explain
+# safety checks (old layout, no usable rsync) rather than guessing.
+if [ -z "${l_bmu_preseeded}" ] && [ -f "${BMU_INSTDIR}/bin/backmeup.setup.sh" ]; then
+    l_bmu_existing_sync=`grep '^BMU_DIRRSYNC=' "${BMU_INSTDIR}/bin/backmeup.setup.sh" | head -1`
+    l_bmu_new_sync=`grep '^BMU_DIRRSYNC=' "${BMU_PATH}/backmeup.setup.sh" | head -1`
+    if [ -n "${l_bmu_existing_sync}" ] && [ "${l_bmu_existing_sync}" != "${l_bmu_new_sync}" ]; then
+        echo "ERROR: ${BMU_INSTDIR}/bin already has a real bmug2 install with"
+        echo "different settings (${l_bmu_existing_sync}) - refusing to overwrite"
+        echo "it with ${l_bmu_new_sync}."
+        echo "If you meant to reconfigure this install, run its own"
+        echo "backmeup.configure.sh directly instead:"
+        echo "  ${BMU_INSTDIR}/bin/backmeup.configure.sh"
+        echo "(it preserves your existing settings as defaults). If you really"
+        echo "want a second, independent install here, remove or rename"
+        echo "${BMU_INSTDIR} first."
+        exit 1
+    fi
+fi
 #
 # Copy command files. Only the real *.sh scripts, the resolved
 # backmeup.setup.sh (which also ends in .sh), and the template (kept in

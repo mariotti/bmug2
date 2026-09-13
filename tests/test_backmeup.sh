@@ -237,6 +237,116 @@ testInstallAbortsCleanlyWhenConfigureFails() {
         "[ -f '${l_checkout}/backmeup.setup.sh' ]"
 }
 
+testReinstallAtDefaultLocationPreservesExistingSettings() {
+    # Real gap found and fixed: re-running install.sh from a fresh
+    # checkout against an already-installed, real bmug2 used to
+    # silently propose brand-new default SYNC/HISTORY/IndexDB paths -
+    # exit 0, no warning - leaving the real backup history unreachable.
+    # Common case here: same (default) install location, reinstalling
+    # to refresh the scripts, everything already exists on disk from
+    # the first install so every prompt's default is now accepted
+    # immediately (no "shall I create it?" follow-up needed).
+    l_home="${SHUNIT_TMPDIR}/reinstalldefaulthome"
+    l_checkout1="${SHUNIT_TMPDIR}/reinstalldefaultcheckout1"
+    l_checkout2="${SHUNIT_TMPDIR}/reinstalldefaultcheckout2"
+    mkdir -p "${l_home}" "${l_checkout1}" "${l_checkout2}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout1}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout2}"
+
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
+        HOME="${l_home}" "${l_checkout1}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/reinstalldefault-install1.log" 2>&1
+    assertEquals "first install failed" 0 $?
+    l_bmu="${l_home}/usr/bmu/bin"
+
+    l_src="${SHUNIT_TMPDIR}/reinstalldefault/docs"
+    mkdir -p "${l_src}"
+    echo "real data" > "${l_src}/file.txt"
+    "${l_bmu}/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    printf '\n\n\n\n' | \
+        HOME="${l_home}" "${l_checkout2}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/reinstalldefault-install2.log" 2>&1
+    assertEquals "reinstall must succeed, see reinstalldefault-install2.log" 0 $?
+    grep -q "Found an existing install" "${SHUNIT_TMPDIR}/reinstalldefault-install2.log"
+    assertTrue "reinstall did not report finding the existing install" $?
+
+    "${l_bmu}/backmeup.status.sh" > "${SHUNIT_TMPDIR}/reinstalldefault-status.log" 2>&1
+    grep -q "^docs " "${SHUNIT_TMPDIR}/reinstalldefault-status.log"
+    assertTrue "existing project lost track of after reinstall" $?
+}
+
+testReinstallRefusesWhenCustomInstallDirHasDivergentSettings() {
+    # The one case the preseeding above can't pre-empt: a custom
+    # install dir typed interactively (no --install-dir= flag) that
+    # already holds a real, differently-configured install. Must
+    # refuse rather than silently overwrite it.
+    l_home="${SHUNIT_TMPDIR}/reinstallrefusehome"
+    l_checkout="${SHUNIT_TMPDIR}/reinstallrefusecheckout"
+    l_custominstdir="${SHUNIT_TMPDIR}/reinstallrefuse-custominstdir"
+    mkdir -p "${l_home}" "${l_checkout}" "${l_custominstdir}/bin"
+    cp -R "${BMU_BIN_SRC}/." "${l_custominstdir}/bin"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    l_realsync="${SHUNIT_TMPDIR}/reinstallrefuse-realsync"
+    mkdir -p "${l_realsync}/.locate.dir" "${l_realsync}-BP"
+    sed -e "s|\${HOME}/Backups/rsyncBackup|${l_realsync}|" \
+        "${l_custominstdir}/bin/backmeup.setup.sh.template" > "${l_custominstdir}/bin/backmeup.setup.sh"
+
+    # SYNC/BACKUP/INDEX defaults are unseeded (generic template
+    # defaults, under this test's own fresh $HOME) so each needs a
+    # create-confirmation; the install dir answer is the existing
+    # custom path itself, which needs none (it already exists).
+    printf '\ny\n\ny\n\ny\n%s\n' "${l_custominstdir}" | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/reinstallrefuse-install.log" 2>&1
+    assertEquals "must refuse rather than silently overwrite divergent settings" \
+        1 $?
+    grep -q "already has a real bmug2 install with" \
+        "${SHUNIT_TMPDIR}/reinstallrefuse-install.log"
+    assertTrue "no clear refusal message" $?
+    grep -q "${l_realsync}" "${l_custominstdir}/bin/backmeup.setup.sh"
+    assertTrue "existing install's real settings were overwritten despite the refusal" $?
+}
+
+testReinstallViaInstallDirFlagPreservesExistingSettings() {
+    # --install-dir= is knowable before configure.sh even runs (unlike
+    # the interactive case), so this should preseed automatically -
+    # every prompt's default already matches the real existing config,
+    # so accepting all of them reproduces it exactly rather than
+    # diverging.
+    l_home="${SHUNIT_TMPDIR}/reinstallflaghome"
+    l_checkout="${SHUNIT_TMPDIR}/reinstallflagcheckout"
+    l_custominstdir="${SHUNIT_TMPDIR}/reinstallflag-custominstdir"
+    mkdir -p "${l_home}" "${l_checkout}" "${l_custominstdir}/bin"
+    cp -R "${BMU_BIN_SRC}/." "${l_custominstdir}/bin"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    l_realsync="${SHUNIT_TMPDIR}/reinstallflag-realsync"
+    mkdir -p "${l_realsync}/.locate.dir" "${l_realsync}-BP"
+    sed -e "s|\${HOME}/Backups/rsyncBackup|${l_realsync}|" \
+        "${l_custominstdir}/bin/backmeup.setup.sh.template" > "${l_custominstdir}/bin/backmeup.setup.sh"
+
+    l_src="${SHUNIT_TMPDIR}/reinstallflag/proj"
+    mkdir -p "${l_src}"
+    echo "real data" > "${l_src}/file.txt"
+    "${l_custominstdir}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    printf '\n\n\n' | \
+        HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        --install-dir="${l_custominstdir}" \
+        > "${SHUNIT_TMPDIR}/reinstallflag-install.log" 2>&1
+    assertEquals "flag-based reinstall must succeed, see reinstallflag-install.log" \
+        0 $?
+    grep -q "Found an existing install" "${SHUNIT_TMPDIR}/reinstallflag-install.log"
+    assertTrue "did not detect the existing install via --install-dir=" $?
+    grep -q "${l_realsync}" "${l_custominstdir}/bin/backmeup.setup.sh"
+    assertTrue "real settings lost after flag-based reinstall" $?
+    "${l_custominstdir}/bin/backmeup.status.sh" > "${SHUNIT_TMPDIR}/reinstallflag-status.log" 2>&1
+    grep -q "^proj " "${SHUNIT_TMPDIR}/reinstallflag-status.log"
+    assertTrue "existing project lost track of after flag-based reinstall" $?
+}
+
 testConfigureRejectsNonAbsoluteDirectoryAnswer() {
     # Real corruption found in the wild: a user copy-pasted a shown
     # default including its surrounding parens, typing "(/some/path" as
