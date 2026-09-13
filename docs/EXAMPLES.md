@@ -22,6 +22,7 @@ way.
  - [Automating it (cron, launchd, systemd timers)](#automating-it-cron-launchd-systemd-timers)
  - [Preview before you commit](#preview-before-you-commit)
  - [Finding things again](#finding-things-again)
+ - [Getting a file back](#getting-a-file-back)
  - [Housekeeping: status and archiving old snapshots](#housekeeping-status-and-archiving-old-snapshots)
  - [Upgrading a backup disk from the original bmu](#upgrading-a-backup-disk-from-the-original-bmu)
 
@@ -374,6 +375,42 @@ above — gone from the live mirror, found instantly in its snapshot.
 `HISTORY` snapshot; a file still in the *live* mirror is searchable
 right after its own backup run, no `updatedb.sh` required — see
 [MANUAL.md](MANUAL.md#backmeuplocatesh).
+
+## Getting a file back
+
+Finding a file is only half the job — `backmeup.retrieve.sh` pulls it
+out to wherever you want it, whether its snapshot is still a plain
+directory or already compressed into a `.tar.gz`. It's an
+**extraction**, not a restore: it only ever reads from `HISTORY` and
+writes to the destination you name, never touching `SYNC` or `HISTORY`
+itself. Making the file live again — replacing what's currently in
+your project — is left as a deliberate `cp`/Finder step once you've
+looked at what came back, on purpose.
+
+Continuing the search above, once `scratch.txt` is archived:
+
+```
+$ backmeup.archive.sh Documents 0
+$ backmeup.retrieve.sh Documents B-20260907-005457 scratch.txt ~/Desktop/recovered
+retrieved Documents/B-20260907-005457/scratch.txt -> /Users/alex/Desktop/recovered/scratch.txt
+$ cat ~/Desktop/recovered/scratch.txt
+```
+
+No `backmeup.unarchive.sh` round-trip needed — that command re-expands
+the *whole* snapshot back into `HISTORY` (useful if you want the whole
+thing back in place), where retrieving is scoped to just the one file
+you actually asked for, extracted straight from the `.tar.gz`.
+
+Leave off the file name to pull the whole snapshot instead:
+
+```
+$ backmeup.retrieve.sh Documents B-20260907-005457 ~/Desktop/recovered
+retrieved Documents/B-20260907-005457 (whole snapshot) -> /Users/alex/Desktop/recovered/B-20260907-005457
+```
+
+`backmeup.retrieve.sh` refuses outright rather than overwriting
+anything already sitting at the destination — see
+[MANUAL.md](MANUAL.md#backmeupretrievesh) for the exact rules.
 
 ## Housekeeping: status and archiving old snapshots
 

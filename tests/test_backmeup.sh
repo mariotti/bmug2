@@ -1728,6 +1728,164 @@ testUnarchiveLeavesArchiveOnExtractFailure() {
 }
 
 #
+# backmeup.retrieve.sh - safe extraction, not restoration: pulls a
+# file (or a whole snapshot) out of history to a chosen destination,
+# live or archived, without ever touching SYNC or modifying HISTORY.
+# ---------------------------------------------------------------------
+testRetrieveSingleFileFromLiveSnapshot() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/retrieveliveproj"
+    mkdir -p "${l_src}/sub"
+    echo "keep v1" > "${l_src}/keep.txt"
+    echo "will vanish" > "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "keep v2" > "${l_src}/keep.txt"
+    rm "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_snap=`ls -d "${SB}/sync-BP/retrieveliveproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    l_dest="${SHUNIT_TMPDIR}/retrieve-live-dest"
+
+    "${SB}/bin/backmeup.retrieve.sh" retrieveliveproj "${l_snap}" \
+        sub/vanish.txt "${l_dest}" > "${SHUNIT_TMPDIR}/retrieve-live.log" 2>&1
+    assertEquals "retrieve from a live snapshot failed" 0 $?
+    assertEquals "will vanish" "`cat \"${l_dest}/vanish.txt\" 2>/dev/null`"
+    assertFalse "retrieve modified the real snapshot dir" \
+        "[ ! -f '${SB}/sync-BP/retrieveliveproj/${l_snap}/sub/vanish.txt' ]"
+}
+
+testRetrieveSingleFileFromArchivedSnapshot() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/retrievearchproj"
+    mkdir -p "${l_src}/sub"
+    echo "keep v1" > "${l_src}/keep.txt"
+    echo "archived content" > "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "keep v2" > "${l_src}/keep.txt"
+    rm "${l_src}/sub/vanish.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_snap=`ls -d "${SB}/sync-BP/retrievearchproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    sleep 1
+    "${SB}/bin/backmeup.archive.sh" retrievearchproj 0 > /dev/null 2>&1
+    l_tgz="${SB}/sync-BP/retrievearchproj/${l_snap}.tar.gz"
+    assertTrue "setup: snapshot was not actually archived" "[ -f '${l_tgz}' ]"
+    l_tgz_before=`cat "${l_tgz}" | wc -c`
+
+    l_dest="${SHUNIT_TMPDIR}/retrieve-arch-dest"
+    "${SB}/bin/backmeup.retrieve.sh" retrievearchproj "${l_snap}" \
+        sub/vanish.txt "${l_dest}" > "${SHUNIT_TMPDIR}/retrieve-arch.log" 2>&1
+    assertEquals "retrieve from an archived snapshot failed, see retrieve-arch.log" \
+        0 $?
+    assertEquals "archived content" "`cat \"${l_dest}/vanish.txt\" 2>/dev/null`"
+
+    l_tgz_after=`cat "${l_tgz}" | wc -c`
+    assertEquals "the .tar.gz changed size - retrieve must be read-only against it" \
+        "${l_tgz_before}" "${l_tgz_after}"
+    assertFalse "retrieve left a live snapshot dir behind in HISTORY" \
+        "[ -d '${SB}/sync-BP/retrievearchproj/${l_snap}' ]"
+}
+
+testRetrieveWholeSnapshotFromLive() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/retrievewholeliveproj"
+    mkdir -p "${l_src}"
+    echo "a" > "${l_src}/a.txt"
+    echo "b" > "${l_src}/b.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "a2" > "${l_src}/a.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_snap=`ls -d "${SB}/sync-BP/retrievewholeliveproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    l_dest="${SHUNIT_TMPDIR}/retrieve-whole-live-dest"
+
+    "${SB}/bin/backmeup.retrieve.sh" retrievewholeliveproj "${l_snap}" "${l_dest}" \
+        > "${SHUNIT_TMPDIR}/retrieve-whole-live.log" 2>&1
+    assertEquals "whole-snapshot retrieve from a live snapshot failed" 0 $?
+    assertTrue "retrieved snapshot missing its own file" \
+        "[ -f '${l_dest}/${l_snap}/a.txt' ]"
+}
+
+testRetrieveWholeSnapshotFromArchived() {
+    l_src="${SHUNIT_TMPDIR}/bmu/src/retrievewholearchproj"
+    mkdir -p "${l_src}"
+    echo "a" > "${l_src}/a.txt"
+    echo "b" > "${l_src}/b.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "a2" > "${l_src}/a.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_snap=`ls -d "${SB}/sync-BP/retrievewholearchproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    sleep 1
+    "${SB}/bin/backmeup.archive.sh" retrievewholearchproj 0 > /dev/null 2>&1
+
+    l_dest="${SHUNIT_TMPDIR}/retrieve-whole-arch-dest"
+    "${SB}/bin/backmeup.retrieve.sh" retrievewholearchproj "${l_snap}" "${l_dest}" \
+        > "${SHUNIT_TMPDIR}/retrieve-whole-arch.log" 2>&1
+    assertEquals "whole-snapshot retrieve from an archived snapshot failed" 0 $?
+    assertTrue "retrieved snapshot missing its own file" \
+        "[ -f '${l_dest}/${l_snap}/a.txt' ]"
+}
+
+testRetrieveFailsWhenSnapshotMissing() {
+    "${SB}/bin/backmeup.retrieve.sh" retrievewholeliveproj B-19990101-000000 \
+        "${SHUNIT_TMPDIR}/retrieve-missing-dest" \
+        > "${SHUNIT_TMPDIR}/retrieve-missing.log" 2>&1
+    assertEquals "must fail cleanly when the snapshot doesn't exist" 1 $?
+    grep -q "no snapshot found" "${SHUNIT_TMPDIR}/retrieve-missing.log"
+    assertTrue "no clear explanation for the missing snapshot" $?
+}
+
+testRetrieveRefusesToOverwriteExistingDestination() {
+    l_snap=`ls -d "${SB}/sync-BP/retrieveliveproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    l_dest="${SHUNIT_TMPDIR}/retrieve-clash-dest"
+    mkdir -p "${l_dest}"
+    echo "already here" > "${l_dest}/keep.txt"
+
+    "${SB}/bin/backmeup.retrieve.sh" retrieveliveproj "${l_snap}" keep.txt "${l_dest}" \
+        > "${SHUNIT_TMPDIR}/retrieve-clash.log" 2>&1
+    assertEquals "must refuse rather than silently overwrite the destination" \
+        1 $?
+    grep -q "already exists" "${SHUNIT_TMPDIR}/retrieve-clash.log"
+    assertTrue "no explanation for the destination clash" $?
+    assertEquals "already here" "`cat \"${l_dest}/keep.txt\" 2>/dev/null`"
+}
+
+testRetrieveRejectsPathTraversal() {
+    l_snap=`ls -d "${SB}/sync-BP/retrieveliveproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+
+    "${SB}/bin/backmeup.retrieve.sh" retrieveliveproj "${l_snap}" \
+        ../../../etc/passwd "${SHUNIT_TMPDIR}/retrieve-traversal-dest" \
+        > "${SHUNIT_TMPDIR}/retrieve-traversal.log" 2>&1
+    assertEquals "must reject a path-traversal relative-path" 1 $?
+    grep -q "must not contain" "${SHUNIT_TMPDIR}/retrieve-traversal.log"
+    assertTrue "no explanation for the rejected path" $?
+    assertFalse "a destination directory was created despite the rejection" \
+        "[ -d '${SHUNIT_TMPDIR}/retrieve-traversal-dest' ]"
+}
+
+testRetrieveDryRunChangesNothing() {
+    l_snap=`ls -d "${SB}/sync-BP/retrieveliveproj"/B-*/ | head -1`
+    l_snap=`basename "${l_snap%/}"`
+    l_dest="${SHUNIT_TMPDIR}/retrieve-dryrun-dest"
+
+    "${SB}/bin/backmeup.retrieve.sh" -n retrieveliveproj "${l_snap}" \
+        keep.txt "${l_dest}" > "${SHUNIT_TMPDIR}/retrieve-dryrun.log" 2>&1
+    assertEquals "dry-run must still exit 0" 0 $?
+    grep -q "would retrieve" "${SHUNIT_TMPDIR}/retrieve-dryrun.log"
+    assertTrue "dry-run did not report what it would do" $?
+    assertFalse "dry-run created the destination directory" \
+        "[ -d '${l_dest}' ]"
+}
+
+#
 # .gitignore / .bmuignore support
 # --------------------------------
 testGitignoreExcludedByDefault() {

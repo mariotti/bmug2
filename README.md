@@ -52,6 +52,11 @@ so you can go verify them yourself:
    `rsync`/`updatedb`/`rclone` binary — see
    [docs/SCHEDULING.md](docs/SCHEDULING.md) for the real bug this
    closed and how it was found.
+ - **Getting a file back can't make things worse.** `backmeup.retrieve.sh`
+   only ever reads from `HISTORY` and writes to a destination you name —
+   it never touches the live mirror or archived history itself. Making
+   a retrieved file live again stays a manual step on purpose; see
+   [docs/EXAMPLES.md](docs/EXAMPLES.md#getting-a-file-back).
 
 ## Why another backup tool?
 
