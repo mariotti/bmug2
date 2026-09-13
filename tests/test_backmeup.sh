@@ -1126,6 +1126,74 @@ testLocateJsonReportsLiveSource() {
     assertTrue "json counts should report 1 live hit" $?
 }
 
+testLocateJsonEscapesBackslashAndQuoteInPaths() {
+    # The JSON path's escaping (backslash first, then quote) moved
+    # from a per-result subprocess to one native awk pass - this
+    # confirms the new code still escapes correctly, not just fast.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/escapejsonproj"
+    mkdir -p "${l_src}"
+    l_weirdname='back\slash"quote.txt'
+    echo "weird name content" > "${l_src}/${l_weirdname}"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    "${SB}/bin/backmeup.locate.sh" --json quote.txt \
+        > "${SHUNIT_TMPDIR}/escapejson.log" 2>&1
+    assertEquals "backmeup.locate.sh --json failed on a backslash/quote path" \
+        0 $?
+
+    BMU_EXPECTED_NAME="${l_weirdname}" python3 -c "
+import json, os
+d = json.load(open('${SHUNIT_TMPDIR}/escapejson.log'))
+expected = os.environ['BMU_EXPECTED_NAME']
+paths = [r['path'] for r in d['results']]
+assert len(paths) == 1, paths
+assert os.path.basename(paths[0]) == expected, (paths[0], expected)
+"
+    assertTrue \
+        "JSON was invalid, or the escaped path did not decode back to the real filename" \
+        $?
+}
+
+testLocateJsonHandlesLargeResultSetsQuickly() {
+    # Real bug, found and fixed: the JSON path used to fork two
+    # subprocesses per matched result (bmuJsonEscape) plus grow a
+    # shell string one result at a time - fine for a handful of hits,
+    # confirmed for real to hang for minutes at realistic scale (a
+    # 20k-line filelist, an unselective one-letter pattern). This is a
+    # lighter regression guard - a few thousand lines, not tens of
+    # thousands - with a generous but meaningful time bound the old
+    # code would have blown through by orders of magnitude on any
+    # machine. A distinctive marker pattern, not a real word, so the
+    # count can't collide with anything else the shared sandbox
+    # happens to contain by the time this test runs.
+    l_fl="${SB}/sync-BP/perfjsonproj.filelist"
+    i=0
+    while [ $i -lt 3000 ]; do
+        echo "perfjsonproj/zzzperfmarkerxyz${i}.txt" >> "${l_fl}"
+        i=`expr $i + 1`
+    done
+
+    l_bmu_timeout=""
+    if command -v timeout > /dev/null 2>&1; then
+        l_bmu_timeout="timeout 15"
+    elif command -v gtimeout > /dev/null 2>&1; then
+        l_bmu_timeout="gtimeout 15"
+    fi
+    ${l_bmu_timeout} "${SB}/bin/backmeup.locate.sh" --json zzzperfmarkerxyz \
+        > "${SHUNIT_TMPDIR}/perfjson.log" 2>&1
+    assertEquals "large-result-set json search timed out or failed" 0 $?
+
+    python3 -c "
+import json
+d = json.load(open('${SHUNIT_TMPDIR}/perfjson.log'))
+assert d['counts']['live'] == 3000, d['counts']
+assert len(d['results']) == 3000, len(d['results'])
+"
+    assertTrue "large-result-set json output was invalid or had the wrong count" $?
+
+    rm -f "${l_fl}"
+}
+
 testLiveFilelistRefreshesOnEachRun() {
     l_src="${SHUNIT_TMPDIR}/bmu/src/refreshproj"
     mkdir -p "${l_src}"
