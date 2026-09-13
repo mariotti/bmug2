@@ -33,6 +33,22 @@ a:hover {
   color: #535bf2;
 }
 
+/* Every clickable control in this app is a real <button> (confirmed:
+   no other element type has a click handler anywhere in main.ts) - one
+   rule here covers all of them, in both themes, without adding a
+   full pressed-state treatment (shadow, transform, etc.), just enough
+   to answer "did that actually register?" at the moment of the click.
+   brightness() darkens whatever the button already looks like rather
+   than a fixed color, so it works the same on outline buttons, the
+   solid blue submit button, and the red remove/turn-off buttons alike. */
+button {
+  transition: filter 0.1s ease;
+}
+
+button:active {
+  filter: brightness(0.85);
+}
+
 h1 {
   text-align: center;
 }
