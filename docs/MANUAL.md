@@ -139,15 +139,45 @@ mutually exclusive per install.
 `--sync-dir=`, `--backup-dir=`, `--index-dir=`, `--install-dir=` — for
 a scripted or GUI caller with no terminal to prompt on. Flags and
 prompts can mix: any question without a matching flag still prompts
-interactively. Passing any flag switches the whole run non-interactive,
-including auto-skipping the optional replication setup above (re-run
-interactively later to enable it). `install.sh` forwards its own
-arguments straight through to `backmeup.configure.sh`, so the flags
-work the same way at either entry point:
+interactively. Passing any of these four directory flags switches the
+whole run non-interactive, including auto-skipping the optional
+replication setup above (re-run interactively later to enable it).
+`install.sh` forwards its own arguments straight through to
+`backmeup.configure.sh`, so the flags work the same way at either entry
+point:
 
 ```
 ./install.sh --sync-dir=/mnt/backup/sync --backup-dir=/mnt/backup/sync-BP \
     --index-dir=/mnt/backup/sync/.locate.dir --install-dir="$HOME/usr/bmu"
+```
+
+**Replication has its own, independent non-interactive flag**:
+`--replicate-backend=rclone|proton|none`, with `--replicate-remote-sync=`
+and `--replicate-remote-backups=` required alongside `rclone` (optional
+`--replicate-proton-remote=` alongside `proton`, falling back to
+`/bmug2/<hostname>` when omitted — the same default the interactive
+prompt uses). This is gated separately from the four directory flags
+above on purpose: a directory-flagged run with no `--replicate-backend=`
+still skips replication entirely, exactly as before (so existing
+scripted/GUI callers that only ever pass directory flags see no
+behavior change), while `--replicate-backend=` alone — no directory
+flags at all — still prompts interactively for directories, letting a
+caller reconfigure *just* replication on an already-installed system.
+The chosen backend's tool must actually be detected (`rclone`/
+`proton-drive` on `PATH` or a Homebrew/system location — see
+[DESTINATIONS.md](DESTINATIONS.md#proton-drive-as-a-replication-target)),
+or the run fails with a clear message rather than silently writing an
+unusable config:
+
+```
+backmeup.configure.sh --replicate-backend=rclone \
+    --replicate-remote-sync=remote:bucket/path \
+    --replicate-remote-backups=remote:bucket/path-BP
+
+backmeup.configure.sh --replicate-backend=proton \
+    --replicate-proton-remote=/bmug2/my-mac
+
+backmeup.configure.sh --replicate-backend=none   # clears either backend
 ```
 
 ## Upgrading an existing install

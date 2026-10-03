@@ -7,6 +7,7 @@ import {
   timeInputValue,
   parseTimeInput,
   buildScheduleEditor,
+  buildReplicationEditor,
   findUntrackedProjects,
   buildUntrackedProjectsNotice,
   buildIgnoreToggles,
@@ -18,6 +19,7 @@ import {
   type StatusResult,
   type BackupSource,
   type IgnoreSettings,
+  type ReplicationStatus,
 } from "./main";
 
 function ignoreSettings(overrides: Partial<IgnoreSettings> = {}): IgnoreSettings {
@@ -227,6 +229,97 @@ describe("buildScheduleEditor", () => {
   it("Cancel calls onCancel", () => {
     const onCancel = vi.fn();
     const editor = buildScheduleEditor(null, vi.fn(), onCancel);
+    const [, cancelBtn] = editor.querySelectorAll("button");
+    cancelBtn.dispatchEvent(new Event("click"));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildReplicationEditor", () => {
+  const off: ReplicationStatus = { backend: "off" };
+
+  it("starts on rclone with empty remotes when off", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const [remoteSync, remoteBackups] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    expect(select.value).toBe("rclone");
+    expect(remoteSync.value).toBe("");
+    expect(remoteBackups.value).toBe("");
+  });
+
+  it("starts on rclone pre-filled when currently configured for rclone", () => {
+    const current: ReplicationStatus = {
+      backend: "rclone",
+      remote_sync: "remote:a",
+      remote_backups: "remote:b",
+    };
+    const editor = buildReplicationEditor(current, vi.fn(), vi.fn());
+    const [remoteSync, remoteBackups] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    expect(remoteSync.value).toBe("remote:a");
+    expect(remoteBackups.value).toBe("remote:b");
+  });
+
+  it("starts on proton pre-filled when currently configured for proton", () => {
+    const current: ReplicationStatus = { backend: "proton", remote: "/bmug2/host" };
+    const editor = buildReplicationEditor(current, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const [, , protonRemote] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    expect(select.value).toBe("proton");
+    expect(protonRemote.value).toBe("/bmug2/host");
+  });
+
+  it("Save calls onSave with rclone fields when both remotes are filled", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const [remoteSync, remoteBackups] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    remoteSync.value = "remote:a";
+    remoteBackups.value = "remote:b";
+    const [saveBtn] = editor.querySelectorAll("button");
+    saveBtn.dispatchEvent(new Event("click"));
+    expect(onSave).toHaveBeenCalledWith({
+      backend: "rclone",
+      remote_sync: "remote:a",
+      remote_backups: "remote:b",
+    });
+  });
+
+  it("Save does not call onSave when an rclone remote is missing", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const [remoteSync] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    remoteSync.value = "remote:a";
+    const [saveBtn] = editor.querySelectorAll("button");
+    saveBtn.dispatchEvent(new Event("click"));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("Save calls onSave with a null remote for proton when left blank", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "proton";
+    select.dispatchEvent(new Event("change"));
+    const [saveBtn] = editor.querySelectorAll("button");
+    saveBtn.dispatchEvent(new Event("click"));
+    expect(onSave).toHaveBeenCalledWith({ backend: "proton", remote: null });
+  });
+
+  it("Save calls onSave with the typed remote for proton when given", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "proton";
+    select.dispatchEvent(new Event("change"));
+    const [, , protonRemote] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    protonRemote.value = "/bmug2/custom";
+    const [saveBtn] = editor.querySelectorAll("button");
+    saveBtn.dispatchEvent(new Event("click"));
+    expect(onSave).toHaveBeenCalledWith({ backend: "proton", remote: "/bmug2/custom" });
+  });
+
+  it("Cancel calls onCancel", () => {
+    const onCancel = vi.fn();
+    const editor = buildReplicationEditor(off, vi.fn(), onCancel);
     const [, cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();

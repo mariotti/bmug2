@@ -336,6 +336,7 @@ form button[type="submit"] {
 }
 
 .schedule-edit input[type="time"],
+.schedule-edit input[type="text"],
 .schedule-edit select {
   border-radius: 6px;
   border: 1px solid #ccc;
@@ -590,6 +591,7 @@ form button[type="submit"] {
   }
 
   .schedule-edit input[type="time"],
+  .schedule-edit input[type="text"],
   .schedule-edit select {
     background-color: #1f1f1f98;
     color: #f6f6f6;

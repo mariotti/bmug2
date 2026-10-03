@@ -49,28 +49,33 @@ pub fn build_source_wrapper(bin_dir: &str, source_path: &str) -> String {
     )
 }
 
-/// Includes backmeup.replicate.sh only if replication is configured -
-/// detected by reading BMU_CMDREPLICATE="..." out of
+/// Appends whichever replicate script matches the configured backend -
+/// detected by reading BMU_REPLICATE_BACKEND="..." out of
 /// bin_dir/backmeup.setup.sh, the same simple KEY="value" line-scan
 /// version.rs::read_installed_version already uses for BMU_VERSION.
+/// Reading BMU_REPLICATE_BACKEND (not the rclone-only BMU_CMDREPLICATE)
+/// is what makes this correct for both backends - a Proton-configured
+/// install used to silently never run backmeup.replicate.proton.sh on
+/// its housekeeping schedule before this fix, since the old check only
+/// ever looked for rclone's own variable.
 pub fn build_housekeeping_wrapper(bin_dir: &str) -> String {
     let mut script = format!("#!/bin/sh\nset -e\n\"{bin_dir}/backmeup.updatedb.sh\"\n");
-    if replication_configured(Path::new(bin_dir)) {
-        script.push_str(&format!("\"{bin_dir}/backmeup.replicate.sh\"\n"));
+    match configured_replication_backend(Path::new(bin_dir)).as_deref() {
+        Some("rclone") => script.push_str(&format!("\"{bin_dir}/backmeup.replicate.sh\"\n")),
+        Some("proton") => script.push_str(&format!("\"{bin_dir}/backmeup.replicate.proton.sh\"\n")),
+        _ => {}
     }
     script
 }
 
-fn replication_configured(bin_dir: &Path) -> bool {
-    let contents = match std::fs::read_to_string(bin_dir.join("backmeup.setup.sh")) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    contents.lines().any(|line| {
+fn configured_replication_backend(bin_dir: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(bin_dir.join("backmeup.setup.sh")).ok()?;
+    contents.lines().find_map(|line| {
         line.trim()
-            .strip_prefix("BMU_CMDREPLICATE=\"")
-            .map(|rest| !rest.trim_end_matches('"').is_empty())
-            .unwrap_or(false)
+            .strip_prefix("BMU_REPLICATE_BACKEND=\"")
+            .and_then(|rest| rest.strip_suffix('"'))
+            .filter(|backend| !backend.is_empty())
+            .map(str::to_string)
     })
 }
 
@@ -437,21 +442,39 @@ mod tests {
     fn housekeeping_wrapper_skips_replicate_when_not_configured() {
         let tmp = std::env::temp_dir().join(format!("bmug2-sched-hk-off-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("backmeup.setup.sh"), "BMU_CMDREPLICATE=\"\"\n").unwrap();
+        std::fs::write(tmp.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"\"\n").unwrap();
         let script = build_housekeeping_wrapper(tmp.to_str().unwrap());
         assert!(script.contains("backmeup.updatedb.sh"));
         assert!(!script.contains("backmeup.replicate.sh"));
+        assert!(!script.contains("backmeup.replicate.proton.sh"));
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
-    fn housekeeping_wrapper_includes_replicate_when_configured() {
-        let tmp = std::env::temp_dir().join(format!("bmug2-sched-hk-on-{}", std::process::id()));
+    fn housekeeping_wrapper_includes_rclone_replicate_when_configured() {
+        let tmp = std::env::temp_dir().join(format!("bmug2-sched-hk-rclone-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("backmeup.setup.sh"), "BMU_CMDREPLICATE=\"rclone sync\"\n").unwrap();
+        std::fs::write(
+            tmp.join("backmeup.setup.sh"),
+            "BMU_REPLICATE_BACKEND=\"rclone\"\nBMU_CMDREPLICATE=\"rclone sync\"\n",
+        )
+        .unwrap();
         let script = build_housekeeping_wrapper(tmp.to_str().unwrap());
         assert!(script.contains("backmeup.updatedb.sh"));
         assert!(script.contains("backmeup.replicate.sh"));
+        assert!(!script.contains("backmeup.replicate.proton.sh"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn housekeeping_wrapper_includes_proton_replicate_when_configured() {
+        let tmp = std::env::temp_dir().join(format!("bmug2-sched-hk-proton-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"proton\"\n").unwrap();
+        let script = build_housekeeping_wrapper(tmp.to_str().unwrap());
+        assert!(script.contains("backmeup.updatedb.sh"));
+        assert!(script.contains("backmeup.replicate.proton.sh"));
+        assert!(!script.contains("backmeup.replicate.sh\""));
         std::fs::remove_dir_all(&tmp).ok();
     }
 

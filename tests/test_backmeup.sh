@@ -785,6 +785,176 @@ testConfigureRejectsRelativePathFlag() {
 }
 
 #
+# non-interactive replication flags (--replicate-backend= etc, a GUI's
+# own way to configure/clear either backend without a terminal)
+# ---------------------------------------------------------------------
+
+testConfigureNonInteractiveRcloneReplicationSucceeds() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/rcloneflaghome"
+    l_checkout="${SHUNIT_TMPDIR}/rcloneflagcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=rclone --replicate-remote-sync=remote:a \
+        --replicate-remote-backups=remote:b \
+        < /dev/null > "${SHUNIT_TMPDIR}/rcloneflag-install.log" 2>&1
+    assertEquals "install failed, see rcloneflag-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertTrue "backend not persisted" $?
+    grep -q 'BMU_REPLICATE_REMOTE_SYNC="remote:a"' "${l_setup}"
+    assertTrue "remote sync not persisted" $?
+    grep -q 'BMU_REPLICATE_REMOTE_BACKUPS="remote:b"' "${l_setup}"
+    assertTrue "remote backups not persisted" $?
+    grep -q 'BMU_REPLICATE_PROTON_BIN=""' "${l_setup}"
+    assertTrue "rclone flag run leaked a proton value" $?
+}
+
+testConfigureNonInteractiveProtonReplicationDefaultsRemote() {
+    l_home="${SHUNIT_TMPDIR}/protonflaghome"
+    l_checkout="${SHUNIT_TMPDIR}/protonflagcheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/protonflag-fakepath"
+    mkdir -p "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=proton \
+        < /dev/null > "${SHUNIT_TMPDIR}/protonflag-install.log" 2>&1
+    assertEquals "install failed, see protonflag-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "backend not persisted" $?
+    grep -q "BMU_REPLICATE_PROTON_REMOTE=\"/bmug2/`hostname -s 2>/dev/null`\"" "${l_setup}"
+    assertTrue "default remote path was not persisted" $?
+}
+
+testConfigureNonInteractiveReplicateBackendInvalidValueErrors() {
+    l_checkout="${SHUNIT_TMPDIR}/badbackendcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.configure.sh" --replicate-backend=bogus \
+        < /dev/null > "${SHUNIT_TMPDIR}/badbackend.log" 2>&1
+    assertEquals "must reject an unrecognized --replicate-backend= value" 1 $?
+    grep -q "must be rclone, proton, or none" "${SHUNIT_TMPDIR}/badbackend.log"
+    assertTrue "no clear message rejecting the invalid backend value" $?
+}
+
+testConfigureNonInteractiveReplicateRcloneMissingCompanionFlagErrors() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_checkout="${SHUNIT_TMPDIR}/missingcompanioncheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.configure.sh" --replicate-backend=rclone \
+        --replicate-remote-sync=remote:a \
+        < /dev/null > "${SHUNIT_TMPDIR}/missingcompanion.log" 2>&1
+    assertEquals "must reject rclone backend missing --replicate-remote-backups=" 1 $?
+    grep -q "requires both" "${SHUNIT_TMPDIR}/missingcompanion.log"
+    assertTrue "no clear message about the missing companion flag" $?
+}
+
+testConfigureNonInteractiveReplicateNoneClearsReplication() {
+    l_home="${SHUNIT_TMPDIR}/clearreplicationhome"
+    l_checkout="${SHUNIT_TMPDIR}/clearreplicationcheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/clearreplication-fakepath"
+    mkdir -p "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=proton --replicate-proton-remote=/bmug2/first \
+        < /dev/null > "${SHUNIT_TMPDIR}/clearreplication-install.log" 2>&1
+    assertEquals "initial install failed, see clearreplication-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "proton was not configured by the initial install" $?
+
+    PATH="${l_fakepath}:${PATH}" "${l_home}/usr/bmu/bin/backmeup.configure.sh" \
+        --replicate-backend=none \
+        < /dev/null > "${SHUNIT_TMPDIR}/clearreplication-reconfigure.log" 2>&1
+    assertEquals "reconfigure with none failed, see clearreplication-reconfigure.log" 0 $?
+
+    grep -q 'BMU_REPLICATE_BACKEND=""' "${l_setup}"
+    assertTrue "backend was not cleared" $?
+    grep -q 'BMU_REPLICATE_PROTON_BIN=""' "${l_setup}"
+    assertTrue "proton bin was not cleared" $?
+    grep -q 'BMU_REPLICATE_PROTON_REMOTE=""' "${l_setup}"
+    assertTrue "proton remote was not cleared" $?
+    grep -q "BMU_DIRRSYNC=\"${l_home}/sync\"" "${l_setup}"
+    assertTrue "unrelated settings were disturbed by the replicate-only reconfigure" $?
+}
+
+testConfigureNonInteractiveDirFlagsStillSkipReplicationWithoutReplicateFlag() {
+    # Backward-compat regression guard: a directory-flagged run with NO
+    # --replicate-backend= must behave exactly as it did before this
+    # flag existed - replication is skipped entirely, not silently
+    # enabled. This is install.rs's own existing install_new call shape.
+    l_home="${SHUNIT_TMPDIR}/dirflagsonlyhome"
+    l_checkout="${SHUNIT_TMPDIR}/dirflagsonlycheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/dirflagsonly-install.log" 2>&1
+    assertEquals "install failed, see dirflagsonly-install.log" 0 $?
+
+    grep -q "skipping optional replication setup" "${SHUNIT_TMPDIR}/dirflagsonly-install.log"
+    assertTrue "directory-only flags did not skip replication as before" $?
+    grep -q 'BMU_REPLICATE_BACKEND=""' "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    assertTrue "replication was unexpectedly configured" $?
+}
+
+testConfigureReplicateFlagAloneStillPromptsForDirectories() {
+    # The GUI's real use case: reconfigure replication only, via flags,
+    # on an install whose directories are untouched - proves the two
+    # flag groups are gated independently (replication flag alone must
+    # NOT also suppress the directory prompts, the way a directory flag
+    # alone suppresses replication prompting above).
+    l_home="${SHUNIT_TMPDIR}/replicateflagalonehome"
+    l_checkout="${SHUNIT_TMPDIR}/replicateflagalonecheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/replicateflagalone-fakepath"
+    mkdir -p "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    printf '\ny\n\ny\n\ny\n\ny\n' | \
+        PATH="${l_fakepath}:${PATH}" HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
+        --replicate-backend=proton --replicate-proton-remote=/bmug2/alone \
+        > "${SHUNIT_TMPDIR}/replicateflagalone-install.log" 2>&1
+    assertEquals "install failed, see replicateflagalone-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "replication was not configured" $?
+    grep -q 'BMU_REPLICATE_PROTON_REMOTE="/bmug2/alone"' "${l_setup}"
+    assertTrue "proton remote was not persisted" $?
+    grep -q 'BMU_DIRRSYNC=' "${l_setup}"
+    assertTrue "directory prompts were not answered interactively" $?
+}
+
+#
 # the bmu dispatcher
 # ------------------
 

@@ -88,6 +88,19 @@ export interface IgnoreSettingsInput {
   bmuignore_content: string;
 }
 
+// Mirrors replication.rs's ReplicationStatus/ReplicationRequest tagged
+// enums exactly (#[serde(tag = "backend", rename_all = "snake_case")]).
+export type ReplicationStatus =
+  | { backend: "off" }
+  | { backend: "rclone"; remote_sync: string; remote_backups: string }
+  | { backend: "proton"; remote: string };
+
+export type ReplicationRequest =
+  | { backend: "rclone"; remote_sync: string; remote_backups: string }
+  | { backend: "proton"; remote: string | null };
+
+export type ReplicationCapability = { ok: true } | { ok: false; message: string };
+
 interface RunOutput {
   log: string;
   ok: boolean;
@@ -683,6 +696,8 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   let sources: BackupSource[];
   let housekeeping: Schedule | null;
   let ignoreSettings: Map<string, IgnoreSettings>;
+  let replicationStatus: ReplicationStatus;
+  let replicationCapability: ReplicationCapability;
   try {
     status = await invoke<StatusResult>("get_status", { binDir });
     sources = await invoke<BackupSource[]>("list_sources");
@@ -699,6 +714,17 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
       ),
     );
     ignoreSettings = new Map(pairs);
+    replicationStatus = await invoke<ReplicationStatus>("get_replication_status", { binDir });
+    // Unlike every other fetch above, an old install is an *expected*,
+    // non-fatal outcome here (replication settings predate this - see
+    // replication.rs's own version-gate reasoning) - caught locally so
+    // it disables just this one section instead of the whole dashboard.
+    try {
+      await invoke("get_replication_capability", { binDir });
+      replicationCapability = { ok: true };
+    } catch (err) {
+      replicationCapability = { ok: false, message: String(err) };
+    }
   } catch (err) {
     renderError(String(err), () => void renderDashboard(binDir));
     return;
@@ -708,6 +734,7 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
   children.push(
     buildSourcesSection(sources, status, ignoreSettings, binDir),
     buildHousekeepingSection(housekeeping, binDir),
+    buildReplicationSection(replicationStatus, replicationCapability, binDir),
     buildScheduleInfoPanel(),
     buildStatusSection(status, binDir),
     buildSearchSection(binDir),
@@ -770,6 +797,153 @@ async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
 async function clearHousekeepingSchedule(binDir: string) {
   try {
     await invoke("clear_housekeeping_schedule");
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+// Mirrors buildScheduleEditor's shape exactly: a backend select
+// toggling which fields are visible, explicit Save/Cancel. Proton's
+// remote field is optional - left blank, it's sent as null so
+// replication.rs omits the flag entirely and backmeup.configure.sh's
+// own /bmug2/<hostname> default applies, the same default the
+// interactive CLI prompt already uses.
+export function buildReplicationEditor(
+  current: ReplicationStatus,
+  onSave: (request: ReplicationRequest) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const startBackend = current.backend === "off" ? "rclone" : current.backend;
+
+  const backendSelect = el("select", {}) as HTMLSelectElement;
+  backendSelect.append(
+    new Option("rclone (SYNC + HISTORY)", "rclone", startBackend === "rclone", startBackend === "rclone"),
+    new Option("Proton Drive (HISTORY only)", "proton", startBackend === "proton", startBackend === "proton"),
+  );
+
+  const remoteSyncInput = el("input", {
+    type: "text",
+    placeholder: "remote:bucket/path",
+  }) as HTMLInputElement;
+  remoteSyncInput.value = current.backend === "rclone" ? current.remote_sync : "";
+
+  const remoteBackupsInput = el("input", {
+    type: "text",
+    placeholder: "remote:bucket/path-BP",
+  }) as HTMLInputElement;
+  remoteBackupsInput.value = current.backend === "rclone" ? current.remote_backups : "";
+
+  const protonRemoteInput = el("input", {
+    type: "text",
+    placeholder: "/bmug2/<hostname> (default)",
+  }) as HTMLInputElement;
+  protonRemoteInput.value = current.backend === "proton" ? current.remote : "";
+
+  const updateVisibility = () => {
+    const rclone = backendSelect.value === "rclone";
+    remoteSyncInput.style.display = rclone ? "" : "none";
+    remoteBackupsInput.style.display = rclone ? "" : "none";
+    protonRemoteInput.style.display = rclone ? "none" : "";
+  };
+  updateVisibility();
+  backendSelect.addEventListener("change", updateVisibility);
+
+  const saveBtn = el("button", { type: "button" }, ["Save"]);
+  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+  saveBtn.addEventListener("click", () => {
+    if (backendSelect.value === "rclone") {
+      if (!remoteSyncInput.value || !remoteBackupsInput.value) return;
+      onSave({
+        backend: "rclone",
+        remote_sync: remoteSyncInput.value,
+        remote_backups: remoteBackupsInput.value,
+      });
+    } else {
+      onSave({ backend: "proton", remote: protonRemoteInput.value || null });
+    }
+  });
+  cancelBtn.addEventListener("click", onCancel);
+
+  return el("span", { class: "schedule-edit" }, [
+    backendSelect,
+    remoteSyncInput,
+    remoteBackupsInput,
+    protonRemoteInput,
+    saveBtn,
+    cancelBtn,
+  ]);
+}
+
+// Mirrors buildHousekeepingSection's structure - another global,
+// opt-in capability, not per-source. See docs/DESTINATIONS.md for the
+// two backends' own tradeoffs (rclone mirrors SYNC+HISTORY to any
+// remote; Proton Drive is HISTORY only, natively end-to-end encrypted).
+function buildReplicationSection(
+  status: ReplicationStatus,
+  capability: ReplicationCapability,
+  binDir: string,
+): HTMLElement {
+  const header = el("h2", {}, ["Off-site replication"]);
+  const desc = el("p", {}, [
+    "Copies SYNC/HISTORY to an off-site destination - rclone (any remote) or native Proton Drive (HISTORY only). See docs/DESTINATIONS.md.",
+  ]);
+
+  if (!capability.ok) {
+    return el("section", {}, [
+      header,
+      desc,
+      el("div", { class: "schedule-info" }, [el("p", {}, [capability.message])]),
+    ]);
+  }
+
+  const container = el("div", { class: "housekeeping-control" }, []);
+  const editRow = el("div", {}, []);
+  editRow.style.display = "none";
+
+  const showEdit = () => {
+    const editor = buildReplicationEditor(
+      status,
+      (request) => void setReplication(binDir, request),
+      () => {
+        editRow.style.display = "none";
+      },
+    );
+    editRow.replaceChildren(editor);
+    editRow.style.display = "";
+  };
+
+  if (status.backend === "off") {
+    const setBtn = el("button", { type: "button" }, ["Set up replication"]);
+    setBtn.addEventListener("click", showEdit);
+    container.replaceChildren("Off ", setBtn);
+  } else {
+    const label =
+      status.backend === "rclone"
+        ? `rclone -> ${status.remote_sync} / ${status.remote_backups}`
+        : `Proton Drive (HISTORY only) -> ${status.remote}`;
+    const editBtn = el("button", { type: "button" }, ["Edit"]);
+    editBtn.addEventListener("click", showEdit);
+    const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
+    offBtn.addEventListener("click", () => void clearReplication(binDir));
+    container.replaceChildren(`${label} `, editBtn, offBtn);
+  }
+
+  return el("section", {}, [header, desc, container, editRow]);
+}
+
+async function setReplication(binDir: string, request: ReplicationRequest) {
+  try {
+    await invoke("set_replication", { binDir, request });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+async function clearReplication(binDir: string) {
+  try {
+    await invoke("clear_replication", { binDir });
     void renderDashboard(binDir);
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });

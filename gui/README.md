@@ -66,6 +66,17 @@ well-known install location" stance):
   mirror, self-corrected on load if it drifts. cron/`at` stay
   CLI-only; this only ever writes each platform's native, preferred
   mechanism.
+- **Off-site replication** (`gui/src-tauri/src/replication.rs`):
+  configure or clear either backend - `rclone` (mirrors SYNC+HISTORY to
+  any remote) or native Proton Drive (HISTORY only, end-to-end
+  encrypted) - by shelling out to `backmeup.configure.sh`'s
+  `--replicate-*` flags, the same non-reimplementing-the-CLI's-own-logic
+  approach as install/scheduling. Requires an install running bmug2
+  v2.14.0+ (whichever version first ships these flags); an older
+  install shows a disabled panel with an upgrade message instead of
+  being locked out of the whole app, since the CLI itself already fails
+  loudly on an unrecognized flag - no need to bump the GUI's blanket
+  `MIN_COMPATIBLE_VERSION` just for this one optional feature.
 
 Still missing:
 
@@ -77,7 +88,10 @@ Still missing:
 - No other mutating actions (archive/unarchive/migrate buttons) - use
   the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`
-  directly for that, same as the CLI-only flow.
+  directly for that, same as the CLI-only flow. Off-site replication
+  (above) is the one deliberate, narrowly-scoped exception - its own
+  dedicated flags and settings panel, not a reversal of this stance for
+  anything else.
 
 ## Why native Rust, not the `mcp/` Python server
 

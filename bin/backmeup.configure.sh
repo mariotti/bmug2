@@ -26,30 +26,54 @@ BMU_CONFIGURE_ROLLBACK=""
 # --index-dir=, --install-dir=. Any prompt whose flag isn't given still
 # prompts interactively as before - purely additive, mixing flagged and
 # unflagged prompts in the same run is supported.
+#
+# --replicate-backend=/--replicate-remote-sync=/--replicate-remote-backups=/
+# --replicate-proton-remote= are gated independently of the four
+# directory flags above (BMU_CLI_REPLICATE_FLAGGED, not
+# BMU_NONINTERACTIVE) - see the replication section below for why: a
+# directory-flagged call with no --replicate-backend= must keep
+# skipping replication exactly as before (e.g. the GUI's install flow,
+# which always passes all four directory flags and has never offered
+# replication setup), while a --replicate-backend= call with no
+# directory flags (the GUI's reconfigure-replication-only use case)
+# must still prompt interactively for anything directory-related.
 BMU_CLI_DIRRSYNC=""
 BMU_CLI_DIRBACKUPS=""
 BMU_CLI_DIRDBLOCATE=""
 BMU_CLI_INSTDIR=""
+BMU_CLI_REPLICATE_BACKEND=""
+BMU_CLI_REPLICATE_REMOTE_SYNC=""
+BMU_CLI_REPLICATE_REMOTE_BACKUPS=""
+BMU_CLI_REPLICATE_PROTON_REMOTE=""
 for l_bmu_arg in "$@"; do
     case "$l_bmu_arg" in
-        --sync-dir=*)     BMU_CLI_DIRRSYNC="${l_bmu_arg#--sync-dir=}" ;;
-        --backup-dir=*)   BMU_CLI_DIRBACKUPS="${l_bmu_arg#--backup-dir=}" ;;
-        --index-dir=*)    BMU_CLI_DIRDBLOCATE="${l_bmu_arg#--index-dir=}" ;;
-        --install-dir=*)  BMU_CLI_INSTDIR="${l_bmu_arg#--install-dir=}" ;;
+        --sync-dir=*)                 BMU_CLI_DIRRSYNC="${l_bmu_arg#--sync-dir=}" ;;
+        --backup-dir=*)               BMU_CLI_DIRBACKUPS="${l_bmu_arg#--backup-dir=}" ;;
+        --index-dir=*)                BMU_CLI_DIRDBLOCATE="${l_bmu_arg#--index-dir=}" ;;
+        --install-dir=*)              BMU_CLI_INSTDIR="${l_bmu_arg#--install-dir=}" ;;
+        --replicate-backend=*)        BMU_CLI_REPLICATE_BACKEND="${l_bmu_arg#--replicate-backend=}" ;;
+        --replicate-remote-sync=*)    BMU_CLI_REPLICATE_REMOTE_SYNC="${l_bmu_arg#--replicate-remote-sync=}" ;;
+        --replicate-remote-backups=*) BMU_CLI_REPLICATE_REMOTE_BACKUPS="${l_bmu_arg#--replicate-remote-backups=}" ;;
+        --replicate-proton-remote=*)  BMU_CLI_REPLICATE_PROTON_REMOTE="${l_bmu_arg#--replicate-proton-remote=}" ;;
         *)
             echo "ERROR: unrecognized argument: $l_bmu_arg" >&2
             exit 1
             ;;
     esac
 done
-# Any flag given at all switches the whole run non-interactive: the
-# optional replication prompt below is skipped too (rather than left
+# Any DIRECTORY flag given at all switches the whole run non-interactive:
+# the optional replication prompt below is skipped too (rather than left
 # to bmuPromptyN's EOF-safe decline), since a flag-driven caller has no
-# tty to ask on and no UI for that prompt yet either.
+# tty to ask on. This is unchanged from before --replicate-backend=
+# existed - see above for why replication has its own, separate gate.
 BMU_NONINTERACTIVE=""
 if [ -n "$BMU_CLI_DIRRSYNC" ] || [ -n "$BMU_CLI_DIRBACKUPS" ] || [ -n "$BMU_CLI_DIRDBLOCATE" ] \
    || [ -n "$BMU_CLI_INSTDIR" ]; then
     BMU_NONINTERACTIVE="yes"
+fi
+BMU_CLI_REPLICATE_FLAGGED=""
+if [ -n "$BMU_CLI_REPLICATE_BACKEND" ]; then
+    BMU_CLI_REPLICATE_FLAGGED="yes"
 fi
 #
 # SETUP
@@ -68,7 +92,7 @@ fi
 # from whenever the install was first set up (sourcing an existing
 # setup.sh above would otherwise silently win). Bump by hand alongside
 # every git tag.
-BMU_VERSION="2.13.0"
+BMU_VERSION="2.14.0"
 #
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
@@ -179,7 +203,44 @@ BMU_REPLICATE_PROTON_BIN=""
 BMU_REPLICATE_PROTON_REMOTE=""
 bmuDetectRclone
 bmuDetectProton
-if [ -n "${BMU_NONINTERACTIVE}" ]; then
+if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
+    case "${BMU_CLI_REPLICATE_BACKEND}" in
+        none)
+            echo "Off-site replication disabled (--replicate-backend=none)."
+            ;;
+        rclone)
+            if [ -z "${BMU_CMDRCLONE}" ]; then
+                echo "ERROR: --replicate-backend=rclone given but no rclone was detected on this machine." >&2
+                echo "  Install it (e.g. brew/apt install rclone) and re-run." >&2
+                exit 1
+            fi
+            if [ -z "${BMU_CLI_REPLICATE_REMOTE_SYNC}" ] || [ -z "${BMU_CLI_REPLICATE_REMOTE_BACKUPS}" ]; then
+                echo "ERROR: --replicate-backend=rclone requires both --replicate-remote-sync= and --replicate-remote-backups=." >&2
+                exit 1
+            fi
+            BMU_REPLICATE_BACKEND="rclone"
+            BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
+            BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
+            BMU_REPLICATE_REMOTE_BACKUPS="${BMU_CLI_REPLICATE_REMOTE_BACKUPS}"
+            echo "Off-site replication configured (rclone, non-interactive)."
+            ;;
+        proton)
+            if [ -z "${BMU_CMDPROTON}" ]; then
+                echo "ERROR: --replicate-backend=proton given but no proton-drive was detected on this machine." >&2
+                echo "  Install it (proton.me/download/drive/cli) and re-run." >&2
+                exit 1
+            fi
+            BMU_REPLICATE_BACKEND="proton"
+            BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
+            BMU_REPLICATE_PROTON_REMOTE="${BMU_CLI_REPLICATE_PROTON_REMOTE:-/bmug2/`hostname -s 2>/dev/null`}"
+            echo "Off-site replication configured (proton, HISTORY only, non-interactive)."
+            ;;
+        *)
+            echo "ERROR: --replicate-backend= must be rclone, proton, or none (got: ${BMU_CLI_REPLICATE_BACKEND})" >&2
+            exit 1
+            ;;
+    esac
+elif [ -n "${BMU_NONINTERACTIVE}" ]; then
     echo "Non-interactive run: skipping optional replication setup."
     echo "  Re-run backmeup.configure.sh interactively later to enable it."
 elif [ -z "${BMU_CMDRCLONE}" ] && [ -z "${BMU_CMDPROTON}" ]; then
