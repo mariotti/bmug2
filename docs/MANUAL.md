@@ -21,6 +21,7 @@ excluding files, cron, upgrading an old bmu disk), see
    - [backmeup.unarchive.sh](#backmeupunarchivesh)
    - [backmeup.retrieve.sh](#backmeupretrievesh)
    - [backmeup.replicate.sh](#backmeupreplicatesh)
+   - [backmeup.replicate.proton.sh](#backmeupreplicateprotonsh)
    - [backmeup.migrate.sh](#backmeupmigratesh)
    - [bmu](#bmu)
  - [Shell completion (optional)](#shell-completion-optional)
@@ -62,6 +63,10 @@ HISTORY/<project>.filelist            plain-text listing of the current mirror,
                                        refreshed on every successful run - lets
                                        search find just-backed-up files instantly,
                                        without waiting for a full reindex
+HISTORY/<project>/.bmureplicated.proton  optional - present only if the proton
+                                       replication backend is configured; one
+                                       already-uploaded snapshot name per line,
+                                       see backmeup.replicate.proton.sh
 ```
 
 `<date>` is `YYYYMMDD-HHMMSS`, so snapshot names sort chronologically as
@@ -123,9 +128,12 @@ regenerated on every `backmeup.configure.sh` run, so if you ever move
 line in your rc file) to point at the new location — this one-time
 recheck isn't automatic.
 
-If `rclone` is installed, configuration also offers (optional, y/N) to
-set up off-site replication — see
-[backmeup.replicate.sh](#backmeupreplicatesh).
+If `rclone` and/or `proton-drive` is installed, configuration also
+offers (optional, y/N) to set up off-site replication — see
+[backmeup.replicate.sh](#backmeupreplicatesh) and
+[backmeup.replicate.proton.sh](#backmeupreplicateprotonsh). If both
+tools are detected, you're asked which backend to use; the two are
+mutually exclusive per install.
 
 **Non-interactive**: every prompt above has a matching flag —
 `--sync-dir=`, `--backup-dir=`, `--index-dir=`, `--install-dir=` — for
@@ -360,6 +368,52 @@ destination.
 Refuses to run (exit 1) when:
  - replication hasn't been configured — re-run `backmeup.configure.sh`
    (only offered if `rclone` is installed)
+
+This is the `rclone` backend — the only one bmug2 had until
+`backmeup.replicate.proton.sh` below. The two are mutually exclusive per
+install (`backmeup.configure.sh` asks which one to set up, if both
+tools are detected) and are not meant to run side by side.
+
+### backmeup.replicate.proton.sh
+
+```
+backmeup.replicate.proton.sh [-n|--dry-run]
+```
+
+Uploads HISTORY **only** (not SYNC) to Proton Drive, natively, via the
+official `proton-drive` CLI — see
+[DESTINATIONS.md](DESTINATIONS.md#proton-drive-as-a-replication-target)
+for why Proton Drive's own client-side end-to-end encryption makes this
+a good off-site fit with no extra encryption step needed.
+
+Each `B-<date>` snapshot (whether still a live directory, or already
+compressed into a `.tar.gz` by `backmeup.archive.sh`) is uploaded at
+most once. A successful upload is recorded per project in
+`HISTORY/<project>/.bmureplicated.proton`, so re-running the command is
+a no-op for anything already replicated — only new snapshots since the
+last run get uploaded. A failed upload is never recorded, so it's
+retried automatically the next run.
+
+`-n`/`--dry-run` reports what would be uploaded without recording
+anything or contacting Proton Drive at all.
+
+Refuses to run (exit 1) when:
+ - replication hasn't been configured — re-run `backmeup.configure.sh`
+   (only offered if `proton-drive` is installed; see
+   <https://proton.me/download/drive/cli>)
+
+Requires a one-time, manual `proton-drive auth login` (opens a browser)
+before the first run — bmug2 has no part in that and never sees your
+Proton credentials. The resulting session is stored by `proton-drive`
+itself (in the macOS Keychain by default); **launchd, not cron, is the
+recommended scheduler for this command** — see
+[SCHEDULING.md](SCHEDULING.md#proton-drive-and-unattended-keychain-access)
+for why.
+
+Not yet supported: SYNC replication (HISTORY only, for now), Linux (not
+yet tested there), and MCP/GUI exposure (CLI only for now, same
+reasoning as `backmeup.updatedb.sh`'s own MCP exclusion — an upload of
+unknown, possibly long duration doesn't fit a blocking tool call).
 
 ### backmeup.migrate.sh
 

@@ -99,9 +99,10 @@ PATH gotcha that trips up most scheduled jobs:
  - Indexed search that still works with nothing but `grep`, even
    without `locate` installed or the backup disk offline.
  - Off-site replication as a separate, optional step (`backmeup.replicate.sh`
-   via `rclone`) — the local versioned mirror stays fast and local;
-   copying it off-site is a deliberate second hop, not the same
-   destination. See [docs/DESTINATIONS.md](docs/DESTINATIONS.md).
+   via `rclone`, or natively to Proton Drive) — the local versioned
+   mirror stays fast and local; copying it off-site is a deliberate
+   second hop, not the same destination. See
+   [docs/DESTINATIONS.md](docs/DESTINATIONS.md).
  - `.gitignore` respected automatically, per project — build artifacts
    and caches never make it into the mirror or history in the first
    place. An opt-in `.bmuignore` adds backup-specific excludes on top.

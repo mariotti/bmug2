@@ -393,6 +393,36 @@ active for that user; it does not run at the login window or make any
 promises under FileVault's pre-boot lock screen (Tier 3 — behavior
 here has also shifted across macOS versions).
 
+### Proton Drive and unattended Keychain access
+
+[`backmeup.replicate.proton.sh`](MANUAL.md#backmeupreplicateprotonsh)
+depends on a `proton-drive auth login` session that lives outside
+bmug2's control entirely — by default, in the macOS login Keychain
+(`PROTON_DRIVE_CREDENTIALS_STORE=keychain`, the CLI's own default).
+
+**This is a genuine open question, not a settled fact (Tier 3):** a
+user LaunchAgent (as described above) runs inside your normal login
+session, which is generally how Keychain access for a given user is
+expected to work — but this has not been independently verified against
+a real scheduled run of `proton-drive` specifically. **cron's Keychain
+access is a bigger unknown still**, and cron jobs are well known for
+running in a stripped-down, non-graphical session that can lack access
+to a user's unlocked login Keychain at all. Until tested for real:
+
+- **Use launchd for this command, not cron** — it's the safer default
+  given the above, consistent with every other launchd-vs-cron
+  recommendation in this doc.
+- **Test it for real before relying on it**: schedule a LaunchAgent that
+  runs `backmeup.replicate.proton.sh`, let it fire on its own (not
+  triggered interactively from a terminal you're already logged into),
+  and confirm it actually uploads rather than failing on an auth error.
+- If it doesn't work unattended, `proton-drive`'s own
+  `PROTON_DRIVE_CREDENTIALS_STORE=pass` (a GPG-encrypted password-store
+  entry) is the documented fallback to try next.
+  `PROTON_DRIVE_CREDENTIALS_STORE=unsafe_file` also exists, but it's
+  explicitly testing-only (a plaintext credentials file) — not
+  something to use for a real unattended backup.
+
 ## One-off runs: at
 
 `at` is for a single future run, not a recurring schedule — "back this

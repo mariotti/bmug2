@@ -328,6 +328,28 @@ Notes:
    number after the project name) — see
    [Housekeeping](#housekeeping-status-and-archiving-old-snapshots).
 
+If off-site replication is configured with the
+[Proton Drive backend](DESTINATIONS.md#proton-drive-as-a-replication-target),
+schedule it with **launchd, not cron** — see
+[SCHEDULING.md](SCHEDULING.md#proton-drive-and-unattended-keychain-access)
+for why. A LaunchAgent running it right after the nightly backup above:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+    <string>/Users/alex/usr/bmu/bin/backmeup.replicate.proton.sh</string>
+</array>
+<key>StartCalendarInterval</key>
+<dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>30</integer>
+</dict>
+```
+
+(one-time prerequisite: `proton-drive auth login`, run manually once
+from a real terminal session — see
+[backmeup.replicate.proton.sh](MANUAL.md#backmeupreplicateprotonsh))
+
 For staggering jobs, PATH inside a scheduled job (a common source of
 silent failures — indexing and replication in particular), systemd
 timer units, launchd LaunchAgents, `at`, and macOS's Full Disk Access

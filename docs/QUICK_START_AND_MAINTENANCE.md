@@ -67,9 +67,10 @@ them urgent, none of them frequent:
   worth watching if disk use looks higher than expected.
 - **Off-site replication**, if you set it up during install (or later
   via `backmeup.configure.sh`). `backmeup.replicate.sh` pushes SYNC and
-  HISTORY to wherever you configured (S3, Drive, a remote host, …) —
-  run it on the same cadence as your backups, right after them, so it's
-  always pushing a finished, consistent tree. See
+  HISTORY to wherever you configured (S3, Drive, a remote host, …), or
+  `backmeup.replicate.proton.sh` pushes HISTORY natively to Proton
+  Drive — run it on the same cadence as your backups, right after them,
+  so it's always pushing a finished, consistent tree. See
   [DESTINATIONS.md](DESTINATIONS.md) for why this is a separate step
   from the local backup itself, not the same destination.
 

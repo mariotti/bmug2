@@ -158,38 +158,79 @@ fi;
 # OFF-SITE REPLICATION (optional)
 # --------------------------------
 # A separate hop on top of the local SYNC/HISTORY versioning above: copy
-# the whole tree to wherever the actual backup disk is (external drive,
-# NAS, cloud) - see docs/DESTINATIONS.md. Opt-in, skipped entirely if
-# rclone isn't installed; re-run backmeup.configure.sh later to enable
-# it once rclone is available.
+# it to wherever the actual backup disk is (external drive, NAS, cloud)
+# - see docs/DESTINATIONS.md. Opt-in, skipped entirely if neither backend
+# tool is installed; re-run backmeup.configure.sh later to enable it once
+# one is available. Two backends, mutually exclusive per install:
+#   rclone   - mirrors SYNC and HISTORY to any rclone remote
+#   proton   - uploads HISTORY only, natively, to Proton Drive (no SYNC
+#              leg - see backmeup.replicate.proton.sh)
 echo ""
 echo "Optional: bmug2 can automate copying SYNC/HISTORY to an off-site"
-echo "destination (S3, Google Drive, a remote host, etc.) via rclone,"
+echo "destination (S3, Google Drive, a remote host, Proton Drive, etc.),"
 echo "on top of the local versioning above - see docs/DESTINATIONS.md"
 echo "for the full picture."
 echo ""
+BMU_REPLICATE_BACKEND=""
 BMU_CMDREPLICATE=""
 BMU_REPLICATE_REMOTE_SYNC=""
 BMU_REPLICATE_REMOTE_BACKUPS=""
+BMU_REPLICATE_PROTON_BIN=""
+BMU_REPLICATE_PROTON_REMOTE=""
 bmuDetectRclone
+bmuDetectProton
 if [ -n "${BMU_NONINTERACTIVE}" ]; then
     echo "Non-interactive run: skipping optional replication setup."
     echo "  Re-run backmeup.configure.sh interactively later to enable it."
-elif [ -z "${BMU_CMDRCLONE}" ]; then
-    echo "No rclone detected - skipping replication setup."
-    echo "  Install it later (e.g. brew/apt install rclone) and re-run"
+elif [ -z "${BMU_CMDRCLONE}" ] && [ -z "${BMU_CMDPROTON}" ]; then
+    echo "No rclone or proton-drive detected - skipping replication setup."
+    echo "  Install one later (e.g. brew/apt install rclone, or download"
+    echo "  proton-drive from proton.me/download/drive/cli) and re-run"
     echo "  backmeup.configure.sh to enable this."
 elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
-    BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
-    while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
-    do
-        echo "Empty input: replication needs a destination."
-    done
-    while bmuPromptValue "Please type the remote BackUp destination (e.g. remote:bucket/path-BP):" "BMU_REPLICATE_REMOTE_BACKUPS" "n"
-    do
-        echo "Empty input: replication needs a destination."
-    done
-    echo "Off-site replication configured. Run backmeup.replicate.sh to sync."
+    l_bmu_backend_choice="1"
+    if [ -n "${BMU_CMDRCLONE}" ] && [ -n "${BMU_CMDPROTON}" ]; then
+        echo "Two replication backends are available:"
+        echo "  1) rclone  - mirrors SYNC and HISTORY to any rclone remote"
+        echo "  2) proton  - uploads HISTORY only, natively, to Proton Drive"
+        echo "               (SYNC is not replicated by this backend yet)"
+        while bmuPromptValue "Which backend (1=rclone, 2=proton)?" "l_bmu_backend_choice" "n"
+        do
+            echo "Please answer 1 or 2."
+        done
+    elif [ -z "${BMU_CMDRCLONE}" ]; then
+        l_bmu_backend_choice="2"
+        echo "Only proton-drive detected - using it (HISTORY only)."
+    else
+        echo "Only rclone detected - using it."
+    fi;
+    case "${l_bmu_backend_choice}" in
+        2)
+            BMU_REPLICATE_BACKEND="proton"
+            BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
+            BMU_REPLICATE_PROTON_REMOTE="/bmug2/`hostname -s 2>/dev/null`"
+            while bmuPromptValue "Proton Drive remote path for HISTORY: (${BMU_REPLICATE_PROTON_REMOTE})" "BMU_REPLICATE_PROTON_REMOTE" "n"
+            do
+                echo "Empty input: replication needs a destination path."
+            done
+            echo "Off-site (Proton Drive, HISTORY only) replication configured."
+            echo "Run backmeup.replicate.proton.sh to upload new snapshots."
+            echo "NOTE: SYNC is NOT replicated by this backend - see docs/DESTINATIONS.md."
+            ;;
+        *)
+            BMU_REPLICATE_BACKEND="rclone"
+            BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
+            while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
+            do
+                echo "Empty input: replication needs a destination."
+            done
+            while bmuPromptValue "Please type the remote BackUp destination (e.g. remote:bucket/path-BP):" "BMU_REPLICATE_REMOTE_BACKUPS" "n"
+            do
+                echo "Empty input: replication needs a destination."
+            done
+            echo "Off-site replication configured. Run backmeup.replicate.sh to sync."
+            ;;
+    esac
 else
     echo "Skipped. Re-run backmeup.configure.sh later to enable it."
 fi
@@ -216,7 +257,10 @@ for curvar in \
  BMU_CMDLOCATE \
  BMU_CMDREPLICATE \
  BMU_REPLICATE_REMOTE_SYNC \
- BMU_REPLICATE_REMOTE_BACKUPS;
+ BMU_REPLICATE_REMOTE_BACKUPS \
+ BMU_REPLICATE_BACKEND \
+ BMU_REPLICATE_PROTON_BIN \
+ BMU_REPLICATE_PROTON_REMOTE;
 do
     val=""
     bmuSetIndirectVar "val" "$curvar"
