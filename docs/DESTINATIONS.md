@@ -46,12 +46,13 @@ Practical notes:
    errors, non-zero exit — see the exit-code fix in the CI history) —
    it doesn't silently write somewhere else.
 
-## Tier 2: cloud-sync desktop folders (Dropbox, Google Drive, iCloud Drive)
+## Tier 2: cloud-sync desktop folders (Dropbox, Google Drive, iCloud Drive, Proton Drive)
 
 Once the desktop client is installed, Dropbox/Google Drive/iCloud
-Drive all present as an ordinary local folder (`~/Dropbox`, macOS's
-`~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive`, or
-`~/Library/Mobile Documents/com~apple~CloudDocs`). No FUSE, no special
+Drive/Proton Drive all present as an ordinary local folder (`~/Dropbox`,
+macOS's `~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive`,
+`~/Library/Mobile Documents/com~apple~CloudDocs`, or
+`~/Library/CloudStorage/ProtonDrive-you@proton.me`). No FUSE, no special
 mount — bmug2 can't tell it apart from any other directory, and in
 principle just works.
 
@@ -192,6 +193,29 @@ object storage bills and performs by request/object count, and
 per old snapshot — fewer, larger objects for the replication step to
 push, and cheaper to keep out there long-term.
 
+### Proton Drive as a replication target
+
+Proton Drive is end-to-end encrypted client-side, which is a genuine fit
+for an off-site backup copy — no extra encryption layer needed on top.
+Two ways to get there:
+
+- **The unofficial rclone `protondrive` backend.** Since
+  `backmeup.replicate.sh` already drives any rclone remote, this needs
+  no new code — just `rclone config` a `protondrive`-type remote and use
+  it exactly like the S3 recipe above. Worth knowing before relying on
+  it: this backend is unofficial and reverse-engineered (not built or
+  maintained by Proton), and has a history of breaking on 2FA changes
+  and API updates. Treat it as a fallback, not the default choice.
+- **[`backmeup.replicate.proton.sh`](MANUAL.md#backmeupreplicateprotonsh)**,
+  the native backend, built on Proton's own official `proton-drive` CLI
+  (offered during `backmeup.configure.sh` if `proton-drive` is
+  installed — see <https://proton.me/download/drive/cli>). This is the
+  preferred path, but it's narrower in scope than the rclone backend
+  today: it replicates **HISTORY only**, not SYNC, and one-time
+  `proton-drive auth login` is a manual prerequisite outside bmug2's
+  control. See that command's manual entry for the full picture,
+  including why launchd (not cron) is the recommended scheduler for it.
+
 ## Backing up more than one machine
 
 A laptop and a desktop belonging to the same person aren't a "shared
@@ -225,7 +249,10 @@ destination convention on top of what already exists:
    set by `backmeup.configure.sh`) at its own prefix under the shared
    remote — `remote:bucket/laptop/` vs. `remote:bucket/desktop/` —
    never the same remote path from two machines' independent replicate
-   runs.
+   runs. The same rule applies to
+   [`backmeup.replicate.proton.sh`](MANUAL.md#backmeupreplicateprotonsh)'s
+   `BMU_REPLICATE_PROTON_REMOTE` — it already defaults to
+   `/bmug2/<hostname>` at configure time for exactly this reason.
 
 The tradeoff is real and worth naming: there's no single "all my
 machines" view anywhere. Recovering something means knowing which

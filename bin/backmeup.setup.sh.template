@@ -107,12 +107,22 @@ done
 #
 # Off-site replication (optional)
 # --------------------------------
+# BMU_REPLICATE_BACKEND: "rclone", "proton", or empty (not configured).
+# rclone backend - mirrors SYNC and HISTORY:
 # BMU_CMDREPLICATE: the sync tool + base flags, e.g. "rclone sync".
-#                    Empty means replication is not configured;
+#                    Empty means this backend is not configured;
 #                    backmeup.replicate.sh refuses to run.
 # BMU_REPLICATE_REMOTE_SYNC/_BACKUPS: destination for each tree, e.g.
 #                    "remote:bucket/path". Set by backmeup.configure.sh.
+# proton backend - uploads HISTORY only, natively, via proton-drive:
+# BMU_REPLICATE_PROTON_BIN: absolute path to the proton-drive binary.
+#                    Empty means this backend is not configured;
+#                    backmeup.replicate.proton.sh refuses to run.
+# BMU_REPLICATE_PROTON_REMOTE: remote path prefix, e.g. "/bmug2/host".
+BMU_REPLICATE_BACKEND=""
 BMU_CMDREPLICATE=""
 BMU_REPLICATE_REMOTE_SYNC=""
 BMU_REPLICATE_REMOTE_BACKUPS=""
+BMU_REPLICATE_PROTON_BIN=""
+BMU_REPLICATE_PROTON_REMOTE=""
 

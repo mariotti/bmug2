@@ -12,6 +12,17 @@ bmuJsonEscape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 #
+# bmuProtonJsonField()
+# Minimal flat-integer-field extractor for proton-drive's own "-j"
+# upload/download summaries, e.g.
+# {"transferredItems":1,"skippedItems":0,"failedItems":0,"failures":[]}
+# - NOT a general JSON parser, only sufficient for this one confirmed
+# flat shape (verified against the real CLI, v0.8.0). $1=json text,
+# $2=field name. Used by backmeup.replicate.proton.sh.
+bmuProtonJsonField() {
+    printf '%s' "$1" | sed -n 's/.*"'"$2"'":\([0-9]*\).*/\1/p'
+}
+#
 # bmuDetectRsync()
 # Sets BMU_CMDRSYNC to the first usable rsync found on PATH or in the
 # common Homebrew/system locations, always resolved to its absolute
@@ -103,6 +114,24 @@ bmuDetectRclone() {
     for l_bmu_dir in '' /opt/homebrew/bin/ /usr/local/bin/ /usr/bin/; do
         l_bmu_resolved="$(command -v "${l_bmu_dir}rclone" 2>/dev/null)" || continue
         BMU_CMDRCLONE="${l_bmu_resolved}"
+        break
+    done
+}
+#
+# bmuDetectProton()
+# Sets BMU_CMDPROTON to the first usable proton-drive found on PATH or
+# in the common Homebrew/system locations, resolved to its absolute
+# path via "command -v" - same reasoning as bmuDetectRclone: baked in
+# verbatim at configure time and never re-detected, so a bare
+# "proton-drive" would silently stop resolving the moment
+# backmeup.replicate.proton.sh runs from cron/launchd's minimal PATH
+# instead. Stays empty if proton-drive isn't found anywhere. Used by
+# backmeup.configure.sh only.
+bmuDetectProton() {
+    BMU_CMDPROTON=''
+    for l_bmu_dir in '' /opt/homebrew/bin/ /usr/local/bin/ /usr/bin/; do
+        l_bmu_resolved="$(command -v "${l_bmu_dir}proton-drive" 2>/dev/null)" || continue
+        BMU_CMDPROTON="${l_bmu_resolved}"
         break
     done
 }

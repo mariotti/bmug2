@@ -624,7 +624,15 @@ testConfigureOffersReplicationSetupAndPersistsIt() {
     mkdir -p "${l_home}/usr" "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    printf '\ny\n\ny\n\ny\n\ny\ny\nremote:bucket/sync\nremote:bucket/sync-BP\n' | \
+    # If proton-drive is ALSO on this machine's PATH, configure.sh asks
+    # one extra "which backend?" question before the two destination
+    # prompts - answer "1" (rclone) so this test stays deterministic
+    # whether or not proton-drive happens to be installed here too.
+    l_bmu_backend_answer=""
+    if command -v proton-drive > /dev/null 2>&1; then
+        l_bmu_backend_answer="1\n"
+    fi
+    printf "\ny\n\ny\n\ny\n\ny\ny\n${l_bmu_backend_answer}remote:bucket/sync\nremote:bucket/sync-BP\n" | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/replicatesetup-install.log" 2>&1
     assertEquals "install failed, see replicatesetup-install.log" 0 $?
@@ -637,6 +645,44 @@ testConfigureOffersReplicationSetupAndPersistsIt() {
     assertTrue "remote SYNC destination was not persisted" $?
     grep -q 'BMU_REPLICATE_REMOTE_BACKUPS="remote:bucket/sync-BP"' "${l_setup}"
     assertTrue "remote BackUp destination was not persisted" $?
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertTrue "backend was not recorded as rclone" $?
+    grep -q 'BMU_REPLICATE_PROTON_BIN=""' "${l_setup}"
+    assertTrue "choosing rclone leaked a proton backend value" $?
+}
+
+testConfigureOffersProtonBackendAndPersistsIt() {
+    # A fake proton-drive is prepended to PATH (not relying on the real
+    # CLI being installed) so this test is deterministic in CI and on
+    # any dev machine alike, regardless of whether rclone also happens
+    # to be on the real PATH here - if it is, configure.sh asks one
+    # extra "which backend?" question first, answered "2" (proton).
+    l_home="${SHUNIT_TMPDIR}/protonsetuphome"
+    l_checkout="${SHUNIT_TMPDIR}/protonsetupcheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/protonsetup-fakepath"
+    mkdir -p "${l_home}/usr" "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    l_bmu_backend_answer=""
+    if command -v rclone > /dev/null 2>&1; then
+        l_bmu_backend_answer="2\n"
+    fi
+    printf "\ny\n\ny\n\ny\n\ny\ny\n${l_bmu_backend_answer}\n" | \
+        HOME="${l_home}" PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/protonsetup-install.log" 2>&1
+    assertEquals "install failed, see protonsetup-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "backend was not recorded as proton" $?
+    grep -q "BMU_REPLICATE_PROTON_BIN=\"${l_fakepath}/proton-drive\"" "${l_setup}"
+    assertTrue "proton-drive was not persisted as an absolute path" $?
+    grep -q "BMU_REPLICATE_PROTON_REMOTE=\"/bmug2/`hostname -s 2>/dev/null`\"" "${l_setup}"
+    assertTrue "default remote path was not persisted" $?
+    grep -q 'BMU_CMDREPLICATE=""' "${l_setup}"
+    assertTrue "choosing proton leaked an rclone backend value" $?
 }
 
 testConfigureSkipsReplicationSetupWhenDeclined() {
@@ -1545,6 +1591,142 @@ testReplicateDryRunChangesNothing() {
     assertTrue "dry-run did not announce itself" $?
     l_count=`find "${l_remotesync}" "${l_remotebp}" -type f | wc -l | tr -d ' '`
     assertEquals "dry-run copied real files to the stand-in remote" 0 "${l_count}"
+}
+
+#
+# replicate (proton backend): HISTORY-only replication to Proton Drive
+# via the real proton-drive CLI's command shape - exercised here
+# against tests/fake-proton-drive.sh, a minimal shim (CI has no real
+# Proton account to authenticate against). See that file for exactly
+# which invocations it understands.
+# --------------------------------------------------------------------
+
+bmuTestProtonSetup() {
+    # $1 = sandbox dir name under SHUNIT_TMPDIR - builds a fresh,
+    # fully isolated bin/ + BMU_DIRBACKUPS (never the shared ${SB}
+    # tree, so other tests' archive/retrieve/gitignore activity can
+    # never leak into these snapshot-count assertions).
+    l_bpts_dir="${SHUNIT_TMPDIR}/$1"
+    rm -rf "${l_bpts_dir}"
+    mkdir -p "${l_bpts_dir}/bin" "${l_bpts_dir}/sync-BP" "${l_bpts_dir}/sync/.locate.dir"
+    cp -R "${BMU_BIN_SRC}/." "${l_bpts_dir}/bin"
+    sed -e "s|\${HOME}/Backups/rsyncBackup-BP|${l_bpts_dir}/sync-BP|" \
+        -e "s|\${HOME}/Backups/rsyncBackup|${l_bpts_dir}/sync|" \
+        "${l_bpts_dir}/bin/backmeup.setup.sh.template" > "${l_bpts_dir}/bin/backmeup.setup.sh"
+    {
+        echo "BMU_REPLICATE_PROTON_BIN=\"${TESTS_PATH}/fake-proton-drive.sh\""
+        echo "BMU_REPLICATE_PROTON_REMOTE=\"/bmug2/testhost\""
+    } >> "${l_bpts_dir}/bin/backmeup.setup.sh"
+}
+
+testReplicateProtonFailsCleanlyWhenNotConfigured() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-proton-noconfig"
+    rm -rf "${l_dir}"
+    cp -R "${SB}/bin" "${l_dir}"
+    "${l_dir}/backmeup.replicate.proton.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "must fail without replication configured" 1 $?
+    grep -q "ERROR" "${l_dir}/run.log"
+    assertTrue "no ERROR message shown to the user" $?
+}
+
+testReplicateProtonUploadsLiveAndArchivedThenIsIdempotent() {
+    bmuTestProtonSetup "bmu-proton-first"
+    l_bp="${l_bpts_dir}/sync-BP/myproj"
+    mkdir -p "${l_bp}/B-20260101-000000/sub"
+    echo "live content" > "${l_bp}/B-20260101-000000/file.txt"
+    echo "sub content" > "${l_bp}/B-20260101-000000/sub/nested.txt"
+    find "${l_bp}/B-20260101-000000" > "${l_bp}/B-20260101-000000.filelist"
+    l_archstage="${SHUNIT_TMPDIR}/bmu-proton-first-archstage"
+    mkdir -p "${l_archstage}/B-20251201-000000"
+    echo "archived content" > "${l_archstage}/B-20251201-000000/old.txt"
+    ( cd "${l_archstage}" && tar -czf "${l_bp}/B-20251201-000000.tar.gz" "B-20251201-000000" )
+    find "${l_archstage}/B-20251201-000000" > "${l_bp}/B-20251201-000000.filelist"
+
+    BMU_FAKE_PROTON_LOG="${SHUNIT_TMPDIR}/bmu-proton-first-fake.log"
+    BMU_FAKE_PROTON_STATE_DIR="${SHUNIT_TMPDIR}/bmu-proton-first-fake-state"
+    rm -rf "${BMU_FAKE_PROTON_LOG}" "${BMU_FAKE_PROTON_STATE_DIR}"
+    : > "${BMU_FAKE_PROTON_LOG}"
+    export BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
+
+    "${l_bpts_dir}/bin/backmeup.replicate.proton.sh" > "${l_bpts_dir}/run1.log" 2>&1
+    assertEquals "first replicate run failed, see run1.log" 0 $?
+    grep -q "replicated myproj/B-20260101-000000" "${l_bpts_dir}/run1.log"
+    assertTrue "live snapshot not reported as replicated" $?
+    grep -q "replicated myproj/B-20251201-000000" "${l_bpts_dir}/run1.log"
+    assertTrue "archived snapshot not reported as replicated" $?
+    grep -q "^B-20260101-000000$" "${l_bp}/.bmureplicated.proton"
+    assertTrue "live snapshot not recorded in state file" $?
+    grep -q "^B-20251201-000000$" "${l_bp}/.bmureplicated.proton"
+    assertTrue "archived snapshot not recorded in state file" $?
+
+    l_uploadsbefore=`grep -c "filesystem upload" "${BMU_FAKE_PROTON_LOG}"`
+    assertEquals "expected exactly 2 uploads on first run" 2 "${l_uploadsbefore}"
+
+    "${l_bpts_dir}/bin/backmeup.replicate.proton.sh" > "${l_bpts_dir}/run2.log" 2>&1
+    assertEquals "idempotent re-run failed, see run2.log" 0 $?
+    grep -q "0 snapshot(s) replicated, 2 already done" "${l_bpts_dir}/run2.log"
+    assertTrue "re-run did not report everything already done" $?
+    l_uploadsafter=`grep -c "filesystem upload" "${BMU_FAKE_PROTON_LOG}"`
+    assertEquals "re-run must not call upload again (state file should short-circuit it)" \
+        "${l_uploadsbefore}" "${l_uploadsafter}"
+
+    unset BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
+}
+
+testReplicateProtonFailedUploadNotMarkedThenSucceedsOnRetry() {
+    bmuTestProtonSetup "bmu-proton-fail"
+    l_bp="${l_bpts_dir}/sync-BP/myproj"
+    mkdir -p "${l_bp}/B-20260301-000000"
+    echo "will fail then succeed" > "${l_bp}/B-20260301-000000/f.txt"
+    find "${l_bp}/B-20260301-000000" > "${l_bp}/B-20260301-000000.filelist"
+
+    BMU_FAKE_PROTON_LOG="${SHUNIT_TMPDIR}/bmu-proton-fail-fake.log"
+    BMU_FAKE_PROTON_STATE_DIR="${SHUNIT_TMPDIR}/bmu-proton-fail-fake-state"
+    rm -rf "${BMU_FAKE_PROTON_LOG}" "${BMU_FAKE_PROTON_STATE_DIR}"
+    : > "${BMU_FAKE_PROTON_LOG}"
+    export BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
+
+    BMU_FAKE_PROTON_FAIL_MATCH="20260301" "${l_bpts_dir}/bin/backmeup.replicate.proton.sh" \
+        > "${l_bpts_dir}/runfail.log" 2>&1
+    assertEquals "a run with a real upload failure must exit 1" 1 $?
+    grep -q "ERROR.*not marked replicated" "${l_bpts_dir}/runfail.log"
+    assertTrue "no ERROR reported for the failed snapshot" $?
+    [ -f "${l_bp}/.bmureplicated.proton" ] && grep -qxF "B-20260301-000000" "${l_bp}/.bmureplicated.proton"
+    assertFalse "failed upload was incorrectly marked replicated" $?
+
+    "${l_bpts_dir}/bin/backmeup.replicate.proton.sh" > "${l_bpts_dir}/runretry.log" 2>&1
+    assertEquals "retry without the injected failure should succeed" 0 $?
+    grep -q "replicated myproj/B-20260301-000000" "${l_bpts_dir}/runretry.log"
+    assertTrue "snapshot not replicated on retry" $?
+    grep -qxF "B-20260301-000000" "${l_bp}/.bmureplicated.proton"
+    assertTrue "snapshot not recorded in state file after successful retry" $?
+
+    unset BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
+}
+
+testReplicateProtonDryRunChangesNothing() {
+    bmuTestProtonSetup "bmu-proton-dry"
+    l_bp="${l_bpts_dir}/sync-BP/myproj"
+    mkdir -p "${l_bp}/B-20260101-000000"
+    echo "content" > "${l_bp}/B-20260101-000000/file.txt"
+    find "${l_bp}/B-20260101-000000" > "${l_bp}/B-20260101-000000.filelist"
+
+    BMU_FAKE_PROTON_LOG="${SHUNIT_TMPDIR}/bmu-proton-dry-fake.log"
+    BMU_FAKE_PROTON_STATE_DIR="${SHUNIT_TMPDIR}/bmu-proton-dry-fake-state"
+    rm -rf "${BMU_FAKE_PROTON_LOG}" "${BMU_FAKE_PROTON_STATE_DIR}"
+    : > "${BMU_FAKE_PROTON_LOG}"
+    export BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
+
+    "${l_bpts_dir}/bin/backmeup.replicate.proton.sh" --dry-run > "${l_bpts_dir}/rundry.log" 2>&1
+    assertEquals "dry-run failed, see rundry.log" 0 $?
+    grep -q "DRY RUN" "${l_bpts_dir}/rundry.log"
+    assertTrue "dry-run did not announce itself" $?
+    [ -f "${l_bp}/.bmureplicated.proton" ]
+    assertFalse "dry-run created the state file" $?
+    l_calls=`wc -l < "${BMU_FAKE_PROTON_LOG}" | tr -d ' '`
+    assertEquals "dry-run must never call the proton-drive CLI at all" 0 "${l_calls}"
+
+    unset BMU_FAKE_PROTON_LOG BMU_FAKE_PROTON_STATE_DIR
 }
 
 #
