@@ -841,11 +841,24 @@ testConfigureNonInteractiveProtonReplicationDefaultsRemote() {
 }
 
 testConfigureNonInteractiveReplicateBackendInvalidValueErrors() {
+    # Directory flags included so this is fully non-interactive
+    # regardless of what's on the host filesystem - without them, a
+    # bare `< /dev/null` run falls through to the (now-skipped-looking)
+    # directory prompts, and EOF there only "succeeds" by accident on a
+    # machine that happens to already have a real install at the
+    # suggested default path (confirmed: this genuinely passed on a dev
+    # machine with prior real usage, then failed in CI for an unrelated
+    # "directory does not exist" reason before ever reaching this
+    # check) - a real bug in this test, not in configure.sh itself.
+    l_home="${SHUNIT_TMPDIR}/badbackendhome"
     l_checkout="${SHUNIT_TMPDIR}/badbackendcheckout"
     mkdir -p "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    "${l_checkout}/backmeup.configure.sh" --replicate-backend=bogus \
+    "${l_checkout}/backmeup.configure.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=bogus \
         < /dev/null > "${SHUNIT_TMPDIR}/badbackend.log" 2>&1
     assertEquals "must reject an unrecognized --replicate-backend= value" 1 $?
     grep -q "must be rclone, proton, or none" "${SHUNIT_TMPDIR}/badbackend.log"
@@ -856,11 +869,16 @@ testConfigureNonInteractiveReplicateRcloneMissingCompanionFlagErrors() {
     if ! command -v rclone > /dev/null 2>&1; then
         startSkipping
     fi
+    # Same fully-non-interactive reasoning as the test above.
+    l_home="${SHUNIT_TMPDIR}/missingcompanionhome"
     l_checkout="${SHUNIT_TMPDIR}/missingcompanioncheckout"
     mkdir -p "${l_checkout}"
     cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
 
-    "${l_checkout}/backmeup.configure.sh" --replicate-backend=rclone \
+    "${l_checkout}/backmeup.configure.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=rclone \
         --replicate-remote-sync=remote:a \
         < /dev/null > "${SHUNIT_TMPDIR}/missingcompanion.log" 2>&1
     assertEquals "must reject rclone backend missing --replicate-remote-backups=" 1 $?
