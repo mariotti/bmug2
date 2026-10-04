@@ -994,7 +994,7 @@ export function buildReplicationEditor(
   });
   cancelBtn.addEventListener("click", onCancel);
 
-  return el("span", { class: "schedule-edit" }, [
+  return el("span", { class: "schedule-edit schedule-edit--replication" }, [
     backendSelect,
     gdriveSync.row,
     gdriveSync.panel,
@@ -1002,8 +1002,7 @@ export function buildReplicationEditor(
     gdriveBackups.panel,
     protonRemoteRow,
     browserPanel,
-    saveBtn,
-    cancelBtn,
+    el("div", { class: "field-row" }, [saveBtn, cancelBtn]),
   ]);
 }
 
