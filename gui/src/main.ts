@@ -19,6 +19,15 @@ interface InstallOutcome {
   log: string;
 }
 
+// Mirrors install.rs's UpdateCheck exactly - a plain struct (not a
+// tagged enum like ReplicationStatus/Request), so the tuple fields
+// serialize as plain 3-element arrays.
+interface UpdateCheck {
+  current: [number, number, number];
+  latest: [number, number, number];
+  update_available: boolean;
+}
+
 export interface StatusProject {
   name: string;
   last_run: string | null;
@@ -392,6 +401,26 @@ export function buildUntrackedProjectsNotice(
   ]);
 }
 
+function formatVersion([major, minor, patch]: [number, number, number]): string {
+  return `${major}.${minor}.${patch}`;
+}
+
+// Same box/button idiom as buildUntrackedProjectsNotice (computed-from-
+// state, shown unconditionally when relevant, inline action button) -
+// not buildRunBanner's shape, since this must appear on a normal page
+// load with no preceding action.
+function buildUpdateAvailableNotice(check: UpdateCheck, binDir: string): HTMLElement | null {
+  if (!check.update_available) return null;
+  const goBtn = el("button", { type: "button" }, ["Go to Settings"]);
+  goBtn.addEventListener("click", () => void renderSettings(binDir));
+  return el("div", { class: "untracked-notice update-notice" }, [
+    el("p", {}, [
+      `bmug2 ${formatVersion(check.latest)} is available (you have ${formatVersion(check.current)}). `,
+      goBtn,
+    ]),
+  ]);
+}
+
 async function linkExistingProject(binDir: string, project: StatusProject) {
   const selected = await open({ directory: true });
   if (typeof selected !== "string") return;
@@ -730,7 +759,17 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
     return;
   }
   const children: (Node | string)[] = [el("h1", {}, ["bmug2"])];
+  const settingsBtn = el("button", { type: "button" }, ["Settings"]);
+  settingsBtn.addEventListener("click", () => void renderSettings(binDir));
+  children.push(el("div", { class: "dashboard-top-bar" }, [settingsBtn]));
+
   if (banner) children.push(buildRunBanner(banner));
+  // Reads the session cache populated once in init() - never a fresh
+  // invoke here, see cachedUpdateCheck's own comment for why.
+  if (cachedUpdateCheck) {
+    const notice = buildUpdateAvailableNotice(cachedUpdateCheck, binDir);
+    if (notice) children.push(notice);
+  }
   children.push(
     buildSourcesSection(sources, status, ignoreSettings, binDir),
     buildHousekeepingSection(housekeeping, binDir),
@@ -1011,6 +1050,86 @@ function renderInstalling(message: string) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [message]));
 }
 
+// The first "navigate to a second screen and back" affordance in this
+// app - every other top-level render fully replaces #app's children
+// the same way (renderDashboard/renderSetup's own shape), so this does
+// too rather than introducing a modal/overlay idiom this app has none
+// of. Always does its own FRESH check_for_update call (never reads
+// cachedUpdateCheck) since opening Settings is itself a deliberate
+// "tell me the current state" action - and updates that same shared
+// cache so a return to the dashboard reflects it too.
+async function renderSettings(binDir: string) {
+  app.replaceChildren(el("h1", {}, ["Settings"]), el("p", {}, ["Checking for updates…"]));
+
+  let check: UpdateCheck | null = null;
+  let checkError: string | null = null;
+  try {
+    check = await invoke<UpdateCheck>("check_for_update", { binDir });
+    cachedUpdateCheck = check;
+  } catch (err) {
+    checkError = String(err);
+  }
+
+  const backBtn = el("button", { type: "button" }, ["← Back to dashboard"]);
+  backBtn.addEventListener("click", () => void renderDashboard(binDir));
+
+  const versionBox = el("div", { class: "settings-version" }, []);
+  if (check) {
+    versionBox.append(
+      el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(check.current)]),
+      el("p", {}, [el("strong", {}, ["Latest available: "]), formatVersion(check.latest)]),
+    );
+    if (check.update_available) {
+      const updateBtn = el("button", { type: "button" }, ["Update now…"]);
+      updateBtn.addEventListener("click", () => showUpdateConfirm(binDir, check!));
+      versionBox.append(el("p", {}, [updateBtn]));
+    } else {
+      versionBox.append(el("p", { class: "settings-uptodate" }, ["You're up to date."]));
+    }
+  } else {
+    versionBox.append(
+      el("p", { class: "settings-check-error" }, [`Couldn't check for updates: ${checkError}`]),
+    );
+  }
+
+  app.replaceChildren(el("h1", {}, ["Settings"]), backBtn, versionBox);
+}
+
+// Explicit, separate confirmation step before any apply_update call -
+// clicking "Update now" never installs by itself.
+function showUpdateConfirm(binDir: string, check: UpdateCheck) {
+  const confirmBtn = el("button", { type: "button" }, ["Yes, install the update"]);
+  const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+  cancelBtn.addEventListener("click", () => void renderSettings(binDir));
+  confirmBtn.addEventListener("click", () => void performUpdate(binDir));
+
+  app.replaceChildren(
+    el("h1", {}, ["Settings"]),
+    el("div", { class: "settings-confirm" }, [
+      el("p", {}, [
+        `This will download bmug2 ${formatVersion(check.latest)} and re-run install.sh ` +
+          "in place over your existing install. Your SYNC/HISTORY data and settings are not touched.",
+      ]),
+      confirmBtn,
+      cancelBtn,
+    ]),
+  );
+}
+
+async function performUpdate(binDir: string) {
+  renderInstalling("Updating…");
+  try {
+    const outcome = await invoke<InstallOutcome>("apply_update", { binDir });
+    void renderDashboard(outcome.bin_dir, {
+      ok: true,
+      message: "Updated successfully.",
+      log: outcome.log,
+    });
+  } catch (err) {
+    renderError(String(err), () => void renderSettings(binDir));
+  }
+}
+
 async function renderSetup() {
   let defaults: DefaultPaths;
   try {
@@ -1230,11 +1349,24 @@ async function runInstall(request: InstallRequest) {
   }
 }
 
+// Checked once per app session (not on every renderDashboard call -
+// most mutating actions re-render the dashboard on success, and
+// re-checking GitHub on every one of those would be wasteful and
+// needlessly close to its unauthenticated rate limit). Settings'
+// own screen always does its own fresh check instead of reading this,
+// and updates it too, so a return to the dashboard reflects that.
+let cachedUpdateCheck: UpdateCheck | null = null;
+
 async function init() {
   renderLoading();
   try {
     const existing = await invoke<string | null>("check_existing_install");
     if (existing) {
+      try {
+        cachedUpdateCheck = await invoke<UpdateCheck>("check_for_update", { binDir: existing });
+      } catch {
+        // offline, rate-limited, etc. - never blocks reaching the dashboard
+      }
       void renderDashboard(existing);
       return;
     }

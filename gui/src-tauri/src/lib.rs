@@ -10,7 +10,7 @@ mod version;
 
 use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
-use install::{DefaultPaths, InstallOutcome};
+use install::{DefaultPaths, InstallOutcome, UpdateCheck};
 use replication::{ReplicationRequest, ReplicationStatus};
 use run::RunOutput;
 use serde::Deserialize;
@@ -66,6 +66,16 @@ fn install_bmug2(app: AppHandle, request: InstallRequest) -> Result<InstallOutco
         } => install::install_new(&app, &sync_dir, &backup_dir, &index_dir, &install_dir),
         InstallRequest::Existing { bin_dir } => install::use_existing(&app, &bin_dir),
     }
+}
+
+#[tauri::command]
+fn check_for_update(bin_dir: String) -> Result<UpdateCheck, String> {
+    install::check_for_update(std::path::Path::new(&bin_dir))
+}
+
+#[tauri::command]
+fn apply_update(app: AppHandle, bin_dir: String) -> Result<InstallOutcome, String> {
+    install::apply_update(&app, std::path::Path::new(&bin_dir))
 }
 
 #[tauri::command]
@@ -200,7 +210,9 @@ pub fn run() {
             get_replication_status,
             get_replication_capability,
             set_replication,
-            clear_replication
+            clear_replication,
+            check_for_update,
+            apply_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

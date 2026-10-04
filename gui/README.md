@@ -77,6 +77,19 @@ well-known install location" stance):
   being locked out of the whole app, since the CLI itself already fails
   loudly on an unrecognized flag - no need to bump the GUI's blanket
   `MIN_COMPATIBLE_VERSION` just for this one optional feature.
+- **Settings / update check** (`gui/src-tauri/src/install.rs`'s
+  `check_for_update`/`apply_update`): the dashboard does a best-effort
+  check against GitHub's latest release once per app session (never
+  blocks the dashboard or surfaces an error if offline) and shows a
+  notice if a newer version exists. A dedicated Settings screen
+  (reachable via a button next to the dashboard's title) shows
+  installed vs. latest version and lets you trigger the same check
+  manually, or install the update - always behind an explicit
+  confirmation step, never automatic. Updating re-runs `install.sh`
+  against the install's own existing sync/backup/index/install
+  directories (never new ones, which would relocate rather than
+  refresh it), the same non-reimplementing-the-CLI's-own-logic approach
+  as install/replication above.
 
 Still missing:
 
@@ -89,9 +102,10 @@ Still missing:
   the CLI for those.
 - No reconfigure/move-install UI — re-run `backmeup.configure.sh`
   directly for that, same as the CLI-only flow. Off-site replication
-  (above) is the one deliberate, narrowly-scoped exception - its own
-  dedicated flags and settings panel, not a reversal of this stance for
-  anything else.
+  and the Settings screen's update check (both above) are the two
+  deliberate, narrowly-scoped exceptions — the former its own dedicated
+  flags/panel, the latter refreshing the installed scripts in place
+  (same directories, same settings) rather than reconfiguring anything.
 
 ## Why native Rust, not the `mcp/` Python server
 
