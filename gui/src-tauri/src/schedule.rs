@@ -68,7 +68,7 @@ pub fn build_housekeeping_wrapper(bin_dir: &str) -> String {
     script
 }
 
-fn configured_replication_backend(bin_dir: &Path) -> Option<String> {
+pub(crate) fn configured_replication_backend(bin_dir: &Path) -> Option<String> {
     let contents = std::fs::read_to_string(bin_dir.join("backmeup.setup.sh")).ok()?;
     contents.lines().find_map(|line| {
         line.trim()
