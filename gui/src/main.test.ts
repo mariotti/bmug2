@@ -12,6 +12,7 @@ import {
   buildUntrackedProjectsNotice,
   buildIgnoreToggles,
   buildBmuignoreEditor,
+  buildScheduleInfoPanel,
   sourceLabel,
   isMac,
   type Schedule,
@@ -140,6 +141,29 @@ describe("isMac", () => {
   it("is false otherwise", () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     expect(isMac()).toBe(false);
+  });
+});
+
+describe("buildScheduleInfoPanel", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns null on macOS when Full Disk Access is already granted", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(buildScheduleInfoPanel(true)).toBeNull();
+  });
+
+  it("shows the Full Disk Access warning on macOS when it is not granted", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const panel = buildScheduleInfoPanel(false);
+    expect(panel?.textContent).toContain("Full Disk Access");
+  });
+
+  it("shows the lingering-session note on Linux regardless of hasFullDiskAccess", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    expect(buildScheduleInfoPanel(true)?.textContent).toContain("lingering");
+    expect(buildScheduleInfoPanel(false)?.textContent).toContain("lingering");
   });
 });
 
