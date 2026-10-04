@@ -1227,34 +1227,62 @@ function buildGoogleDriveFolderBrowser(
     );
   };
 
-  container.replaceChildren(el("p", {}, ["Loading…"]));
-  void invoke<string[]>("list_drive_remotes")
-    .then((remotes) => {
-      if (remotes.length === 0) {
-        container.replaceChildren(
-          el("p", { class: "settings-check-error" }, [
-            'No Google Drive remote configured - run "rclone config" in a terminal to add one.',
-          ]),
-          cancelRow(),
-        );
-        return;
-      }
-      const colonIndex = startValue.indexOf(":");
-      const startRemote = colonIndex >= 0 ? startValue.slice(0, colonIndex) : "";
-      if (startRemote && remotes.includes(startRemote)) {
-        currentRemote = startRemote;
-        currentPath = startValue.slice(colonIndex + 1).replace(/^\/+|\/+$/g, "");
-        renderFolder();
-      } else if (remotes.length === 1) {
-        currentRemote = remotes[0];
-        currentPath = "";
-        renderFolder();
-      } else {
-        renderRemotePicker(remotes);
-      }
-    })
-    .catch(showError);
+  // No remote configured yet - offer to add one right here instead of
+  // a dead-end pointing at a terminal. Drives rclone's own
+  // non-interactive setup protocol (create_drive_remote); the one step
+  // that can't be automated is the real Google sign-in, which opens in
+  // the system browser while this waits.
+  const renderConnectForm = (error?: string) => {
+    const nameInput = el("input", { type: "text", value: "gdrive" }) as HTMLInputElement;
+    const connectBtn = el("button", { type: "button", class: "browse-btn" }, ["Connect Google Drive…"]);
+    connectBtn.addEventListener("click", () => {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      container.replaceChildren(
+        el("p", {}, [
+          "A browser window should open — finish signing in with Google there. This can take a minute…",
+        ]),
+      );
+      void invoke("create_drive_remote", { name })
+        .then(() => loadRemotes())
+        .catch((err) => renderConnectForm(String(err)));
+    });
+    const children: HTMLElement[] = [];
+    if (error) children.push(el("p", { class: "settings-check-error" }, [error]));
+    children.push(
+      el("p", {}, ["No Google Drive remote configured yet."]),
+      el("div", { class: "field-row" }, [nameInput, connectBtn]),
+      cancelRow(),
+    );
+    container.replaceChildren(...children);
+  };
 
+  const loadRemotes = () => {
+    container.replaceChildren(el("p", {}, ["Loading…"]));
+    void invoke<string[]>("list_drive_remotes")
+      .then((remotes) => {
+        if (remotes.length === 0) {
+          renderConnectForm();
+          return;
+        }
+        const colonIndex = startValue.indexOf(":");
+        const startRemote = colonIndex >= 0 ? startValue.slice(0, colonIndex) : "";
+        if (startRemote && remotes.includes(startRemote)) {
+          currentRemote = startRemote;
+          currentPath = startValue.slice(colonIndex + 1).replace(/^\/+|\/+$/g, "");
+          renderFolder();
+        } else if (remotes.length === 1) {
+          currentRemote = remotes[0];
+          currentPath = "";
+          renderFolder();
+        } else {
+          renderRemotePicker(remotes);
+        }
+      })
+      .catch(showError);
+  };
+
+  loadRemotes();
   return container;
 }
 

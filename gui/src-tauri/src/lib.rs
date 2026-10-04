@@ -228,6 +228,11 @@ fn create_rclone_folder(path: String) -> Result<(), String> {
     rclone_browse::create_folder(&path)
 }
 
+#[tauri::command]
+fn create_drive_remote(name: String) -> Result<(), String> {
+    rclone_browse::create_drive_remote(&name)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -264,7 +269,8 @@ pub fn run() {
             rclone_available,
             list_drive_remotes,
             list_rclone_folder,
-            create_rclone_folder
+            create_rclone_folder,
+            create_drive_remote
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
