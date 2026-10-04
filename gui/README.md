@@ -76,7 +76,12 @@ well-known install location" stance):
   install shows a disabled panel with an upgrade message instead of
   being locked out of the whole app, since the CLI itself already fails
   loudly on an unrecognized flag - no need to bump the GUI's blanket
-  `MIN_COMPATIBLE_VERSION` just for this one optional feature.
+  `MIN_COMPATIBLE_VERSION` just for this one optional feature. The
+  Proton remote field has a "Browse…" button that opens an in-app
+  folder picker (`gui/src-tauri/src/proton_browse.rs`), listing and
+  creating folders via direct `proton-drive` CLI calls rather than a
+  native OS dialog, since a cloud Drive's own tree isn't locally
+  mounted.
 - **Settings / update check** (`gui/src-tauri/src/install.rs`'s
   `check_for_update`/`apply_update`): the dashboard does a best-effort
   check against GitHub's latest release once per app session (never

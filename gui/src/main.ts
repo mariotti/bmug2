@@ -879,11 +879,50 @@ export function buildReplicationEditor(
   }) as HTMLInputElement;
   protonRemoteInput.value = current.backend === "proton" ? current.remote : "";
 
+  // No native OS dialog for a cloud Drive's own tree - "Browse..."
+  // toggles an in-app picker instead, built fresh each time it's
+  // opened so it always reflects the input's current value.
+  const browseBtn = el("button", { type: "button", class: "browse-btn" }, ["Browse…"]);
+  const browserPanel = el("div", {}, []);
+  browserPanel.style.display = "none";
+  browseBtn.addEventListener("click", () => {
+    if (browserPanel.style.display === "none") {
+      browserPanel.replaceChildren(
+        buildProtonFolderBrowser(
+          protonRemoteInput.value || "/my-files",
+          (chosen) => {
+            protonRemoteInput.value = chosen;
+            browserPanel.style.display = "none";
+          },
+          () => {
+            browserPanel.style.display = "none";
+          },
+        ),
+      );
+      browserPanel.style.display = "";
+    } else {
+      browserPanel.style.display = "none";
+    }
+  });
+  void invoke<boolean>("proton_drive_available")
+    .then((available) => {
+      if (!available) {
+        browseBtn.disabled = true;
+        browseBtn.title = "proton-drive is not installed on this machine";
+      }
+    })
+    .catch(() => {
+      // No Tauri bridge (e.g. under test) or the command itself failed -
+      // leave the button enabled; a real click will surface its own error.
+    });
+  const protonRemoteRow = el("div", { class: "field-row" }, [protonRemoteInput, browseBtn]);
+
   const updateVisibility = () => {
     const rclone = backendSelect.value === "rclone";
     remoteSyncInput.style.display = rclone ? "" : "none";
     remoteBackupsInput.style.display = rclone ? "" : "none";
-    protonRemoteInput.style.display = rclone ? "none" : "";
+    protonRemoteRow.style.display = rclone ? "none" : "";
+    if (rclone) browserPanel.style.display = "none";
   };
   updateVisibility();
   backendSelect.addEventListener("change", updateVisibility);
@@ -908,10 +947,111 @@ export function buildReplicationEditor(
     backendSelect,
     remoteSyncInput,
     remoteBackupsInput,
-    protonRemoteInput,
+    protonRemoteRow,
+    browserPanel,
     saveBtn,
     cancelBtn,
   ]);
+}
+
+interface RemoteEntry {
+  name: string;
+  is_folder: boolean;
+}
+
+// A self-contained, stateful mini folder-browser for the Proton remote
+// field - own closure-local currentPath, re-rendered in place on
+// navigation (same "replaceChildren a box in-place" idiom as
+// renderSearchResults/buildScheduleEditor). Not a new top-level screen:
+// this is a short pick-one-and-return interaction nested inside an
+// already-expanded editor row. /my-files is the only entry point - the
+// bare "/" root only has other Proton-specific categories (devices,
+// shared-with-me, trash, photos, ...) that are never useful backup
+// destinations, so they're deliberately never exposed here.
+function buildProtonFolderBrowser(
+  startPath: string,
+  onChoose: (path: string) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const container = el("div", { class: "proton-browser" }, []);
+  let currentPath = startPath.startsWith("/my-files") ? startPath : "/my-files";
+
+  const render = () => {
+    container.replaceChildren(el("p", {}, ["Loading…"]));
+    void invoke<RemoteEntry[]>("list_proton_folder", { path: currentPath })
+      .then((entries) => renderLoaded(entries))
+      .catch((err) => {
+        container.replaceChildren(
+          el("p", { class: "settings-check-error" }, [String(err)]),
+          cancelRow(),
+        );
+      });
+  };
+
+  const cancelRow = () => {
+    const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", onCancel);
+    return cancelBtn;
+  };
+
+  const renderLoaded = (entries: RemoteEntry[]) => {
+    const segments = currentPath.split("/").filter(Boolean);
+    const breadcrumb = el("p", { class: "proton-breadcrumb" }, []);
+    segments.forEach((segment, i) => {
+      const segPath = "/" + segments.slice(0, i + 1).join("/");
+      const btn = el("button", { type: "button" }, [segment]);
+      btn.addEventListener("click", () => {
+        currentPath = segPath;
+        render();
+      });
+      breadcrumb.append(btn, i < segments.length - 1 ? " / " : "");
+    });
+
+    const folders = entries.filter((e) => e.is_folder);
+    const list = el(
+      "ul",
+      { class: "proton-folder-list" },
+      folders.length === 0
+        ? [el("li", {}, ["(no subfolders)"])]
+        : folders.map((folder) => {
+            const descendBtn = el("button", { type: "button" }, [folder.name]);
+            descendBtn.addEventListener("click", () => {
+              currentPath = `${currentPath.replace(/\/$/, "")}/${folder.name}`;
+              render();
+            });
+            return el("li", {}, [descendBtn]);
+          }),
+    );
+
+    const useBtn = el("button", { type: "button" }, [`Use "${currentPath}"`]);
+    useBtn.addEventListener("click", () => onChoose(currentPath));
+
+    const newFolderInput = el("input", { type: "text", placeholder: "New folder name" }) as HTMLInputElement;
+    const createBtn = el("button", { type: "button", class: "browse-btn" }, ["Create"]);
+    createBtn.addEventListener("click", () => {
+      const name = newFolderInput.value.trim();
+      if (!name) return;
+      void invoke("create_proton_folder", { parent: currentPath, name })
+        .then(() => render())
+        .catch((err) => {
+          container.replaceChildren(
+            el("p", { class: "settings-check-error" }, [String(err)]),
+            cancelRow(),
+          );
+        });
+    });
+
+    container.replaceChildren(
+      breadcrumb,
+      list,
+      el("div", { class: "field-row" }, [newFolderInput, createBtn]),
+      useBtn,
+      cancelRow(),
+    );
+  };
+
+  render();
+  return container;
 }
 
 // Mirrors buildHousekeepingSection's structure - another global,

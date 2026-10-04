@@ -267,6 +267,49 @@ form button[type="submit"] {
   color: #c0392b;
 }
 
+/* Button colors/borders are NOT repeated here - .schedule-edit button
+   (a descendant selector) already styles every button nested anywhere
+   inside this panel consistently, in both light and dark mode, since
+   the whole browser is always shown inside a .schedule-edit span. */
+.proton-browser {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin-top: 0.4em;
+  padding: 0.6em 0.8em;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  background-color: #f6f8fc;
+  max-width: 28em;
+}
+
+.proton-breadcrumb {
+  font-size: 0.9em;
+}
+
+.proton-breadcrumb button {
+  padding: 0 0.2em;
+}
+
+.proton-folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 10em;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.proton-folder-list li {
+  margin-bottom: 0.2em;
+}
+
+.proton-folder-list button {
+  width: 100%;
+  text-align: left;
+}
+
 .status-table {
   width: 100%;
   border-collapse: collapse;
@@ -634,6 +677,11 @@ form button[type="submit"] {
 
   .settings-check-error {
     color: #f5b7ae;
+  }
+
+  .proton-browser {
+    background-color: #1f1f1f98;
+    border-color: #444;
   }
 
   .schedule-edit-row td {
