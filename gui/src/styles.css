@@ -271,7 +271,7 @@ form button[type="submit"] {
    (a descendant selector) already styles every button nested anywhere
    inside this panel consistently, in both light and dark mode, since
    the whole browser is always shown inside a .schedule-edit span. */
-.proton-browser {
+.remote-browser {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -284,15 +284,15 @@ form button[type="submit"] {
   max-width: 28em;
 }
 
-.proton-breadcrumb {
+.remote-breadcrumb {
   font-size: 0.9em;
 }
 
-.proton-breadcrumb button {
+.remote-breadcrumb button {
   padding: 0 0.2em;
 }
 
-.proton-folder-list {
+.remote-folder-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -301,11 +301,11 @@ form button[type="submit"] {
   width: 100%;
 }
 
-.proton-folder-list li {
+.remote-folder-list li {
   margin-bottom: 0.2em;
 }
 
-.proton-folder-list button {
+.remote-folder-list button {
   width: 100%;
   text-align: left;
 }
@@ -679,7 +679,7 @@ form button[type="submit"] {
     color: #f5b7ae;
   }
 
-  .proton-browser {
+  .remote-browser {
     background-color: #1f1f1f98;
     border-color: #444;
   }

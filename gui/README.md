@@ -90,7 +90,18 @@ well-known install location" stance):
   (`filesystem create-folder`, checked first via `filesystem info` so
   it never collides with an existing node) - it never calls
   `trash`/`delete`/`move`/`rename`, so it cannot remove or overwrite
-  anything already in the user's Drive.
+  anything already in the user's Drive. Both rclone remote fields
+  (SYNC and HISTORY) have the same "Browse…" picker scoped specifically
+  to configured Google Drive remotes (`gui/src-tauri/src/rclone_browse.rs`,
+  filtering `rclone listremotes` to `type: "drive"` - not a general
+  "browse any rclone remote" feature, since rclone's remote variety
+  makes that a much less uniform operation). It lists via `rclone
+  lsjson` and creates via `rclone mkdir` (already idempotent on its
+  own) only - same no-`delete`/`move`/`rename` guarantee as the Proton
+  picker. If more than one Google Drive remote is configured, the
+  picker asks which one first; an expired/invalid token surfaces
+  rclone's own actionable `rclone config reconnect <remote>:` message
+  rather than a replaced generic one.
 - **Settings / update check** (`gui/src-tauri/src/install.rs`'s
   `check_for_update`/`apply_update`): the dashboard does a best-effort
   check against GitHub's latest release once per app session (never

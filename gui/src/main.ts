@@ -873,6 +873,49 @@ export function buildReplicationEditor(
   }) as HTMLInputElement;
   remoteBackupsInput.value = current.backend === "rclone" ? current.remote_backups : "";
 
+  // Same in-app-picker reasoning as the Proton field below, scoped to
+  // Google Drive remotes specifically (see buildGoogleDriveFolderBrowser's
+  // own doc comment) - rclone itself has no native OS dialog either, and
+  // a generic "browse any rclone remote" picker wasn't asked for.
+  const makeGdriveBrowseRow = (input: HTMLInputElement): { row: HTMLElement; panel: HTMLElement } => {
+    const gdriveBrowseBtn = el("button", { type: "button", class: "browse-btn" }, ["Browse…"]);
+    const gdrivePanel = el("div", {}, []);
+    gdrivePanel.style.display = "none";
+    gdriveBrowseBtn.addEventListener("click", () => {
+      if (gdrivePanel.style.display === "none") {
+        gdrivePanel.replaceChildren(
+          buildGoogleDriveFolderBrowser(
+            input.value,
+            (chosen) => {
+              input.value = chosen;
+              gdrivePanel.style.display = "none";
+            },
+            () => {
+              gdrivePanel.style.display = "none";
+            },
+          ),
+        );
+        gdrivePanel.style.display = "";
+      } else {
+        gdrivePanel.style.display = "none";
+      }
+    });
+    void invoke<boolean>("rclone_available")
+      .then((available) => {
+        if (!available) {
+          gdriveBrowseBtn.disabled = true;
+          gdriveBrowseBtn.title = "rclone is not installed on this machine";
+        }
+      })
+      .catch(() => {
+        // No Tauri bridge (e.g. under test) or the command itself failed -
+        // leave the button enabled; a real click will surface its own error.
+      });
+    return { row: el("div", { class: "field-row" }, [input, gdriveBrowseBtn]), panel: gdrivePanel };
+  };
+  const gdriveSync = makeGdriveBrowseRow(remoteSyncInput);
+  const gdriveBackups = makeGdriveBrowseRow(remoteBackupsInput);
+
   const protonRemoteInput = el("input", {
     type: "text",
     placeholder: "/bmug2/<hostname> (default)",
@@ -930,10 +973,15 @@ export function buildReplicationEditor(
 
   const updateVisibility = () => {
     const rclone = backendSelect.value === "rclone";
-    remoteSyncInput.style.display = rclone ? "" : "none";
-    remoteBackupsInput.style.display = rclone ? "" : "none";
+    gdriveSync.row.style.display = rclone ? "" : "none";
+    gdriveBackups.row.style.display = rclone ? "" : "none";
     protonRemoteRow.style.display = rclone ? "none" : "";
-    if (rclone) browserPanel.style.display = "none";
+    if (rclone) {
+      browserPanel.style.display = "none";
+    } else {
+      gdriveSync.panel.style.display = "none";
+      gdriveBackups.panel.style.display = "none";
+    }
   };
   updateVisibility();
   backendSelect.addEventListener("change", updateVisibility);
@@ -956,8 +1004,10 @@ export function buildReplicationEditor(
 
   return el("span", { class: "schedule-edit" }, [
     backendSelect,
-    remoteSyncInput,
-    remoteBackupsInput,
+    gdriveSync.row,
+    gdriveSync.panel,
+    gdriveBackups.row,
+    gdriveBackups.panel,
     protonRemoteRow,
     browserPanel,
     saveBtn,
@@ -984,7 +1034,7 @@ function buildProtonFolderBrowser(
   onChoose: (path: string) => void,
   onCancel: () => void,
 ): HTMLElement {
-  const container = el("div", { class: "proton-browser" }, []);
+  const container = el("div", { class: "remote-browser" }, []);
   let currentPath = startPath.startsWith("/my-files") ? startPath : "/my-files";
 
   const render = () => {
@@ -1007,7 +1057,7 @@ function buildProtonFolderBrowser(
 
   const renderLoaded = (entries: RemoteEntry[]) => {
     const segments = currentPath.split("/").filter(Boolean);
-    const breadcrumb = el("p", { class: "proton-breadcrumb" }, []);
+    const breadcrumb = el("p", { class: "remote-breadcrumb" }, []);
     segments.forEach((segment, i) => {
       const segPath = "/" + segments.slice(0, i + 1).join("/");
       const btn = el("button", { type: "button" }, [segment]);
@@ -1021,7 +1071,7 @@ function buildProtonFolderBrowser(
     const folders = entries.filter((e) => e.is_folder);
     const list = el(
       "ul",
-      { class: "proton-folder-list" },
+      { class: "remote-folder-list" },
       folders.length === 0
         ? [el("li", {}, ["(no subfolders)"])]
         : folders.map((folder) => {
@@ -1062,6 +1112,149 @@ function buildProtonFolderBrowser(
   };
 
   render();
+  return container;
+}
+
+// A folder browser for a Google Drive rclone remote - mirrors
+// buildProtonFolderBrowser's shape and idioms, with one extra stage up
+// front: rclone can have more than one Google Drive remote configured,
+// so when startValue doesn't already name a known one, the user picks
+// which remote to browse first. Scoped to "drive"-type remotes only -
+// see rclone_browse.rs's own module doc for why this isn't a general
+// "browse any rclone remote" picker.
+function buildGoogleDriveFolderBrowser(
+  startValue: string,
+  onChoose: (path: string) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const container = el("div", { class: "remote-browser" }, []);
+  let currentRemote: string | null = null;
+  let currentPath = "";
+
+  const cancelRow = () => {
+    const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", onCancel);
+    return cancelBtn;
+  };
+
+  const showError = (err: unknown) => {
+    container.replaceChildren(el("p", { class: "settings-check-error" }, [String(err)]), cancelRow());
+  };
+
+  const renderRemotePicker = (remotes: string[]) => {
+    const list = el(
+      "ul",
+      { class: "remote-folder-list" },
+      remotes.map((name) => {
+        const pickBtn = el("button", { type: "button" }, [name]);
+        pickBtn.addEventListener("click", () => {
+          currentRemote = name;
+          currentPath = "";
+          renderFolder();
+        });
+        return el("li", {}, [pickBtn]);
+      }),
+    );
+    container.replaceChildren(el("p", {}, ["Choose a Google Drive remote:"]), list, cancelRow());
+  };
+
+  const renderFolder = () => {
+    const remote = currentRemote;
+    if (remote === null) return;
+    container.replaceChildren(el("p", {}, ["Loading…"]));
+    const fullPath = currentPath ? `${remote}:${currentPath}` : `${remote}:`;
+    void invoke<RemoteEntry[]>("list_rclone_folder", { path: fullPath })
+      .then((entries) => renderLoaded(remote, entries))
+      .catch(showError);
+  };
+
+  const renderLoaded = (remote: string, entries: RemoteEntry[]) => {
+    const segments = currentPath.split("/").filter(Boolean);
+    const breadcrumb = el("p", { class: "remote-breadcrumb" }, []);
+    const rootBtn = el("button", { type: "button" }, [`${remote}:`]);
+    rootBtn.addEventListener("click", () => {
+      currentPath = "";
+      renderFolder();
+    });
+    breadcrumb.append(rootBtn, segments.length > 0 ? " / " : "");
+    segments.forEach((segment, i) => {
+      const segPath = segments.slice(0, i + 1).join("/");
+      const btn = el("button", { type: "button" }, [segment]);
+      btn.addEventListener("click", () => {
+        currentPath = segPath;
+        renderFolder();
+      });
+      breadcrumb.append(btn, i < segments.length - 1 ? " / " : "");
+    });
+
+    const folders = entries.filter((e) => e.is_folder);
+    const list = el(
+      "ul",
+      { class: "remote-folder-list" },
+      folders.length === 0
+        ? [el("li", {}, ["(no subfolders)"])]
+        : folders.map((folder) => {
+            const descendBtn = el("button", { type: "button" }, [folder.name]);
+            descendBtn.addEventListener("click", () => {
+              currentPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
+              renderFolder();
+            });
+            return el("li", {}, [descendBtn]);
+          }),
+    );
+
+    const fullPath = currentPath ? `${remote}:${currentPath}` : `${remote}:`;
+    const useBtn = el("button", { type: "button" }, [`Use "${fullPath}"`]);
+    useBtn.addEventListener("click", () => onChoose(fullPath));
+
+    const newFolderInput = el("input", { type: "text", placeholder: "New folder name" }) as HTMLInputElement;
+    const createBtn = el("button", { type: "button", class: "browse-btn" }, ["Create"]);
+    createBtn.addEventListener("click", () => {
+      const name = newFolderInput.value.trim();
+      if (!name) return;
+      const newPath = currentPath ? `${remote}:${currentPath}/${name}` : `${remote}:${name}`;
+      void invoke("create_rclone_folder", { path: newPath })
+        .then(() => renderFolder())
+        .catch(showError);
+    });
+
+    container.replaceChildren(
+      breadcrumb,
+      list,
+      el("div", { class: "field-row" }, [newFolderInput, createBtn]),
+      useBtn,
+      cancelRow(),
+    );
+  };
+
+  container.replaceChildren(el("p", {}, ["Loading…"]));
+  void invoke<string[]>("list_drive_remotes")
+    .then((remotes) => {
+      if (remotes.length === 0) {
+        container.replaceChildren(
+          el("p", { class: "settings-check-error" }, [
+            'No Google Drive remote configured - run "rclone config" in a terminal to add one.',
+          ]),
+          cancelRow(),
+        );
+        return;
+      }
+      const colonIndex = startValue.indexOf(":");
+      const startRemote = colonIndex >= 0 ? startValue.slice(0, colonIndex) : "";
+      if (startRemote && remotes.includes(startRemote)) {
+        currentRemote = startRemote;
+        currentPath = startValue.slice(colonIndex + 1).replace(/^\/+|\/+$/g, "");
+        renderFolder();
+      } else if (remotes.length === 1) {
+        currentRemote = remotes[0];
+        currentPath = "";
+        renderFolder();
+      } else {
+        renderRemotePicker(remotes);
+      }
+    })
+    .catch(showError);
+
   return container;
 }
 
