@@ -154,6 +154,11 @@ fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, schedule: Schedule
 }
 
 #[tauri::command]
+fn has_full_disk_access() -> bool {
+    schedule::has_full_disk_access()
+}
+
+#[tauri::command]
 fn clear_housekeeping_schedule(app: AppHandle) -> Result<(), String> {
     schedule::uninstall(schedule::HOUSEKEEPING_LABEL)?;
     config::set_housekeeping_schedule(&app, None)
@@ -265,6 +270,7 @@ pub fn run() {
             get_housekeeping_schedule,
             set_housekeeping_schedule,
             clear_housekeeping_schedule,
+            has_full_disk_access,
             get_ignore_settings,
             set_ignore_settings,
             get_replication_status,

@@ -602,12 +602,18 @@ async function saveIgnoreSettings(binDir: string, source: BackupSource, settings
 async function addSource(binDir: string) {
   const selected = await open({ directory: true });
   if (typeof selected !== "string") return;
+  let source: BackupSource;
   try {
-    await invoke<BackupSource>("add_source", { path: selected, name: null });
-    void renderDashboard(binDir);
+    source = await invoke<BackupSource>("add_source", { path: selected, name: null });
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
+    return;
   }
+  // A freshly added source has never been backed up - run it
+  // immediately instead of leaving a new, empty-looking entry that
+  // needs a separate manual Run Now click to actually start protecting
+  // anything.
+  await runBackupNow(binDir, source);
 }
 
 async function removeSource(binDir: string, source: BackupSource) {
@@ -776,6 +782,10 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
     renderError(String(err), () => void renderDashboard(binDir));
     return;
   }
+  // Defaults to "show the warning" (false) if the check itself fails -
+  // a false "might need it" is harmless, a false "you're fine" would
+  // hide a real gotcha.
+  const hasFullDiskAccess = await invoke<boolean>("has_full_disk_access").catch(() => false);
   const children: (Node | string)[] = [el("h1", {}, ["bmug2"])];
   const settingsBtn = el("button", { type: "button" }, ["Settings"]);
   settingsBtn.addEventListener("click", () => void renderSettings(binDir));
@@ -788,11 +798,12 @@ async function renderDashboard(binDir: string, banner?: RunBanner) {
     const notice = buildUpdateAvailableNotice(cachedUpdateCheck, binDir);
     if (notice) children.push(notice);
   }
+  const scheduleInfoPanel = buildScheduleInfoPanel(hasFullDiskAccess);
   children.push(
     buildSourcesSection(sources, status, ignoreSettings, binDir),
     buildHousekeepingSection(housekeeping, binDir),
     buildReplicationSection(replicationStatus, replicationCapability, binDir),
-    buildScheduleInfoPanel(),
+    ...(scheduleInfoPanel ? [scheduleInfoPanel] : []),
     buildStatusSection(status, binDir),
     buildSearchSection(binDir),
   );
@@ -1405,8 +1416,13 @@ async function clearReplication(binDir: string) {
 // Privacy pane is just navigation, not a settings change, and
 // enabling linger is a real session-policy change that stays a
 // manual, explicit step.
-function buildScheduleInfoPanel(): HTMLElement {
+//
+// hasFullDiskAccess (macOS only - see has_full_disk_access in
+// schedule.rs) lets this skip the warning entirely once it's moot,
+// rather than nagging a user who already granted it.
+export function buildScheduleInfoPanel(hasFullDiskAccess: boolean): HTMLElement | null {
   if (isMac()) {
+    if (hasFullDiskAccess) return null;
     const openBtn = el("button", { type: "button" }, ["Open Full Disk Access settings"]);
     openBtn.addEventListener("click", () => {
       void openUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");

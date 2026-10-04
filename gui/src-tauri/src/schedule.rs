@@ -414,6 +414,35 @@ pub fn status(label: &str) -> Option<Schedule> {
     platform::status(label)
 }
 
+/// Whether this app already has macOS's Full Disk Access (TCC)
+/// permission - lets the dashboard skip the "scheduled runs may need
+/// Full Disk Access" warning when it's moot. There's no public API for
+/// "am I TCC-approved"; the standard community technique (used by
+/// several open-source TCC-aware tools) is to attempt to open TCC's
+/// own database, which is itself one of the paths Full Disk Access
+/// gates - readable only with that permission already granted, so a
+/// successful open is a reliable yes/no signal without ever reading
+/// its contents. Defaults to `false` (show the warning) on any error,
+/// including the file genuinely not existing - a false "might need
+/// it" is harmless, a false "you're fine" would hide a real gotcha.
+#[cfg(target_os = "macos")]
+fn file_is_readable(path: &str) -> bool {
+    std::fs::File::open(path).is_ok()
+}
+
+#[cfg(target_os = "macos")]
+pub fn has_full_disk_access() -> bool {
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    file_is_readable(&format!("{home}/Library/Application Support/com.apple.TCC/TCC.db"))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn has_full_disk_access() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,6 +549,22 @@ mod tests {
         let service = build_service("bmug2 backup", "/opt/bmu/wrapper.sh");
         assert!(service.contains("ExecStart=/opt/bmu/wrapper.sh"));
         assert!(service.contains(PATH_ENV_LINUX));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn file_is_readable_true_for_a_real_file() {
+        let path = std::env::temp_dir().join(format!("bmug2-fda-test-{}", std::process::id()));
+        std::fs::write(&path, "x").unwrap();
+        assert!(file_is_readable(path.to_str().unwrap()));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn file_is_readable_false_for_a_missing_file() {
+        let path = std::env::temp_dir().join(format!("bmug2-fda-test-missing-{}", std::process::id()));
+        assert!(!file_is_readable(path.to_str().unwrap()));
     }
 }
 
