@@ -267,10 +267,12 @@ form button[type="submit"] {
   color: #c0392b;
 }
 
-/* Button colors/borders are NOT repeated here - .schedule-edit button
-   (a descendant selector) already styles every button nested anywhere
-   inside this panel consistently, in both light and dark mode, since
-   the whole browser is always shown inside a .schedule-edit span. */
+/* Layout only here - button colors/borders come from .schedule-edit
+   button (a descendant selector) since the whole browser is always
+   shown inside a .schedule-edit span; the folder-list/breadcrumb
+   button overrides that undo some of that chrome live further down,
+   right after .schedule-edit button, so they reliably win the
+   equal-specificity cascade instead of depending on source order. */
 .remote-browser {
   display: flex;
   flex-direction: column;
@@ -286,10 +288,6 @@ form button[type="submit"] {
 
 .remote-breadcrumb {
   font-size: 0.9em;
-}
-
-.remote-breadcrumb button {
-  padding: 0 0.2em;
 }
 
 .remote-folder-list {
@@ -417,6 +415,19 @@ form button[type="submit"] {
   white-space: nowrap;
 }
 
+/* buildReplicationEditor reuses .schedule-edit for its button styling
+   (the descendant selector below still applies), but its content - a
+   backend select plus up to three expandable remote-browser panels -
+   no longer fits a single nowrap row: a tall panel squeezed in as a
+   flex row item gets vertically centered and floats disconnected from
+   the controls around it, pushing Save/Cancel off to the side. Stack
+   everything vertically instead. */
+.schedule-edit.schedule-edit--replication {
+  flex-direction: column;
+  align-items: flex-start;
+  white-space: normal;
+}
+
 .schedule-edit input[type="time"],
 .schedule-edit input[type="text"],
 .schedule-edit select {
@@ -432,6 +443,33 @@ form button[type="submit"] {
   background-color: transparent;
   padding: 0.3em 0.7em;
   cursor: pointer;
+}
+
+/* A list of bordered boxes reads as a stack of buttons, not a file
+   list - a plain row with a hover background reads as one. Comes
+   after .schedule-edit button on purpose: same specificity (one class
+   + one element each), so source order decides, and this needs to
+   win. Still reuses .schedule-edit button's color, only undoing
+   border/background/padding. */
+.remote-folder-list button {
+  border: none;
+  background-color: transparent;
+  border-radius: 4px;
+  padding: 0.25em 0.4em;
+}
+
+.remote-folder-list button:hover {
+  background-color: rgba(57, 108, 216, 0.1);
+}
+
+.remote-breadcrumb button {
+  padding: 0 0.2em;
+  border: none;
+  background-color: transparent;
+}
+
+.remote-breadcrumb button:hover {
+  text-decoration: underline;
 }
 
 .ignore-edit {
