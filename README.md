@@ -24,6 +24,30 @@ large scale yet — read [Requirements](#requirements) below and
 before pointing it at real data, and try
 [`--dry-run`](docs/MANUAL.md#backmeupsh) first.
 
+## Versioning
+
+Semver (`MAJOR.MINOR.PATCH`), with one addition: the MINOR and PATCH
+numbers also signal how thoroughly a release was actually exercised
+before tagging it, separate from whether CI happened to pass. MAJOR is
+unaffected.
+
+- **Odd** MINOR or PATCH = not fully tested yet. Tagged and released
+  as `vX.Y.Z-experimental` (a GitHub pre-release) rather than a plain
+  `vX.Y.Z`.
+- **Even** MINOR or PATCH = tested, against a bar that depends on which
+  number moved:
+  - **PATCH** odd → even: the automated test suite passing (CI green)
+    is enough.
+  - **MINOR** odd → even: needs a human to have actually installed and
+    run the new code for real - automated tests alone aren't enough.
+
+This isn't sequential: a release can go straight from one odd number
+to another odd number (e.g. 2.15.1 → 2.15.3), skipping the even one in
+between, when the next build still isn't fully tested either - there's
+no requirement to pass through every intermediate value.
+
+This is a provisional policy (as of 2026-10) and may be revisited.
+
 ## Why you can trust it with real data
 
 Not marketing — real, verified, defensive behavior, detailed with the
