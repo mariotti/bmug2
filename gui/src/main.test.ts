@@ -274,7 +274,7 @@ describe("buildReplicationEditor", () => {
     const [remoteSync, remoteBackups] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
     remoteSync.value = "remote:a";
     remoteBackups.value = "remote:b";
-    const [saveBtn] = editor.querySelectorAll("button");
+    const [, saveBtn] = editor.querySelectorAll("button");
     saveBtn.dispatchEvent(new Event("click"));
     expect(onSave).toHaveBeenCalledWith({
       backend: "rclone",
@@ -288,7 +288,7 @@ describe("buildReplicationEditor", () => {
     const editor = buildReplicationEditor(off, onSave, vi.fn());
     const [remoteSync] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
     remoteSync.value = "remote:a";
-    const [saveBtn] = editor.querySelectorAll("button");
+    const [, saveBtn] = editor.querySelectorAll("button");
     saveBtn.dispatchEvent(new Event("click"));
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -299,7 +299,7 @@ describe("buildReplicationEditor", () => {
     const select = editor.querySelector("select") as HTMLSelectElement;
     select.value = "proton";
     select.dispatchEvent(new Event("change"));
-    const [saveBtn] = editor.querySelectorAll("button");
+    const [, saveBtn] = editor.querySelectorAll("button");
     saveBtn.dispatchEvent(new Event("click"));
     expect(onSave).toHaveBeenCalledWith({ backend: "proton", remote: null });
   });
@@ -312,7 +312,7 @@ describe("buildReplicationEditor", () => {
     select.dispatchEvent(new Event("change"));
     const [, , protonRemote] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
     protonRemote.value = "/bmug2/custom";
-    const [saveBtn] = editor.querySelectorAll("button");
+    const [, saveBtn] = editor.querySelectorAll("button");
     saveBtn.dispatchEvent(new Event("click"));
     expect(onSave).toHaveBeenCalledWith({ backend: "proton", remote: "/bmug2/custom" });
   });
@@ -320,7 +320,7 @@ describe("buildReplicationEditor", () => {
   it("Cancel calls onCancel", () => {
     const onCancel = vi.fn();
     const editor = buildReplicationEditor(off, vi.fn(), onCancel);
-    const [, cancelBtn] = editor.querySelectorAll("button");
+    const [, , cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
   });

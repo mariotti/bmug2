@@ -2,6 +2,7 @@ mod config;
 mod dashboard;
 mod ignore;
 mod install;
+mod proton_browse;
 mod replication;
 mod run;
 mod schedule;
@@ -11,6 +12,7 @@ mod version;
 use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome, UpdateCheck};
+use proton_browse::RemoteEntry;
 use replication::{ReplicationRequest, ReplicationStatus};
 use run::RunOutput;
 use serde::Deserialize;
@@ -184,6 +186,26 @@ fn clear_replication(bin_dir: String) -> Result<(), String> {
     replication::clear(std::path::Path::new(&bin_dir))
 }
 
+#[tauri::command]
+fn proton_drive_available() -> bool {
+    proton_browse::available()
+}
+
+#[tauri::command]
+fn proton_drive_signed_in() -> bool {
+    proton_browse::signed_in()
+}
+
+#[tauri::command]
+fn list_proton_folder(path: String) -> Result<Vec<RemoteEntry>, String> {
+    proton_browse::list_folder(&path)
+}
+
+#[tauri::command]
+fn create_proton_folder(parent: String, name: String) -> Result<(), String> {
+    proton_browse::create_folder(&parent, &name)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -212,7 +234,11 @@ pub fn run() {
             set_replication,
             clear_replication,
             check_for_update,
-            apply_update
+            apply_update,
+            proton_drive_available,
+            proton_drive_signed_in,
+            list_proton_folder,
+            create_proton_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
