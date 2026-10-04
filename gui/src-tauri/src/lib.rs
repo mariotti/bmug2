@@ -192,6 +192,11 @@ fn proton_drive_available() -> bool {
 }
 
 #[tauri::command]
+fn proton_drive_signed_in() -> bool {
+    proton_browse::signed_in()
+}
+
+#[tauri::command]
 fn list_proton_folder(path: String) -> Result<Vec<RemoteEntry>, String> {
     proton_browse::list_folder(&path)
 }
@@ -231,6 +236,7 @@ pub fn run() {
             check_for_update,
             apply_update,
             proton_drive_available,
+            proton_drive_signed_in,
             list_proton_folder,
             create_proton_folder
         ])

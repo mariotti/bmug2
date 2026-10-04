@@ -51,6 +51,29 @@ pub fn available() -> bool {
     detect_proton_drive().is_some()
 }
 
+/// Exact text proton-drive (v0.8.0) prints to stderr, exit 1, for every
+/// data command (list/info/create-folder/...) when there's no active
+/// session - confirmed by probing it with HOME pointed at an empty
+/// directory, never by touching this machine's real session.
+const LOGIN_REQUIRED_MARKER: &str = "You need to login first";
+
+const NOT_SIGNED_IN_MESSAGE: &str =
+    "Not signed in to Proton Drive - run `proton-drive auth login` in a terminal, then try again.";
+
+/// Cheap, read-only signal for gating the Browse button before the user
+/// clicks it: "is there a session right now", via the same info call
+/// list_folder/create_folder would hit anyway. Never writes anything.
+pub fn signed_in() -> bool {
+    let Some(bin) = detect_proton_drive() else {
+        return false;
+    };
+    Command::new(&bin)
+        .args(["filesystem", "info", "/my-files"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn parse_entries(json: &str) -> Result<Vec<RemoteEntry>, String> {
     let raw: Vec<RawEntry> =
         serde_json::from_str(json).map_err(|e| format!("could not parse proton-drive's output: {e}\n{json}"))?;
@@ -85,6 +108,9 @@ pub fn list_folder(path: &str) -> Result<Vec<RemoteEntry>, String> {
     let text = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains(LOGIN_REQUIRED_MARKER) {
+            return Err(NOT_SIGNED_IN_MESSAGE.to_string());
+        }
         return Err(format!("{text}{stderr}"));
     }
     parse_entries(&text)
@@ -112,7 +138,12 @@ pub fn create_folder(parent: &str, name: &str) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains(LOGIN_REQUIRED_MARKER) {
+            Err(NOT_SIGNED_IN_MESSAGE.to_string())
+        } else {
+            Err(stderr.to_string())
+        }
     }
 }
 
@@ -163,6 +194,14 @@ mod tests {
         assert!(parse_entries("not json").is_err());
     }
 
+    #[test]
+    fn login_required_marker_matches_the_real_cli_text() {
+        // Confirmed verbatim by probing the real CLI with HOME pointed
+        // at an empty directory (never by logging out this machine's
+        // real session) - exit 1, this exact line on stderr.
+        assert!("You need to login first\n".contains(LOGIN_REQUIRED_MARKER));
+    }
+
     /// Real end-to-end verification against the live, already-
     /// authenticated proton-drive CLI on this machine - same
     /// reasoning/convention as install.rs's own #[ignore]d real-
@@ -172,5 +211,11 @@ mod tests {
     fn lists_my_files_for_real() {
         let result = list_folder("/my-files");
         assert!(result.is_ok(), "list_folder failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore]
+    fn signed_in_is_true_for_real() {
+        assert!(signed_in());
     }
 }

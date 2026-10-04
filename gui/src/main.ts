@@ -909,7 +909,18 @@ export function buildReplicationEditor(
       if (!available) {
         browseBtn.disabled = true;
         browseBtn.title = "proton-drive is not installed on this machine";
+        return;
       }
+      void invoke<boolean>("proton_drive_signed_in")
+        .then((signedIn) => {
+          if (!signedIn) {
+            browseBtn.disabled = true;
+            browseBtn.title = 'not signed in - run "proton-drive auth login" in a terminal, then reopen this editor';
+          }
+        })
+        .catch(() => {
+          // Same no-bridge/failed-command case as the outer check.
+        });
     })
     .catch(() => {
       // No Tauri bridge (e.g. under test) or the command itself failed -
