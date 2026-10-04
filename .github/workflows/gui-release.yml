@@ -36,16 +36,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # lts/* rather than a pinned major, matching tests.yml's own
+          # fix for the same reason: Node 20 is being phased out of
+          # GitHub-hosted tooling, and pinning a specific old major
+          # just goes stale again later.
+          node-version: "lts/*"
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci
       - name: Build Tauri bundles
         working-directory: gui
         run: npm run tauri build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bmug2-macos-bundle
           path: gui/src-tauri/target/release/bundle/dmg/*.dmg
@@ -56,9 +60,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # lts/* rather than a pinned major, matching tests.yml's own
+          # fix for the same reason: Node 20 is being phased out of
+          # GitHub-hosted tooling, and pinning a specific old major
+          # just goes stale again later.
+          node-version: "lts/*"
       - name: Install Tauri Linux build dependencies
         run: |
           sudo apt-get update
@@ -70,7 +78,7 @@ jobs:
       - name: Build Tauri bundles
         working-directory: gui
         run: npm run tauri build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bmug2-linux-bundles
           path: |
