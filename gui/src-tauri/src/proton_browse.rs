@@ -4,7 +4,8 @@
 // ever learns the resolved binary from BMU_REPLICATE_PROTON_BIN
 // *after* a save; this needs it before). Never writes
 // backmeup.setup.sh or touches configure.sh - purely a picker aid.
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// Same search order as bin/backmeup.shellfunctions.sh's
 /// bmuDetectProton: bare name (via PATH) first, then the Homebrew/
@@ -72,6 +73,72 @@ pub fn signed_in() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Runs a command with a wall-clock timeout, for `auth login`'s own
+/// blocking wait on the real browser-based sign-in - same reasoning
+/// and same manual spawn + try_wait() polling pattern as
+/// rclone_browse.rs's run_with_timeout (duplicated rather than shared;
+/// the two modules are already independent by design, same precedent
+/// as their separate detect_* binary-search helpers). Without this, a
+/// user who closes the browser tab (or never finishes signing in)
+/// would hang the GUI's "signing in..." state forever - Tauri has no
+/// built-in way to cancel an in-flight command.
+///
+/// Reads stdout/stderr only after the child exits, not concurrently -
+/// safe here since `auth login` only ever prints a small amount of
+/// status text, never enough to fill the OS pipe buffer before
+/// exiting.
+fn run_with_timeout(bin: &str, args: &[&str], timeout: Duration) -> Result<Output, String> {
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {bin}: {e}"))?;
+
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("failed to wait for {bin}: {e}"))? {
+            use std::io::Read;
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                let _ = out.read_to_end(&mut stdout);
+            }
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_end(&mut stderr);
+            }
+            return Ok(Output { status, stdout, stderr });
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("timed out waiting for sign-in - try again".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Triggers `proton-drive auth login`, which opens the system browser
+/// itself and blocks until the user finishes signing in (or the
+/// process is killed). Short-circuits if already signed in - no need
+/// to touch the browser at all in that case.
+pub fn login() -> Result<(), String> {
+    if signed_in() {
+        return Ok(());
+    }
+    let bin = detect_proton_drive().ok_or("proton-drive was not found on this machine")?;
+    let output = run_with_timeout(&bin, &["auth", "login"], LOGIN_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    if !signed_in() {
+        return Err("sign-in did not complete - try again".to_string());
+    }
+    Ok(())
 }
 
 fn parse_entries(json: &str) -> Result<Vec<RemoteEntry>, String> {

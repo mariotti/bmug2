@@ -81,10 +81,17 @@ well-known install location" stance):
   folder picker (`gui/src-tauri/src/proton_browse.rs`), listing and
   creating folders via direct `proton-drive` CLI calls rather than a
   native OS dialog, since a cloud Drive's own tree isn't locally
-  mounted. The button is disabled with an explanatory tooltip if
-  `proton-drive` isn't installed or isn't signed in (checked via a
-  read-only `filesystem info` call - never a cached guess), and a
-  session that drops mid-browse surfaces the same clear "run
+  mounted. The button is disabled with an explanatory tooltip only if
+  `proton-drive` isn't installed (checked via a read-only `filesystem
+  info` call - never a cached guess) - not being signed in is no
+  longer a reason to disable it. If the panel opens while signed out,
+  it offers a "Sign in to Proton Drive…" button right there instead of
+  a dead end: it runs `proton-drive auth login`, which opens the system
+  browser itself and blocks until the user finishes signing in there
+  (under a 5-minute timeout, since an abandoned browser tab would
+  otherwise hang the GUI's "signing in…" state forever - Tauri has no
+  way to cancel an in-flight command). A session that drops mid-browse
+  (after a successful sign-in) still surfaces the same clear "run
   `proton-drive auth login`" message instead of a raw CLI error. The
   picker only ever lists (`filesystem list`) and creates
   (`filesystem create-folder`, checked first via `filesystem info` so
