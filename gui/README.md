@@ -35,9 +35,12 @@ well-known install location" stance):
   directory argument each call and doesn't remember it, and
   `backmeup.status.sh` only reports projects already backed up at
   least once, with no record of their original source path). Add a
-  folder via the native picker, then **Run Now**
-  (`gui/src-tauri/src/run.rs`, a thin wrapper around `backmeup.sh`)
-  to back it up on demand. The dashboard also cross-checks
+  folder via the native picker and its first backup runs immediately
+  (the same **Run Now** path - `gui/src-tauri/src/run.rs`, a thin
+  wrapper around `backmeup.sh` - rather than leaving a new, empty
+  entry that needs a separate manual click); **Run Now** stays
+  available afterward too, for backing up on demand anytime. The
+  dashboard also cross-checks
   `backmeup.status.sh`'s project list against this: any project with
   real backup history that isn't a tracked Backup Source yet
   (typically backed up from the CLI before this app was installed)

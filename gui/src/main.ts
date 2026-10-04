@@ -602,12 +602,18 @@ async function saveIgnoreSettings(binDir: string, source: BackupSource, settings
 async function addSource(binDir: string) {
   const selected = await open({ directory: true });
   if (typeof selected !== "string") return;
+  let source: BackupSource;
   try {
-    await invoke<BackupSource>("add_source", { path: selected, name: null });
-    void renderDashboard(binDir);
+    source = await invoke<BackupSource>("add_source", { path: selected, name: null });
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
+    return;
   }
+  // A freshly added source has never been backed up - run it
+  // immediately instead of leaving a new, empty-looking entry that
+  // needs a separate manual Run Now click to actually start protecting
+  // anything.
+  await runBackupNow(binDir, source);
 }
 
 async function removeSource(binDir: string, source: BackupSource) {
