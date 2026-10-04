@@ -101,7 +101,21 @@ well-known install location" stance):
   picker. If more than one Google Drive remote is configured, the
   picker asks which one first; an expired/invalid token surfaces
   rclone's own actionable `rclone config reconnect <remote>:` message
-  rather than a replaced generic one.
+  rather than a replaced generic one. If none is configured yet, the
+  picker offers a "Connect Google Drive…" button right there instead of
+  a dead end pointing at a terminal - it drives rclone's own
+  non-interactive setup protocol (`rclone config create ...
+  --non-interactive`, stepped via `rclone config update --continue`)
+  end to end, with one exception it can't automate: answering
+  "yes" to rclone's "use a web browser?" question makes rclone itself
+  open the system browser and block waiting for the real Google
+  sign-in, which stays a real human step the same as any legitimate
+  "Connect your Google account" flow. Rejects a name that's already in
+  use up front (`rclone config create` would otherwise silently
+  overwrite an existing remote of the same name rather than erroring),
+  and rolls back a broken, token-less stub via `rclone config delete`
+  if the attempt fails or times out (5 minutes), so retrying under the
+  same name afterward isn't blocked by its own safety check.
 - **Settings / update check** (`gui/src-tauri/src/install.rs`'s
   `check_for_update`/`apply_update`): the dashboard does a best-effort
   check against GitHub's latest release once per app session (never

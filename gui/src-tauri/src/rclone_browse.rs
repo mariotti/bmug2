@@ -6,7 +6,8 @@
 // ever surfaces remotes of type "drive" - scoped to Google Drive
 // specifically, since that's what was asked for, not a general
 // "browse any rclone remote" feature.
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// Same search order as bin/backmeup.shellfunctions.sh's
 /// bmuDetectRclone: bare name (via PATH) first, then the Homebrew/
@@ -80,25 +81,30 @@ fn parse_remotes(json: &str) -> Result<Vec<RawRemote>, String> {
     serde_json::from_str(json).map_err(|e| format!("could not parse rclone's output: {e}\n{json}"))
 }
 
-/// Names (without the trailing ':') of every configured remote whose
-/// type is "drive" - confirmed exact field shape
+/// Shared by list_drive_remotes and create_drive_remote's collision
+/// check - confirmed exact field shape
 /// ({"name":"x","type":"drive","source":"file","description":""}) by
 /// probing `rclone listremotes --json` against a throwaway config file
 /// with placeholder, non-functional credentials, never this machine's
 /// real rclone.conf. Reading the config list is local/offline; unlike
 /// list_folder/create_folder below, this never touches the network.
-pub fn list_drive_remotes() -> Result<Vec<String>, String> {
-    let bin = detect_rclone()
-        .ok_or("rclone was not found on this machine - install it from rclone.org/install")?;
-    let output = Command::new(&bin)
+fn fetch_remotes(bin: &str) -> Result<Vec<RawRemote>, String> {
+    let output = Command::new(bin)
         .args(["listremotes", "--json"])
         .output()
         .map_err(|e| format!("failed to run {bin}: {e}"))?;
     if !output.status.success() {
         return Err(clean_stderr(&String::from_utf8_lossy(&output.stderr)));
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let raw = parse_remotes(&text)?;
+    parse_remotes(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Names (without the trailing ':') of every configured remote whose
+/// type is "drive".
+pub fn list_drive_remotes() -> Result<Vec<String>, String> {
+    let bin = detect_rclone()
+        .ok_or("rclone was not found on this machine - install it from rclone.org/install")?;
+    let raw = fetch_remotes(&bin)?;
     let mut names: Vec<String> = raw.into_iter().filter(|r| r.kind == "drive").map(|r| r.name).collect();
     names.sort();
     Ok(names)
@@ -152,6 +158,193 @@ pub fn create_folder(path: &str) -> Result<(), String> {
     } else {
         Err(clean_stderr(&String::from_utf8_lossy(&output.stderr)))
     }
+}
+
+#[derive(serde::Deserialize)]
+struct ConfigOption {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "DefaultStr")]
+    default_str: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ConfigStep {
+    #[serde(rename = "State")]
+    state: String,
+    #[serde(rename = "Option")]
+    option: Option<ConfigOption>,
+    #[serde(rename = "Error")]
+    error: String,
+}
+
+/// Picks the answer for one question in rclone's non-interactive
+/// `config create`/`config update --continue` state machine (confirmed
+/// live, against a throwaway config, never this machine's real
+/// rclone.conf - see create_drive_remote's own doc comment). Only two
+/// questions get a fixed override - everything else (e.g. the
+/// team/shared-drive question, whose exact Option.Name wasn't
+/// confirmed live since reaching it requires completing real Google
+/// sign-in) falls back to rclone's own proposed default, which is
+/// always "no"/restrictive for anything this picker doesn't have a
+/// specific opinion about.
+fn answer_for(option: &ConfigOption) -> String {
+    match option.name.as_str() {
+        // Always proceed with rclone's shared OAuth client - the same
+        // choice the manual `rclone config` walkthrough already gives.
+        "config_shared_client_id" => "true".to_string(),
+        // Always use the local browser flow - this app always runs on
+        // the same machine as the browser that completes sign-in.
+        "config_is_local" => "true".to_string(),
+        _ => option.default_str.clone(),
+    }
+}
+
+fn parse_config_step(output: &Output) -> Result<ConfigStep, String> {
+    if !output.status.success() {
+        return Err(clean_stderr(&String::from_utf8_lossy(&output.stderr)));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("could not parse rclone's output: {e}\n{}", String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Runs one `config update --continue` step with a wall-clock timeout,
+/// for the one step (answering config_is_local with "true") that makes
+/// rclone itself open the system browser and block waiting for the
+/// Google OAuth redirect to come back on a local port. Without this, a
+/// user who closes that browser tab (or never finishes signing in)
+/// would hang the GUI's "Connecting..." state forever - Tauri has no
+/// built-in way to cancel an in-flight command, so the timeout is the
+/// only way this ever resolves on its own.
+///
+/// Reads stdout/stderr only after the child exits rather than
+/// draining them concurrently (the usual pipe-deadlock risk with a
+/// manual spawn) - safe here specifically because every step of this
+/// protocol only ever prints one small JSON object, never enough to
+/// fill the OS pipe buffer before exiting.
+fn run_with_timeout(bin: &str, args: &[&str], timeout: Duration) -> Result<Output, String> {
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {bin}: {e}"))?;
+
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("failed to wait for {bin}: {e}"))? {
+            use std::io::Read;
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                let _ = out.read_to_end(&mut stdout);
+            }
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_end(&mut stderr);
+            }
+            return Ok(Output { status, stdout, stderr });
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("timed out waiting for Google sign-in - try again".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+const MAX_CONFIG_STEPS: u32 = 10;
+const OAUTH_TIMEOUT: Duration = Duration::from_secs(300);
+
+fn run_create_flow(bin: &str, name: &str) -> Result<(), String> {
+    let output = Command::new(bin)
+        .args(["config", "create", name, "drive", "scope=drive", "--non-interactive"])
+        .output()
+        .map_err(|e| format!("failed to run {bin}: {e}"))?;
+    let mut step = parse_config_step(&output)?;
+
+    let mut steps_taken = 0;
+    while !step.state.is_empty() {
+        if !step.error.is_empty() {
+            return Err(step.error);
+        }
+        steps_taken += 1;
+        if steps_taken > MAX_CONFIG_STEPS {
+            return Err("rclone's setup asked more questions than expected - finish it manually via `rclone config`".to_string());
+        }
+        let option = step
+            .option
+            .as_ref()
+            .ok_or("rclone's setup returned a question with no details")?;
+        let answer = answer_for(option);
+        let is_oauth_step = option.name == "config_is_local" && answer == "true";
+        let args = [
+            "config",
+            "update",
+            name,
+            "--continue",
+            "--state",
+            &step.state,
+            "--result",
+            &answer,
+            "--non-interactive",
+        ];
+
+        let next_output = if is_oauth_step {
+            run_with_timeout(bin, &args, OAUTH_TIMEOUT)?
+        } else {
+            Command::new(bin)
+                .args(args)
+                .output()
+                .map_err(|e| format!("failed to run {bin}: {e}"))?
+        };
+        step = parse_config_step(&next_output)?;
+    }
+    if !step.error.is_empty() {
+        return Err(step.error);
+    }
+
+    // Belt-and-suspenders: confirm it actually landed as a drive
+    // remote rather than trusting the state machine's "done" signal
+    // blindly.
+    if !list_drive_remotes()?.iter().any(|n| n == name) {
+        return Err("setup finished but the new remote isn't showing up as a Google Drive remote".to_string());
+    }
+    Ok(())
+}
+
+/// Adds a new Google Drive remote by driving rclone's own
+/// non-interactive setup protocol (`rclone config create ...
+/// --non-interactive`, stepped via `rclone config update --continue`
+/// until its own State comes back empty) - confirmed live against a
+/// throwaway config, never this machine's real rclone.conf. The one
+/// question this can't answer on its own is the actual Google sign-in:
+/// answering config_is_local with "true" makes rclone itself open the
+/// system browser and block waiting for the OAuth redirect, which is
+/// exactly the one step that has to stay a real human action.
+///
+/// `rclone config create` does *not* error on an existing name - it
+/// silently starts overwriting it (confirmed live) - so the up-front
+/// existence check below is a real safety requirement, not just
+/// defensive. Also confirmed live: an abandoned/timed-out attempt
+/// leaves a broken, token-less stub remote behind under `name`, which
+/// is why any failure path here rolls that back via `config delete`
+/// rather than leaving a retry under the same name permanently
+/// blocked by the same collision check.
+pub fn create_drive_remote(name: &str) -> Result<(), String> {
+    let bin = detect_rclone()
+        .ok_or("rclone was not found on this machine - install it from rclone.org/install")?;
+
+    let existing = fetch_remotes(&bin)?;
+    if existing.iter().any(|r| r.name == name) {
+        return Err(format!("a remote named \"{name}\" already exists - pick a different name"));
+    }
+
+    let result = run_create_flow(&bin, name);
+    if result.is_err() {
+        let _ = Command::new(&bin).args(["config", "delete", name]).output();
+    }
+    result
 }
 
 #[cfg(test)]
@@ -238,5 +431,54 @@ mod tests {
         assert!(!remotes.is_empty(), "no Google Drive remote configured to test against");
         let result = list_folder(&format!("{}:", remotes[0]));
         assert!(result.is_ok(), "list_folder failed: {:?}", result.err());
+    }
+
+    // Exact shapes confirmed live by probing `rclone config create
+    // <name> drive scope=drive --non-interactive` (and its --continue
+    // follow-up) against a throwaway config - never this machine's
+    // real rclone.conf, and never completing the real OAuth step.
+    const CLIENT_ID_WARNING_STEP: &str = r#"{
+"State": "client_id_warning",
+"Option": {"Name": "config_shared_client_id", "DefaultStr": "false"},
+"Error": ""
+}"#;
+    const CONFIG_IS_LOCAL_STEP: &str = r#"{
+"State": "*oauth-islocal,teamdrive,oauth,",
+"Option": {"Name": "config_is_local", "DefaultStr": "true"},
+"Error": ""
+}"#;
+    const DONE_STEP: &str = r#"{"State": "", "Error": ""}"#;
+    const ERROR_STEP: &str = r#"{"State": "", "Error": "name already in use"}"#;
+
+    #[test]
+    fn overrides_client_id_and_local_browser_questions_to_true() {
+        let step: ConfigStep = serde_json::from_str(CLIENT_ID_WARNING_STEP).unwrap();
+        assert_eq!(answer_for(step.option.as_ref().unwrap()), "true");
+
+        let step: ConfigStep = serde_json::from_str(CONFIG_IS_LOCAL_STEP).unwrap();
+        assert_eq!(answer_for(step.option.as_ref().unwrap()), "true");
+    }
+
+    #[test]
+    fn falls_back_to_rclones_own_default_for_unknown_questions() {
+        let option = ConfigOption {
+            name: "team_drive".to_string(),
+            default_str: "false".to_string(),
+        };
+        assert_eq!(answer_for(&option), "false");
+    }
+
+    #[test]
+    fn parses_a_done_step_with_no_option() {
+        let step: ConfigStep = serde_json::from_str(DONE_STEP).unwrap();
+        assert!(step.state.is_empty());
+        assert!(step.option.is_none());
+        assert!(step.error.is_empty());
+    }
+
+    #[test]
+    fn parses_an_error_step() {
+        let step: ConfigStep = serde_json::from_str(ERROR_STEP).unwrap();
+        assert_eq!(step.error, "name already in use");
     }
 }
