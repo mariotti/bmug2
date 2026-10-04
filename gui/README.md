@@ -61,7 +61,12 @@ well-known install location" stance):
   `updatedb`/`replicate` stay a separate, optional "Housekeeping"
   schedule (same daily-or-interval choice) rather than running on every
   source's own timer (avoids redundant reindexing when sources have
-  different times). The installed artifact is the source of truth for
+  different times) - a "Run now" button next to it (`run.rs`'s
+  `run_housekeeping_now`, same stop-on-first-failure order as the
+  installed schedule's own wrapper script) runs it on demand, whether
+  or not a schedule is set, since configuring an off-site backend alone
+  doesn't schedule anything - see docs/DESTINATIONS.md. The installed
+  artifact is the source of truth for
   "is this actually scheduled" - `config.json`'s copy is just a UI
   mirror, self-corrected on load if it drifts. cron/`at` stay
   CLI-only; this only ever writes each platform's native, preferred

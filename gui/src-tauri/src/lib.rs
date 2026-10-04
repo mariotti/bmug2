@@ -113,6 +113,11 @@ fn run_backup_now(bin_dir: String, source_path: String) -> Result<RunOutput, Str
 }
 
 #[tauri::command]
+fn run_housekeeping_now(bin_dir: String) -> Result<RunOutput, String> {
+    run::run_housekeeping_now(&bin_dir)
+}
+
+#[tauri::command]
 fn set_source_schedule(
     app: AppHandle,
     bin_dir: String,
@@ -254,6 +259,7 @@ pub fn run() {
             add_source,
             remove_source,
             run_backup_now,
+            run_housekeeping_now,
             set_source_schedule,
             clear_source_schedule,
             get_housekeeping_schedule,

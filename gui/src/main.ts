@@ -642,6 +642,24 @@ async function runBackupNow(binDir: string, source: BackupSource) {
   }
 }
 
+async function runHousekeepingNow(binDir: string) {
+  renderInstalling("Running housekeeping (updatedb + replicate)…");
+  try {
+    const result = await invoke<RunOutput>("run_housekeeping_now", { binDir });
+    void renderDashboard(binDir, {
+      ok: result.ok,
+      message: result.ok ? "Housekeeping completed." : "Housekeeping failed.",
+      log: result.ok ? undefined : result.log,
+    });
+  } catch (err) {
+    void renderDashboard(binDir, {
+      ok: false,
+      message: "Housekeeping failed.",
+      log: String(err),
+    });
+  }
+}
+
 function buildSearchSection(binDir: string): HTMLElement {
   const [searchField, searchInput] = field(
     "Search (space-separated patterns)",
@@ -809,16 +827,19 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
     editRow.style.display = "";
   };
 
+  const runNowBtn = el("button", { type: "button" }, ["Run now"]);
+  runNowBtn.addEventListener("click", () => void runHousekeepingNow(binDir));
+
   if (schedule) {
     const editBtn = el("button", { type: "button" }, ["Edit"]);
     editBtn.addEventListener("click", showEdit);
     const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
     offBtn.addEventListener("click", () => void clearHousekeepingSchedule(binDir));
-    container.replaceChildren(`${formatSchedule(schedule)} `, editBtn, offBtn);
+    container.replaceChildren(`${formatSchedule(schedule)} `, editBtn, offBtn, runNowBtn);
   } else {
     const setBtn = el("button", { type: "button" }, ["Set schedule"]);
     setBtn.addEventListener("click", showEdit);
-    container.replaceChildren("Off ", setBtn);
+    container.replaceChildren("Off ", setBtn, runNowBtn);
   }
 
   return el("section", {}, [header, desc, container, editRow]);
