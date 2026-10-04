@@ -3,6 +3,7 @@ mod dashboard;
 mod ignore;
 mod install;
 mod proton_browse;
+mod rclone_browse;
 mod replication;
 mod run;
 mod schedule;
@@ -13,6 +14,7 @@ use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome, UpdateCheck};
 use proton_browse::RemoteEntry;
+use rclone_browse::RemoteEntry as RcloneRemoteEntry;
 use replication::{ReplicationRequest, ReplicationStatus};
 use run::RunOutput;
 use serde::Deserialize;
@@ -206,6 +208,26 @@ fn create_proton_folder(parent: String, name: String) -> Result<(), String> {
     proton_browse::create_folder(&parent, &name)
 }
 
+#[tauri::command]
+fn rclone_available() -> bool {
+    rclone_browse::available()
+}
+
+#[tauri::command]
+fn list_drive_remotes() -> Result<Vec<String>, String> {
+    rclone_browse::list_drive_remotes()
+}
+
+#[tauri::command]
+fn list_rclone_folder(path: String) -> Result<Vec<RcloneRemoteEntry>, String> {
+    rclone_browse::list_folder(&path)
+}
+
+#[tauri::command]
+fn create_rclone_folder(path: String) -> Result<(), String> {
+    rclone_browse::create_folder(&path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -238,7 +260,11 @@ pub fn run() {
             proton_drive_available,
             proton_drive_signed_in,
             list_proton_folder,
-            create_proton_folder
+            create_proton_folder,
+            rclone_available,
+            list_drive_remotes,
+            list_rclone_folder,
+            create_rclone_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
