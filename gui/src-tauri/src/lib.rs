@@ -209,6 +209,11 @@ fn create_proton_folder(parent: String, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn proton_drive_login() -> Result<(), String> {
+    proton_browse::login()
+}
+
+#[tauri::command]
 fn rclone_available() -> bool {
     rclone_browse::available()
 }
@@ -266,6 +271,7 @@ pub fn run() {
             proton_drive_signed_in,
             list_proton_folder,
             create_proton_folder,
+            proton_drive_login,
             rclone_available,
             list_drive_remotes,
             list_rclone_folder,

@@ -952,18 +952,10 @@ export function buildReplicationEditor(
       if (!available) {
         browseBtn.disabled = true;
         browseBtn.title = "proton-drive is not installed on this machine";
-        return;
       }
-      void invoke<boolean>("proton_drive_signed_in")
-        .then((signedIn) => {
-          if (!signedIn) {
-            browseBtn.disabled = true;
-            browseBtn.title = 'not signed in - run "proton-drive auth login" in a terminal, then reopen this editor';
-          }
-        })
-        .catch(() => {
-          // Same no-bridge/failed-command case as the outer check.
-        });
+      // Not being signed in is no longer a reason to disable the
+      // button - buildProtonFolderBrowser checks that itself and
+      // offers a "Sign in..." button in-panel instead of a dead end.
     })
     .catch(() => {
       // No Tauri bridge (e.g. under test) or the command itself failed -
@@ -1055,6 +1047,25 @@ function buildProtonFolderBrowser(
     return cancelBtn;
   };
 
+  // Not signed in yet - offer to sign in right here instead of a dead
+  // end pointing at a terminal. `proton-drive auth login` opens the
+  // system browser itself and blocks until sign-in completes.
+  const renderSignInForm = (error?: string) => {
+    const signInBtn = el("button", { type: "button", class: "browse-btn" }, ["Sign in to Proton Drive…"]);
+    signInBtn.addEventListener("click", () => {
+      container.replaceChildren(
+        el("p", {}, ["A browser window should open — finish signing in there. This can take a minute…"]),
+      );
+      void invoke("proton_drive_login")
+        .then(() => render())
+        .catch((err) => renderSignInForm(String(err)));
+    });
+    const children: HTMLElement[] = [];
+    if (error) children.push(el("p", { class: "settings-check-error" }, [error]));
+    children.push(el("p", {}, ["Not signed in to Proton Drive yet."]), signInBtn, cancelRow());
+    container.replaceChildren(...children);
+  };
+
   const renderLoaded = (entries: RemoteEntry[]) => {
     const segments = currentPath.split("/").filter(Boolean);
     const breadcrumb = el("p", { class: "remote-breadcrumb" }, []);
@@ -1111,7 +1122,9 @@ function buildProtonFolderBrowser(
     );
   };
 
-  render();
+  void invoke<boolean>("proton_drive_signed_in")
+    .then((signedIn) => (signedIn ? render() : renderSignInForm()))
+    .catch(() => render()); // let a real click surface its own error, same existing fallback philosophy
   return container;
 }
 
