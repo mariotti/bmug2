@@ -90,7 +90,17 @@ jobs:
         run: npm test
       - name: Run Rust test suite
         working-directory: gui/src-tauri
-        run: cargo test
+        # --test-threads=1: replication.rs's sandbox()/fake_configure_script()
+        # test helpers write a small shell script, chmod it executable, then
+        # immediately exec it, with no synchronization against any other test
+        # doing the same thing concurrently - a real ETXTBSY ("Text file busy")
+        # race under cargo test's default parallel threads, confirmed flaky in
+        # CI (passed in a duplicate parallel run of the identical commit,
+        # failed in a different replication:: test each time). Serializing the
+        # whole suite is the simple fix; this binary's tests are fast enough
+        # (well under a minute total) that losing parallelism here is cheap
+        # compared to chasing a non-deterministic failure.
+        run: cargo test -- --test-threads=1
 
   gui-macos:
     runs-on: macos-latest
@@ -122,4 +132,7 @@ jobs:
         run: npm test
       - name: Run Rust test suite
         working-directory: gui/src-tauri
-        run: cargo test
+        # See the gui-linux job's own comment on this same flag - same
+        # unsynchronized write+chmod+exec race in replication.rs's test
+        # helpers, same fix.
+        run: cargo test -- --test-threads=1
