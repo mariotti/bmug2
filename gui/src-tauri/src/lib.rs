@@ -2,6 +2,7 @@ mod config;
 mod dashboard;
 mod ignore;
 mod install;
+mod replication;
 mod run;
 mod schedule;
 mod sources;
@@ -10,6 +11,7 @@ mod version;
 use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
 use install::{DefaultPaths, InstallOutcome};
+use replication::{ReplicationRequest, ReplicationStatus};
 use run::RunOutput;
 use serde::Deserialize;
 use tauri::AppHandle;
@@ -152,6 +154,26 @@ fn set_ignore_settings(
     ignore::set(std::path::Path::new(&bin_dir), &source_path, settings)
 }
 
+#[tauri::command]
+fn get_replication_status(bin_dir: String) -> ReplicationStatus {
+    replication::get_status(std::path::Path::new(&bin_dir))
+}
+
+#[tauri::command]
+fn get_replication_capability(bin_dir: String) -> Result<(), String> {
+    replication::check_flags_supported(std::path::Path::new(&bin_dir))
+}
+
+#[tauri::command]
+fn set_replication(bin_dir: String, request: ReplicationRequest) -> Result<(), String> {
+    replication::set(std::path::Path::new(&bin_dir), request)
+}
+
+#[tauri::command]
+fn clear_replication(bin_dir: String) -> Result<(), String> {
+    replication::clear(std::path::Path::new(&bin_dir))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -174,7 +196,11 @@ pub fn run() {
             set_housekeeping_schedule,
             clear_housekeeping_schedule,
             get_ignore_settings,
-            set_ignore_settings
+            set_ignore_settings,
+            get_replication_status,
+            get_replication_capability,
+            set_replication,
+            clear_replication
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
