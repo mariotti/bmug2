@@ -573,3 +573,53 @@ mod macos_real_tests {
         assert!(status(&label).is_none(), "status should be gone after uninstall");
     }
 }
+
+/// Real install()/uninstall()/status() against actual systemd --user -
+/// same reasoning and the same not-run-by-default guarantee as
+/// macos_real_tests above. Needs a real user session/D-Bus session bus
+/// for `systemctl --user` to work at all (not available on a minimal
+/// container without `loginctl enable-linger` or an active login) -
+/// unlike the macOS launchd equivalent, a bare CI runner typically
+/// can't run this even with --ignored; it's meant for a real desktop
+/// Linux machine.
+#[cfg(all(test, target_os = "linux"))]
+mod linux_real_tests {
+    use super::*;
+
+    struct Cleanup(String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = platform::uninstall(&self.0);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn install_and_uninstall_a_real_daily_systemd_timer() {
+        let label = format!("io.github.mariotti.bmug2.test.daily.{}", std::process::id());
+        let _cleanup = Cleanup(label.clone());
+        let daily = Schedule::Daily { hour: 3, minute: 30 };
+
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test").expect("install should succeed");
+        let found = status(&label).expect("status should read back what was just installed");
+        assert_eq!(found, daily);
+
+        uninstall(&label).expect("uninstall should succeed");
+        assert!(status(&label).is_none(), "status should be gone after uninstall");
+    }
+
+    #[test]
+    #[ignore]
+    fn install_and_uninstall_a_real_interval_systemd_timer() {
+        let label = format!("io.github.mariotti.bmug2.test.interval.{}", std::process::id());
+        let _cleanup = Cleanup(label.clone());
+        let interval = Schedule::Interval { minutes: 15 };
+
+        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test").expect("install should succeed");
+        let found = status(&label).expect("status should read back what was just installed");
+        assert_eq!(found, interval);
+
+        uninstall(&label).expect("uninstall should succeed");
+        assert!(status(&label).is_none(), "status should be gone after uninstall");
+    }
+}
