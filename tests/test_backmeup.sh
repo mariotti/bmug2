@@ -972,6 +972,124 @@ testConfigureReplicateFlagAloneStillPromptsForDirectories() {
     assertTrue "directory prompts were not answered interactively" $?
 }
 
+testConfigureDirFlagsOnlyReconfigurePreservesExistingReplication() {
+    # The real bug this guards: a non-interactive reconfigure (directory
+    # flags only, no --replicate-backend= - exactly install.rs's own
+    # install_new/apply_update call shape) used to silently wipe an
+    # already-configured backend back to empty. Verified live before
+    # fixing: configure proton, re-run with only directory flags, the
+    # whole backend vanished.
+    l_home="${SHUNIT_TMPDIR}/preservereplicationhome"
+    l_checkout="${SHUNIT_TMPDIR}/preservereplicationcheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/preservereplication-fakepath"
+    mkdir -p "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=proton --replicate-proton-remote=/bmug2/kept \
+        < /dev/null > "${SHUNIT_TMPDIR}/preservereplication-install.log" 2>&1
+    assertEquals "initial install failed, see preservereplication-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "proton was not configured by the initial install" $?
+
+    # Re-run with ONLY the four directory flags - no --replicate-backend=
+    # at all - the exact shape install.rs's install_new/apply_update uses.
+    PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/preservereplication-reinstall.log" 2>&1
+    assertEquals "directory-flags-only reinstall failed, see preservereplication-reinstall.log" 0 $?
+
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "proton replication was wiped by a directory-flags-only reconfigure" $?
+    grep -q 'BMU_REPLICATE_PROTON_REMOTE="/bmug2/kept"' "${l_setup}"
+    assertTrue "proton remote was wiped by a directory-flags-only reconfigure" $?
+}
+
+testConfigureReplicateFlagSwitchClearsPreviousBackend() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/switchbackendhome"
+    l_checkout="${SHUNIT_TMPDIR}/switchbackendcheckout"
+    l_fakepath="${SHUNIT_TMPDIR}/switchbackend-fakepath"
+    mkdir -p "${l_checkout}" "${l_fakepath}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    cp "${TESTS_PATH}/fake-proton-drive.sh" "${l_fakepath}/proton-drive"
+    chmod +x "${l_fakepath}/proton-drive"
+
+    PATH="${l_fakepath}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=rclone --replicate-remote-sync=remote:a \
+        --replicate-remote-backups=remote:b \
+        < /dev/null > "${SHUNIT_TMPDIR}/switchbackend-install.log" 2>&1
+    assertEquals "initial rclone install failed, see switchbackend-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertTrue "rclone was not configured by the initial install" $?
+
+    PATH="${l_fakepath}:${PATH}" "${l_home}/usr/bmu/bin/backmeup.configure.sh" \
+        --replicate-backend=proton \
+        < /dev/null > "${SHUNIT_TMPDIR}/switchbackend-reconfigure.log" 2>&1
+    assertEquals "switch to proton failed, see switchbackend-reconfigure.log" 0 $?
+
+    grep -q 'BMU_REPLICATE_BACKEND="proton"' "${l_setup}"
+    assertTrue "backend did not switch to proton" $?
+    grep -q 'BMU_CMDREPLICATE=""' "${l_setup}"
+    assertTrue "switching to proton left a stale rclone BMU_CMDREPLICATE value" $?
+    grep -q 'BMU_REPLICATE_REMOTE_SYNC=""' "${l_setup}"
+    assertTrue "switching to proton left a stale rclone remote-sync value" $?
+    grep -q 'BMU_REPLICATE_REMOTE_BACKUPS=""' "${l_setup}"
+    assertTrue "switching to proton left a stale rclone remote-backups value" $?
+}
+
+testConfigureDecliningInteractivelyPreservesExistingReplication() {
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/declinepreservehome"
+    l_checkout1="${SHUNIT_TMPDIR}/declinepreservecheckout1"
+    l_checkout2="${SHUNIT_TMPDIR}/declinepreservecheckout2"
+    mkdir -p "${l_home}" "${l_checkout1}" "${l_checkout2}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout1}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout2}"
+
+    l_bmu_backend_answer=""
+    if command -v proton-drive > /dev/null 2>&1; then
+        l_bmu_backend_answer="1\n"
+    fi
+    printf "\ny\n\ny\n\ny\n\ny\ny\n${l_bmu_backend_answer}remote:bucket/sync\nremote:bucket/sync-BP\n" | \
+        HOME="${l_home}" "${l_checkout1}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/declinepreserve-install1.log" 2>&1
+    assertEquals "first install failed, see declinepreserve-install1.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertTrue "rclone was not configured by the first install" $?
+
+    # Reinstall over the same (now-existing) install: every directory
+    # prompt accepts its now-real default (matches
+    # testReinstallAtDefaultLocationPreservesExistingSettings's own
+    # proven '\n\n\n\n' shape), then decline the replication prompt.
+    printf '\n\n\n\nn\n' | \
+        HOME="${l_home}" "${l_checkout2}/backmeup.install.sh" \
+        > "${SHUNIT_TMPDIR}/declinepreserve-install2.log" 2>&1
+    assertEquals "reinstall failed, see declinepreserve-install2.log" 0 $?
+
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertTrue "declining interactively wiped an already-configured backend" $?
+    grep -q 'BMU_REPLICATE_REMOTE_SYNC="remote:bucket/sync"' "${l_setup}"
+    assertTrue "declining interactively wiped the remote SYNC destination" $?
+}
+
 #
 # the bmu dispatcher
 # ------------------

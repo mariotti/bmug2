@@ -228,6 +228,45 @@ form button[type="submit"] {
   cursor: pointer;
 }
 
+.dashboard-top-bar {
+  text-align: right;
+  margin-bottom: 0.6em;
+}
+
+.dashboard-top-bar button {
+  border-radius: 8px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.4em 0.9em;
+  cursor: pointer;
+}
+
+.settings-version,
+.settings-confirm {
+  text-align: left;
+  margin-bottom: 1em;
+}
+
+.settings-version button,
+.settings-confirm button {
+  border-radius: 8px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.4em 0.9em;
+  cursor: pointer;
+  margin-right: 0.5em;
+}
+
+.settings-uptodate {
+  color: #1a7431;
+}
+
+.settings-check-error {
+  color: #c0392b;
+}
+
 .status-table {
   width: 100%;
   border-collapse: collapse;
@@ -574,7 +613,10 @@ form button[type="submit"] {
   .schedule-edit button,
   .ignore-edit button,
   .housekeeping-control button,
-  .schedule-info button {
+  .schedule-info button,
+  .dashboard-top-bar button,
+  .settings-version button,
+  .settings-confirm button {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
@@ -584,6 +626,14 @@ form button[type="submit"] {
   .housekeeping-control .remove-btn {
     color: #ff8a80;
     border-color: #ff8a80;
+  }
+
+  .settings-uptodate {
+    color: #b7f5c4;
+  }
+
+  .settings-check-error {
+    color: #f5b7ae;
   }
 
   .schedule-edit-row td {

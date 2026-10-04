@@ -145,6 +145,7 @@ fn find_existing_installs_under(search_root: &Path) -> Vec<String> {
 
 #[derive(Debug, Deserialize)]
 struct LatestRelease {
+    tag_name: Option<String>,
     tarball_url: Option<String>,
 }
 
@@ -218,6 +219,114 @@ pub fn install_new(
 fn install_dir_bin(install_dir: &str) -> String {
     // Matches install.sh's own copy destination: "${BMU_INSTDIR}/bin".
     format!("{install_dir}/bin")
+}
+
+struct InstalledDirs {
+    sync_dir: String,
+    backup_dir: String,
+    index_dir: String,
+    install_dir: String,
+}
+
+/// Reads BMU_DIRRSYNC/BMU_DIRBACKUPS/BMU_DIRDBLOCATE/BMU_INSTDIR back
+/// out of bin_dir/backmeup.setup.sh - the base install dir, NOT the
+/// bin/ subdirectory (install_dir_bin derives that the same way
+/// install_new does). Same "duplicate the tiny line-scan locally" idiom
+/// as version.rs::read_installed_version, ignore.rs::read_setup_var,
+/// and schedule.rs's own equivalent - this file gets its own copy
+/// rather than sharing one, matching the existing convention.
+fn read_installed_dirs(bin_dir: &Path) -> Result<InstalledDirs, String> {
+    let contents = std::fs::read_to_string(bin_dir.join("backmeup.setup.sh"))
+        .map_err(|e| format!("cannot read {}/backmeup.setup.sh: {e}", bin_dir.display()))?;
+    let read_var = |key: &str| -> Option<String> {
+        let prefix = format!("{key}=\"");
+        contents.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix(prefix.as_str())
+                .and_then(|rest| rest.strip_suffix('"'))
+                .map(str::to_string)
+        })
+    };
+    Ok(InstalledDirs {
+        sync_dir: read_var("BMU_DIRRSYNC").ok_or("BMU_DIRRSYNC not found in backmeup.setup.sh")?,
+        backup_dir: read_var("BMU_DIRBACKUPS")
+            .ok_or("BMU_DIRBACKUPS not found in backmeup.setup.sh")?,
+        index_dir: read_var("BMU_DIRDBLOCATE")
+            .ok_or("BMU_DIRDBLOCATE not found in backmeup.setup.sh")?,
+        install_dir: read_var("BMU_INSTDIR").ok_or("BMU_INSTDIR not found in backmeup.setup.sh")?,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UpdateCheck {
+    pub current: (u32, u32, u32),
+    pub latest: (u32, u32, u32),
+    pub update_available: bool,
+}
+
+/// Compares the installed CLI's version against the latest GitHub
+/// release's tag. Read-only - never downloads or installs anything;
+/// apply_update is the only function that mutates the install, and is
+/// never called implicitly from here.
+pub fn check_for_update(bin_dir: &Path) -> Result<UpdateCheck, String> {
+    let current = crate::version::read_installed_version(bin_dir)
+        .ok_or_else(|| format!("{} has no BMU_VERSION marker", bin_dir.display()))?;
+
+    let api = run(Command::new("curl").args([
+        "-sL",
+        "https://api.github.com/repos/mariotti/bmug2/releases/latest",
+    ]))?;
+    if !api.ok {
+        return Err(format!("Failed to query GitHub releases API.\n{}", api.log));
+    }
+    let latest = parse_latest_version(&api.log).ok_or_else(|| {
+        format!(
+            "Could not find a tag_name in the releases API response.\n{}",
+            api.log
+        )
+    })?;
+
+    Ok(UpdateCheck {
+        current,
+        latest,
+        update_available: latest > current,
+    })
+}
+
+/// Re-downloads the latest release and re-runs install.sh IN PLACE
+/// against this exact install's own existing sync/backup/index/install
+/// directories (read back via read_installed_dirs), never caller-
+/// supplied ones. Passing different directory values here would
+/// relocate the install rather than refresh it - that's why this
+/// function derives them from the current config instead of accepting
+/// them as parameters, unlike install_new.
+///
+/// Must only ever be invoked after the caller has already obtained an
+/// explicit, separate user confirmation - this function itself performs
+/// no confirmation of its own and is never called automatically.
+pub fn apply_update(app: &AppHandle, bin_dir: &Path) -> Result<InstallOutcome, String> {
+    let dirs = read_installed_dirs(bin_dir)?;
+
+    let base_tmp = app
+        .path()
+        .temp_dir()
+        .map_err(|e| format!("cannot resolve temp directory: {e}"))?;
+    let work_dir = base_tmp.join(format!("bmug2-update-{}", std::process::id()));
+    std::fs::create_dir_all(&work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
+
+    let result = install_new_into(
+        &work_dir,
+        &dirs.sync_dir,
+        &dirs.backup_dir,
+        &dirs.index_dir,
+        &dirs.install_dir,
+    );
+    let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
+
+    let outcome = result?;
+    config::save(app, install_dir_bin(&dirs.install_dir).as_str())?;
+    Ok(outcome)
 }
 
 fn install_new_into(
@@ -295,6 +404,16 @@ fn parse_tarball_url(api_response: &str) -> Option<String> {
     release.tarball_url
 }
 
+/// Strips a leading "v" (GitHub tags here are "v2.15.0") and reuses
+/// version::parse_version - the releases API's tag_name is the only
+/// place bmug2's released version is expressed outside a real install.
+fn parse_latest_version(api_response: &str) -> Option<(u32, u32, u32)> {
+    let release: LatestRelease = serde_json::from_str(api_response).ok()?;
+    let tag = release.tag_name?;
+    let stripped = tag.strip_prefix('v').unwrap_or(&tag);
+    crate::version::parse_version(stripped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,6 +436,54 @@ mod tests {
     #[test]
     fn invalid_json_is_none() {
         assert_eq!(parse_tarball_url("not json"), None);
+    }
+
+    #[test]
+    fn parses_latest_version_from_real_shaped_response() {
+        let json = r#"{"tag_name":"v2.15.0","tarball_url":"https://..."}"#;
+        assert_eq!(parse_latest_version(json), Some((2, 15, 0)));
+    }
+
+    #[test]
+    fn parses_latest_version_without_v_prefix_too() {
+        let json = r#"{"tag_name":"2.15.0","tarball_url":"https://..."}"#;
+        assert_eq!(parse_latest_version(json), Some((2, 15, 0)));
+    }
+
+    #[test]
+    fn missing_tag_name_yields_no_latest_version() {
+        let json = r#"{"tarball_url":"https://..."}"#;
+        assert_eq!(parse_latest_version(json), None);
+    }
+
+    #[test]
+    fn reads_installed_dirs_from_a_real_shaped_setup_file() {
+        let dir = std::env::temp_dir().join(format!("bmug2-dirs-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            "BMU_DIRRSYNC=\"/home/alex/Backups/rsyncBackup\"\n\
+             BMU_DIRBACKUPS=\"/home/alex/Backups/rsyncBackup-BP\"\n\
+             BMU_DIRDBLOCATE=\"/home/alex/Backups/rsyncBackup/.locate.dir\"\n\
+             BMU_INSTDIR=\"/home/alex/usr/bmu\"\n",
+        )
+        .unwrap();
+        let dirs = read_installed_dirs(&dir).unwrap();
+        assert_eq!(dirs.install_dir, "/home/alex/usr/bmu");
+        assert_eq!(dirs.sync_dir, "/home/alex/Backups/rsyncBackup");
+        assert_eq!(dirs.backup_dir, "/home/alex/Backups/rsyncBackup-BP");
+        assert_eq!(dirs.index_dir, "/home/alex/Backups/rsyncBackup/.locate.dir");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_dir_var_errors_clearly() {
+        let dir =
+            std::env::temp_dir().join(format!("bmug2-dirs-missing-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("backmeup.setup.sh"), "BMU_DIRRSYNC=\"/x\"\n").unwrap();
+        assert!(read_installed_dirs(&dir).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -376,6 +543,29 @@ mod tests {
         assert!(Path::new(&outcome.bin_dir).join("backmeup.sh").is_file());
 
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Real end-to-end verification against the live GitHub API - same
+    /// reasoning/convention as install_new_into_works_end_to_end_for_real
+    /// above. Run explicitly with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn check_for_update_fetches_a_real_latest_version() {
+        let dir = std::env::temp_dir().join(format!("bmug2-update-check-e2e-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            "BMU_DIRRSYNC=\"/tmp/x\"\nBMU_VERSION=\"0.0.1\"\n",
+        )
+        .unwrap();
+        let result = check_for_update(&dir);
+        assert!(result.is_ok(), "check_for_update failed: {:?}", result.err());
+        let check = result.unwrap();
+        assert!(
+            check.update_available,
+            "0.0.1 should always be behind the real latest release"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

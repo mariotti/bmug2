@@ -92,7 +92,7 @@ fi
 # from whenever the install was first set up (sourcing an existing
 # setup.sh above would otherwise silently win). Bump by hand alongside
 # every git tag.
-BMU_VERSION="2.14.0"
+BMU_VERSION="2.15.0"
 #
 echo "You are configuring BMU to run from: ${BMU_PATH}"
 #
@@ -189,23 +189,35 @@ fi;
 #   rclone   - mirrors SYNC and HISTORY to any rclone remote
 #   proton   - uploads HISTORY only, natively, to Proton Drive (no SYNC
 #              leg - see backmeup.replicate.proton.sh)
+#
+# Deliberately NOT reset to empty here before branching (a real, shipped
+# bug fixed by removing that reset - confirmed live: a non-interactive
+# reconfigure with only directory flags and no --replicate-backend= used
+# to silently wipe an already-configured backend back to empty, since
+# every branch below used to inherit that reset including the two
+# "skip" branches and the interactive decline). Each branch that
+# actually CHANGES the backend now explicitly sets/clears every one of
+# these six vars itself; every branch that means "leave it alone" does
+# nothing to them at all, so sourcing backmeup.setup.sh above - which
+# already populated these vars with the real existing config, or the
+# template's empty defaults for a fresh install - is what wins.
 echo ""
 echo "Optional: bmug2 can automate copying SYNC/HISTORY to an off-site"
 echo "destination (S3, Google Drive, a remote host, Proton Drive, etc.),"
 echo "on top of the local versioning above - see docs/DESTINATIONS.md"
 echo "for the full picture."
 echo ""
-BMU_REPLICATE_BACKEND=""
-BMU_CMDREPLICATE=""
-BMU_REPLICATE_REMOTE_SYNC=""
-BMU_REPLICATE_REMOTE_BACKUPS=""
-BMU_REPLICATE_PROTON_BIN=""
-BMU_REPLICATE_PROTON_REMOTE=""
 bmuDetectRclone
 bmuDetectProton
 if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
     case "${BMU_CLI_REPLICATE_BACKEND}" in
         none)
+            BMU_REPLICATE_BACKEND=""
+            BMU_CMDREPLICATE=""
+            BMU_REPLICATE_REMOTE_SYNC=""
+            BMU_REPLICATE_REMOTE_BACKUPS=""
+            BMU_REPLICATE_PROTON_BIN=""
+            BMU_REPLICATE_PROTON_REMOTE=""
             echo "Off-site replication disabled (--replicate-backend=none)."
             ;;
         rclone)
@@ -218,6 +230,8 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
                 echo "ERROR: --replicate-backend=rclone requires both --replicate-remote-sync= and --replicate-remote-backups=." >&2
                 exit 1
             fi
+            BMU_REPLICATE_PROTON_BIN=""
+            BMU_REPLICATE_PROTON_REMOTE=""
             BMU_REPLICATE_BACKEND="rclone"
             BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
             BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
@@ -230,6 +244,9 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
                 echo "  Install it (proton.me/download/drive/cli) and re-run." >&2
                 exit 1
             fi
+            BMU_CMDREPLICATE=""
+            BMU_REPLICATE_REMOTE_SYNC=""
+            BMU_REPLICATE_REMOTE_BACKUPS=""
             BMU_REPLICATE_BACKEND="proton"
             BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
             BMU_REPLICATE_PROTON_REMOTE="${BMU_CLI_REPLICATE_PROTON_REMOTE:-/bmug2/`hostname -s 2>/dev/null`}"
@@ -267,6 +284,9 @@ elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
     fi;
     case "${l_bmu_backend_choice}" in
         2)
+            BMU_CMDREPLICATE=""
+            BMU_REPLICATE_REMOTE_SYNC=""
+            BMU_REPLICATE_REMOTE_BACKUPS=""
             BMU_REPLICATE_BACKEND="proton"
             BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
             BMU_REPLICATE_PROTON_REMOTE="/bmug2/`hostname -s 2>/dev/null`"
@@ -279,6 +299,8 @@ elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
             echo "NOTE: SYNC is NOT replicated by this backend - see docs/DESTINATIONS.md."
             ;;
         *)
+            BMU_REPLICATE_PROTON_BIN=""
+            BMU_REPLICATE_PROTON_REMOTE=""
             BMU_REPLICATE_BACKEND="rclone"
             BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
             while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
