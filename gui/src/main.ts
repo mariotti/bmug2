@@ -1393,7 +1393,7 @@ async function clearReplication(binDir: string) {
 // hasFullDiskAccess (macOS only - see has_full_disk_access in
 // schedule.rs) lets this skip the warning entirely once it's moot,
 // rather than nagging a user who already granted it.
-function buildScheduleInfoPanel(hasFullDiskAccess: boolean): HTMLElement | null {
+export function buildScheduleInfoPanel(hasFullDiskAccess: boolean): HTMLElement | null {
   if (isMac()) {
     if (hasFullDiskAccess) return null;
     const openBtn = el("button", { type: "button" }, ["Open Full Disk Access settings"]);
