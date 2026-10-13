@@ -111,7 +111,7 @@ export type ReplicationRequest =
 
 export type ReplicationCapability = { ok: true } | { ok: false; message: string };
 
-interface RunOutput {
+export interface RunOutput {
   log: string;
   ok: boolean;
 }
@@ -662,7 +662,7 @@ async function removeSource(binDir: string, source: BackupSource) {
 // still-serialized job is *presented*. renderDashboard rebuilds every
 // button fresh regardless of outcome, so nothing needs to be manually
 // re-enabled/restored here either way.
-async function runJob(
+export async function runJob(
   binDir: string,
   trigger: HTMLButtonElement,
   row: HTMLElement,

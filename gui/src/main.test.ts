@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { listen } from "@tauri-apps/api/event";
 import {
   isDaily,
   el,
@@ -15,13 +16,20 @@ import {
   buildScheduleInfoPanel,
   sourceLabel,
   isMac,
+  runJob,
   type Schedule,
   type StatusProject,
   type StatusResult,
   type BackupSource,
   type IgnoreSettings,
   type ReplicationStatus,
+  type RunOutput,
 } from "./main";
+
+// runJob awaits listen() before doing anything else observable from a test
+// (see its own "listen before invoking" comment in main.ts), so it needs a
+// resolved stand-in here regardless of which test exercises it.
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 function ignoreSettings(overrides: Partial<IgnoreSettings> = {}): IgnoreSettings {
   return {
@@ -415,5 +423,100 @@ describe("buildBmuignoreEditor", () => {
     const [, cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runJob", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(listen).mockReset();
+  });
+
+  // Mirrors the two real shapes runJob is wired into: a per-source row
+  // (buildSourcesSection - a <tr><td><pre></td></tr>) and Housekeeping's row
+  // (buildHousekeepingSection - a plain <div><pre></div>). A real bug once
+  // slipped through specifically because it only broke one of these two
+  // shapes (inferring the row from logEl.parentElement - correct for the
+  // <div> case, wrong for the <tr> one) - exercising both here so that
+  // class of bug can't silently come back.
+  function perSourceRow() {
+    const logEl = el("pre", { class: "log" }, []);
+    const row = el("tr", {}, [el("td", {}, [logEl])]);
+    row.style.display = "none";
+    return { row, logEl };
+  }
+
+  function housekeepingRow() {
+    const logEl = el("pre", { class: "log" }, []);
+    const row = el("div", {}, [logEl]);
+    row.style.display = "none";
+    return { row, logEl };
+  }
+
+  // Never resolves - these tests only inspect the synchronous "while
+  // running" state runJob sets up before its first await, not completion
+  // handling (which goes through renderDashboard, exercised separately via
+  // the browser-based end-to-end check, not a unit test).
+  const pendingJob = (): (() => Promise<RunOutput>) => () => new Promise(() => {});
+
+  it("reveals only the triggering job's own row, leaving a sibling job's row hidden", () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const source = perSourceRow();
+    const housekeeping = housekeepingRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const hkTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    document.querySelector("#app")!.append(source.row, housekeeping.row, sourceTrigger, hkTrigger);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+
+    expect(source.row.style.display).toBe("");
+    expect(housekeeping.row.style.display).toBe("none");
+  });
+
+  it("disables every job-trigger-btn, leaves unrelated buttons alone, and spins the clicked one", () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const source = perSourceRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const hkTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const scheduleBtn = el("button", {}, ["Set schedule"]);
+    document.querySelector("#app")!.append(source.row, sourceTrigger, hkTrigger, scheduleBtn);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+
+    expect(sourceTrigger.disabled).toBe(true);
+    expect(sourceTrigger.textContent).toContain("Running…");
+    expect(sourceTrigger.querySelector(".spinner")).not.toBeNull();
+    expect(hkTrigger.disabled).toBe(true);
+    expect(scheduleBtn.disabled).toBe(false);
+  });
+
+  it("appends each streamed line to the triggering job's own log, not a sibling's", async () => {
+    let handler: ((event: { payload: string }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_event, cb) => {
+      handler = cb as (event: { payload: string }) => void;
+      return () => {};
+    });
+    const source = perSourceRow();
+    const housekeeping = housekeepingRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    document.querySelector("#app")!.append(source.row, housekeeping.row, sourceTrigger);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    handler?.({ payload: "proj1/file1.txt" });
+
+    expect(source.logEl.textContent).toBe("proj1/file1.txt\n");
+    expect(housekeeping.logEl.textContent).toBe("");
   });
 });
