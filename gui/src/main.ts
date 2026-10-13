@@ -804,7 +804,7 @@ function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
   resultsBox.replaceChildren(...children);
 }
 
-async function renderDashboard(binDir: string, banner?: RunBanner) {
+export async function renderDashboard(binDir: string, banner?: RunBanner) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, ["Loading status…"]));
   let status: StatusResult;
   let sources: BackupSource[];
