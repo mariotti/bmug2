@@ -116,7 +116,7 @@ export interface RunOutput {
   ok: boolean;
 }
 
-interface RunBanner {
+export interface RunBanner {
   ok: boolean;
   message: string;
   log?: string;
@@ -1512,7 +1512,7 @@ export function isMac(): boolean {
   return navigator.platform.toLowerCase().includes("mac");
 }
 
-function buildRunBanner(banner: RunBanner): HTMLElement {
+export function buildRunBanner(banner: RunBanner): HTMLElement {
   const cls = banner.ok ? "run-banner run-banner-ok" : "run-banner run-banner-error";
   const children: (Node | string)[] = [el("p", {}, [banner.message])];
   if (banner.log) children.push(el("pre", { class: "log log-error" }, [banner.log]));

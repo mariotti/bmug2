@@ -17,6 +17,7 @@ import {
   sourceLabel,
   isMac,
   runJob,
+  buildRunBanner,
   type Schedule,
   type StatusProject,
   type StatusResult,
@@ -24,6 +25,7 @@ import {
   type IgnoreSettings,
   type ReplicationStatus,
   type RunOutput,
+  type RunBanner,
 } from "./main";
 
 // runJob awaits listen() before doing anything else observable from a test
@@ -423,6 +425,38 @@ describe("buildBmuignoreEditor", () => {
     const [, cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildRunBanner", () => {
+  function render(banner: RunBanner) {
+    return buildRunBanner(banner);
+  }
+
+  it("renders a success banner with the ok styling and no log", () => {
+    const banner = render({ ok: true, message: "Backup for proj1 completed." });
+    expect(banner.className).toBe("run-banner run-banner-ok");
+    expect(banner.textContent).toBe("Backup for proj1 completed.");
+    expect(banner.querySelector("pre")).toBeNull();
+  });
+
+  it("renders a failure banner with the error styling and the full log", () => {
+    const banner = render({
+      ok: false,
+      message: "Backup for proj1 failed.",
+      log: "rsync: connection unexpectedly closed\nrsync error: error in rsync protocol data stream",
+    });
+    expect(banner.className).toBe("run-banner run-banner-error");
+    expect(banner.querySelector("p")?.textContent).toBe("Backup for proj1 failed.");
+    const log = banner.querySelector("pre");
+    expect(log?.className).toBe("log log-error");
+    expect(log?.textContent).toBe("rsync: connection unexpectedly closed\nrsync error: error in rsync protocol data stream");
+  });
+
+  it("renders a failure banner with no log element when no log was given", () => {
+    const banner = render({ ok: false, message: "Backup for proj1 failed." });
+    expect(banner.className).toBe("run-banner run-banner-error");
+    expect(banner.querySelector("pre")).toBeNull();
   });
 });
 
