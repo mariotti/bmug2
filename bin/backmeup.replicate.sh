@@ -48,12 +48,23 @@ if [ -n "${l_BMU_DRYRUN}" ]; then
     echo "DRY RUN: nothing will actually be copied."
 fi;
 #
+# -v --stats=10s --stats-one-line: periodic progress output for the GUI's
+# live log (see gui/src-tauri/src/run.rs) - rclone prints nothing at all
+# by default until the whole sync finishes.
+# --fast-list: one recursive listing call instead of walking directory by
+# directory - real-use data (SYNC/BackUp trees with ~5-8k small files
+# replicating to Google Drive) showed the per-file API round-trip, not
+# bandwidth, is the bottleneck; fewer listing transactions leaves more of
+# the remote's rate limit for actual transfers. Pure listing-strategy
+# flag - doesn't change which files get synced/deleted, just how the
+# comparison list is gathered. Costs more memory, negligible at this
+# file-count scale.
 echo "Replicating SYNC (${BMU_DIRRSYNC}) -> ${BMU_REPLICATE_REMOTE_SYNC}"
-${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line ${l_BMU_OPT} "${BMU_DIRRSYNC}" "${BMU_REPLICATE_REMOTE_SYNC}"
+${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line --fast-list ${l_BMU_OPT} "${BMU_DIRRSYNC}" "${BMU_REPLICATE_REMOTE_SYNC}"
 l_BMU_RC1=$?
 #
 echo "Replicating BackUp (${BMU_DIRBACKUPS}) -> ${BMU_REPLICATE_REMOTE_BACKUPS}"
-${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line ${l_BMU_OPT} "${BMU_DIRBACKUPS}" "${BMU_REPLICATE_REMOTE_BACKUPS}"
+${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line --fast-list ${l_BMU_OPT} "${BMU_DIRBACKUPS}" "${BMU_REPLICATE_REMOTE_BACKUPS}"
 l_BMU_RC2=$?
 #
 if [ ${l_BMU_RC1} -ne 0 ] || [ ${l_BMU_RC2} -ne 0 ]; then
