@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import {
   isDaily,
   el,
@@ -15,13 +17,34 @@ import {
   buildScheduleInfoPanel,
   sourceLabel,
   isMac,
+  runJob,
+  buildRunBanner,
+  renderDashboard,
   type Schedule,
   type StatusProject,
   type StatusResult,
   type BackupSource,
   type IgnoreSettings,
   type ReplicationStatus,
+  type RunOutput,
+  type RunBanner,
 } from "./main";
+
+// runJob awaits listen() before doing anything else observable from a test
+// (see its own "listen before invoking" comment in main.ts), so it needs a
+// resolved stand-in here regardless of which test exercises it.
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+// renderDashboard's own fetches, plus whichever job command a test drives,
+// all go through this - the user-journey tests below mock the whole surface
+// rather than injecting callbacks, since the point is exercising the real
+// click -> invoke -> event -> re-render wiring, not a unit in isolation.
+// Defaults to a never-resolving promise (not undefined) so the several
+// pre-existing tests above that don't care about invoke at all - but still
+// trigger a fire-and-forget invoke(...).then(...) somewhere, e.g.
+// buildReplicationEditor's eager rclone_available check - don't crash on
+// "Cannot read properties of undefined (reading 'then')".
+const { pendingForever } = vi.hoisted(() => ({ pendingForever: () => new Promise(() => {}) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(pendingForever) }));
 
 function ignoreSettings(overrides: Partial<IgnoreSettings> = {}): IgnoreSettings {
   return {
@@ -415,5 +438,278 @@ describe("buildBmuignoreEditor", () => {
     const [, cancelBtn] = editor.querySelectorAll("button");
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildRunBanner", () => {
+  function render(banner: RunBanner) {
+    return buildRunBanner(banner);
+  }
+
+  it("renders a success banner with the ok styling and no log", () => {
+    const banner = render({ ok: true, message: "Backup for proj1 completed." });
+    expect(banner.className).toBe("run-banner run-banner-ok");
+    expect(banner.textContent).toBe("Backup for proj1 completed.");
+    expect(banner.querySelector("pre")).toBeNull();
+  });
+
+  it("renders a failure banner with the error styling and the full log", () => {
+    const banner = render({
+      ok: false,
+      message: "Backup for proj1 failed.",
+      log: "rsync: connection unexpectedly closed\nrsync error: error in rsync protocol data stream",
+    });
+    expect(banner.className).toBe("run-banner run-banner-error");
+    expect(banner.querySelector("p")?.textContent).toBe("Backup for proj1 failed.");
+    const log = banner.querySelector("pre");
+    expect(log?.className).toBe("log log-error");
+    expect(log?.textContent).toBe("rsync: connection unexpectedly closed\nrsync error: error in rsync protocol data stream");
+  });
+
+  it("renders a failure banner with no log element when no log was given", () => {
+    const banner = render({ ok: false, message: "Backup for proj1 failed." });
+    expect(banner.className).toBe("run-banner run-banner-error");
+    expect(banner.querySelector("pre")).toBeNull();
+  });
+});
+
+describe("runJob", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(listen).mockReset();
+  });
+
+  // Mirrors the two real shapes runJob is wired into: a per-source row
+  // (buildSourcesSection - a <tr><td><pre></td></tr>) and Housekeeping's row
+  // (buildHousekeepingSection - a plain <div><pre></div>). A real bug once
+  // slipped through specifically because it only broke one of these two
+  // shapes (inferring the row from logEl.parentElement - correct for the
+  // <div> case, wrong for the <tr> one) - exercising both here so that
+  // class of bug can't silently come back.
+  function perSourceRow() {
+    const logEl = el("pre", { class: "log" }, []);
+    const row = el("tr", {}, [el("td", {}, [logEl])]);
+    row.style.display = "none";
+    return { row, logEl };
+  }
+
+  function housekeepingRow() {
+    const logEl = el("pre", { class: "log" }, []);
+    const row = el("div", {}, [logEl]);
+    row.style.display = "none";
+    return { row, logEl };
+  }
+
+  // Never resolves - these tests only inspect the synchronous "while
+  // running" state runJob sets up before its first await, not completion
+  // handling (which goes through renderDashboard, exercised separately via
+  // the browser-based end-to-end check, not a unit test).
+  const pendingJob = (): (() => Promise<RunOutput>) => () => new Promise(() => {});
+
+  it("reveals only the triggering job's own row, leaving a sibling job's row hidden", () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const source = perSourceRow();
+    const housekeeping = housekeepingRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const hkTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    document.querySelector("#app")!.append(source.row, housekeeping.row, sourceTrigger, hkTrigger);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+
+    expect(source.row.style.display).toBe("");
+    expect(housekeeping.row.style.display).toBe("none");
+  });
+
+  it("disables every job-trigger-btn, leaves unrelated buttons alone, and spins the clicked one", () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const source = perSourceRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const hkTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    const scheduleBtn = el("button", {}, ["Set schedule"]);
+    document.querySelector("#app")!.append(source.row, sourceTrigger, hkTrigger, scheduleBtn);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+
+    expect(sourceTrigger.disabled).toBe(true);
+    expect(sourceTrigger.textContent).toContain("Running…");
+    expect(sourceTrigger.querySelector(".spinner")).not.toBeNull();
+    expect(hkTrigger.disabled).toBe(true);
+    expect(scheduleBtn.disabled).toBe(false);
+  });
+
+  it("appends each streamed line to the triggering job's own log, not a sibling's", async () => {
+    let handler: ((event: { payload: string }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_event, cb) => {
+      handler = cb as (event: { payload: string }) => void;
+      return () => {};
+    });
+    const source = perSourceRow();
+    const housekeeping = housekeepingRow();
+    const sourceTrigger = el("button", { class: "job-trigger-btn" }, ["Run now"]);
+    document.querySelector("#app")!.append(source.row, housekeeping.row, sourceTrigger);
+
+    void runJob("/bin", sourceTrigger, source.row, source.logEl, "backup-progress", pendingJob(), {
+      ok: "done",
+      fail: "failed",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    handler?.({ payload: "proj1/file1.txt" });
+
+    expect(source.logEl.textContent).toBe("proj1/file1.txt\n");
+    expect(housekeeping.logEl.textContent).toBe("");
+  });
+});
+
+// Turns the manual browser scratch-harness verification done during this
+// PR's own implementation (mocking Tauri's invoke/event system in a real
+// tab, clicking Run Now, watching it stream and reset) into a committed,
+// repeatable test instead of a one-off check that gets thrown away. Drives
+// the real click -> runBackupNow/runHousekeepingNow -> runJob -> invoke ->
+// event -> renderDashboard chain end to end, not just runJob in isolation.
+describe("user journeys (renderDashboard end to end)", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+    vi.mocked(listen).mockReset();
+  });
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  function sectionByHeading(heading: string): HTMLElement {
+    const section = Array.from(document.querySelectorAll<HTMLElement>("#app > section")).find(
+      (s) => s.querySelector("h2")?.textContent === heading,
+    );
+    if (!section) throw new Error(`no section with heading "${heading}"`);
+    return section;
+  }
+
+  // Covers everything renderDashboard fetches for one real source and no
+  // housekeeping schedule/replication configured - the same minimal shape
+  // the scratch harness used. `jobCommand`/`jobResult` wire up whichever of
+  // run_backup_now / run_housekeeping_now the test below is driving.
+  function mockDashboardInvoke(jobCommand: string, jobResult: Promise<RunOutput>) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case "get_status":
+          return { sync_dir: "/fake/sync", history_dir: "/fake/sync-BP", projects: [] } satisfies StatusResult;
+        case "list_sources":
+          return [{ name: "proj1", path: "/fake/src/proj1", schedule: null }] satisfies BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_ignore_settings":
+          return {
+            gitignore: true,
+            gitignore_exists: true,
+            bmuignore: false,
+            bmuignore_content: "",
+          } satisfies IgnoreSettings;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        case jobCommand:
+          return jobResult;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("per-source Run Now: click streams progress, disables Housekeeping's button too, and ends on a clean success banner", async () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const job = deferred<RunOutput>();
+    mockDashboardInvoke("run_backup_now", job.promise);
+
+    await renderDashboard("/bin");
+
+    const sourceTrigger = document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!;
+    const hkTrigger = sectionByHeading("Housekeeping").querySelector<HTMLButtonElement>(".job-trigger-btn")!;
+    sourceTrigger.dispatchEvent(new Event("click"));
+
+    // Synchronous "while running" state - runJob sets all of this before
+    // its first await, so no flush is needed to observe it.
+    expect(sourceTrigger.disabled).toBe(true);
+    expect(sourceTrigger.textContent).toContain("Running…");
+    expect(hkTrigger.disabled).toBe(true);
+    const sourceLog = document.querySelector<HTMLElement>(".sources-table pre.log")!;
+    expect(sourceLog.closest("tr")!.style.display).toBe("");
+
+    await waitFor(() => vi.mocked(listen).mock.calls.length > 0);
+    const [, listenHandler] = vi.mocked(listen).mock.calls[0];
+    (listenHandler as (event: { payload: string }) => void)({ payload: "proj1/file1.txt" });
+    expect(sourceLog.textContent).toBe("proj1/file1.txt\n");
+
+    job.resolve({ ok: true, log: "proj1/file1.txt\n" });
+    await waitFor(() => document.querySelector(".run-banner") !== null);
+
+    const banner = document.querySelector(".run-banner")!;
+    expect(banner.className).toBe("run-banner run-banner-ok");
+    expect(banner.textContent).toBe("Backup for proj1 completed.");
+    // renderDashboard rebuilt everything fresh - re-query, don't reuse the
+    // (now detached) elements from before the re-render.
+    const resetTrigger = document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!;
+    expect(resetTrigger.disabled).toBe(false);
+    expect(resetTrigger.textContent).toBe("Run now");
+    expect(sectionByHeading("Housekeeping").querySelector<HTMLButtonElement>(".job-trigger-btn")!.disabled).toBe(
+      false,
+    );
+  });
+
+  it("Housekeeping Run now: click streams progress, disables the source's button too, and ends on a clean success banner", async () => {
+    vi.mocked(listen).mockResolvedValue(vi.fn());
+    const job = deferred<RunOutput>();
+    mockDashboardInvoke("run_housekeeping_now", job.promise);
+
+    await renderDashboard("/bin");
+
+    const hkSection = sectionByHeading("Housekeeping");
+    const hkTrigger = hkSection.querySelector<HTMLButtonElement>(".job-trigger-btn")!;
+    const sourceTrigger = document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!;
+    hkTrigger.dispatchEvent(new Event("click"));
+
+    expect(hkTrigger.disabled).toBe(true);
+    expect(hkTrigger.textContent).toContain("Running…");
+    expect(sourceTrigger.disabled).toBe(true);
+    const hkLog = hkSection.querySelector<HTMLElement>("pre.log")!;
+    expect(hkLog.parentElement!.style.display).toBe("");
+
+    await waitFor(() => vi.mocked(listen).mock.calls.length > 0);
+    const [, listenHandler] = vi.mocked(listen).mock.calls[0];
+    (listenHandler as (event: { payload: string }) => void)({ payload: "Indexed 42 files" });
+    expect(hkLog.textContent).toBe("Indexed 42 files\n");
+
+    job.resolve({ ok: true, log: "Indexed 42 files\n" });
+    await waitFor(() => document.querySelector(".run-banner") !== null);
+
+    const banner = document.querySelector(".run-banner")!;
+    expect(banner.className).toBe("run-banner run-banner-ok");
+    expect(banner.textContent).toBe("Housekeeping completed.");
+    const resetTrigger = sectionByHeading("Housekeeping").querySelector<HTMLButtonElement>(".job-trigger-btn")!;
+    expect(resetTrigger.disabled).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!.disabled).toBe(false);
   });
 });

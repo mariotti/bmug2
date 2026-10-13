@@ -10,6 +10,9 @@ export default defineConfig(() => ({
   // node environment has no `document` at all.
   test: {
     environment: "jsdom",
+    // runJob (main.ts) reads the module-level `#app` node captured at import
+    // time - this has to exist before that import runs, not just before tests.
+    setupFiles: ["./src/test-setup.ts"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

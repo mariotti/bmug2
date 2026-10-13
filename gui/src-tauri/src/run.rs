@@ -4,8 +4,10 @@
 // (persistence) - one module per concern, same split as the rest of
 // this crate.
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunOutput {
@@ -13,39 +15,64 @@ pub struct RunOutput {
     pub ok: bool,
 }
 
-// Same merged-stdout+stderr-into-one-log shape as install.rs's own
-// (private) run() helper - duplicated rather than shared across
-// modules since it's three fields and each caller's doc-comment
-// reasoning differs (install progress log vs. a backup run's log).
-// backmeup.sh has no --json mode (only status/locate do), so a plain
-// human-readable log is the right shape here, not structured JSON.
-pub fn run_backup_now(bin_dir: &str, source_path: &str) -> Result<RunOutput, String> {
-    let mut cmd = Command::new(Path::new(bin_dir).join("backmeup.sh"));
-    cmd.arg(source_path);
-    let name = format!("{cmd:?}");
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to run {name}: {e}"))?;
+/// Calls `on_line` with each line of output as the child produces it,
+/// instead of only returning once the whole thing exits. A long-
+/// running step (rclone syncing a large first copy to a cloud remote,
+/// or rsync copying a large/first backup, can both take a very long
+/// time) otherwise gives the caller nothing to show until it's already
+/// done - indistinguishable from a hang to anyone watching. stdout and
+/// stderr are read on their own threads and merged through a channel
+/// drained on the calling thread, the standard way to read two pipes
+/// at once without risking a deadlock: a child that fills one pipe's
+/// OS buffer while nobody's reading it can block on write, which would
+/// in turn block whichever single thread was trying to read the other
+/// pipe first. backmeup.sh has no --json mode (only status/locate do),
+/// so a plain human-readable log is the right shape here, not
+/// structured JSON.
+fn run_step(bin_path: &Path, script: &str, args: &[&str], on_line: &mut dyn FnMut(&str)) -> Result<RunOutput, String> {
+    let mut child = Command::new(bin_path.join(script))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {script}: {e}"))?;
+
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let (tx, rx) = mpsc::channel::<String>();
+
+    let tx_out = tx.clone();
+    let stdout_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx_out.send(line);
+        }
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+
     let mut log = String::new();
-    log.push_str(&String::from_utf8_lossy(&output.stdout));
-    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    for line in rx {
+        on_line(&line);
+        log.push_str(&line);
+        log.push('\n');
+    }
+    stdout_thread.join().ok();
+    stderr_thread.join().ok();
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait for {script}: {e}"))?;
     Ok(RunOutput {
         log,
-        ok: output.status.success(),
+        ok: status.success(),
     })
 }
 
-fn run_step(bin_path: &Path, script: &str) -> Result<RunOutput, String> {
-    let output = Command::new(bin_path.join(script))
-        .output()
-        .map_err(|e| format!("failed to run {script}: {e}"))?;
-    let mut log = String::new();
-    log.push_str(&String::from_utf8_lossy(&output.stdout));
-    log.push_str(&String::from_utf8_lossy(&output.stderr));
-    Ok(RunOutput {
-        log,
-        ok: output.status.success(),
-    })
+pub fn run_backup_now(bin_dir: &str, source_path: &str, mut on_line: impl FnMut(&str)) -> Result<RunOutput, String> {
+    run_step(Path::new(bin_dir), "backmeup.sh", &[source_path], &mut on_line)
 }
 
 /// On-demand version of the Housekeeping schedule's own wrapper script
@@ -56,9 +83,9 @@ fn run_step(bin_path: &Path, script: &str) -> Result<RunOutput, String> {
 /// index). Replicate only runs at all if a backend is actually
 /// configured - same silent no-op for "none configured" as the
 /// wrapper's own match.
-pub fn run_housekeeping_now(bin_dir: &str) -> Result<RunOutput, String> {
+pub fn run_housekeeping_now(bin_dir: &str, mut on_line: impl FnMut(&str)) -> Result<RunOutput, String> {
     let bin_path = Path::new(bin_dir);
-    let updatedb = run_step(bin_path, "backmeup.updatedb.sh")?;
+    let updatedb = run_step(bin_path, "backmeup.updatedb.sh", &[], &mut on_line)?;
     if !updatedb.ok {
         return Ok(updatedb);
     }
@@ -68,7 +95,7 @@ pub fn run_housekeeping_now(bin_dir: &str) -> Result<RunOutput, String> {
         Some("proton") => "backmeup.replicate.proton.sh",
         _ => return Ok(RunOutput { log, ok: true }),
     };
-    let replicate = run_step(bin_path, script)?;
+    let replicate = run_step(bin_path, script, &[], &mut on_line)?;
     log.push_str(&replicate.log);
     Ok(RunOutput { log, ok: replicate.ok })
 }
@@ -106,7 +133,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("hello.txt"), "hello run-now test").unwrap();
 
-        let result = run_backup_now(bin_dir.to_str().unwrap(), src.to_str().unwrap())
+        let result = run_backup_now(bin_dir.to_str().unwrap(), src.to_str().unwrap(), |_| {})
             .expect("run_backup_now should succeed");
         assert!(result.ok, "backup should have succeeded: {}", result.log);
 
@@ -130,10 +157,30 @@ mod tests {
             std::env::temp_dir().join(format!("bmug2-run-fail-test-{}", std::process::id()));
         std::fs::remove_dir_all(&base).ok();
         std::fs::create_dir_all(&base).unwrap();
-        // no backmeup.sh at all under this bin_dir - Command::output()
-        // itself fails to spawn, exercising the "failed to run" path.
-        let result = run_backup_now(base.to_str().unwrap(), "/tmp");
+        // no backmeup.sh at all under this bin_dir - the spawn itself
+        // fails, exercising the "failed to run" path.
+        let result = run_backup_now(base.to_str().unwrap(), "/tmp", |_| {});
         assert!(result.is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn run_backup_now_streams_lines_as_they_are_produced() {
+        let base = std::env::temp_dir().join(format!("bmug2-run-stream-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::create_dir_all(&base).unwrap();
+        let stub = base.join("backmeup.sh");
+        std::fs::write(&stub, "#!/bin/sh\necho \"backing up $1\"\necho \"done\"\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+
+        let mut seen: Vec<String> = Vec::new();
+        let result = run_backup_now(base.to_str().unwrap(), "/tmp/proj1", |line| seen.push(line.to_string()))
+            .unwrap();
+        assert!(result.ok);
+        assert_eq!(seen, vec!["backing up /tmp/proj1", "done"]);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -158,7 +205,7 @@ mod tests {
         write_stub(&dir.join("backmeup.updatedb.sh"), "#!/bin/sh\necho updatedb-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(result.ok);
         assert!(result.log.contains("updatedb-ran"));
         std::fs::remove_dir_all(&dir).ok();
@@ -171,7 +218,7 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.sh"), "#!/bin/sh\necho replicate-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(result.ok);
         assert!(result.log.contains("updatedb-ran"));
         assert!(result.log.contains("replicate-ran"));
@@ -185,7 +232,7 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.sh"), "#!/bin/sh\necho replicate-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(!result.ok);
         assert!(!result.log.contains("replicate-ran"));
         std::fs::remove_dir_all(&dir).ok();
@@ -198,9 +245,35 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.proton.sh"), "#!/bin/sh\necho proton-failed\nexit 1\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"proton\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(!result.ok);
         assert!(result.log.contains("proton-failed"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn housekeeping_streams_lines_as_they_are_produced() {
+        let dir = housekeeping_sandbox("streaming");
+        write_stub(
+            &dir.join("backmeup.updatedb.sh"),
+            "#!/bin/sh\necho updatedb-line-1\necho updatedb-line-2\nexit 0\n",
+        );
+        write_stub(
+            &dir.join("backmeup.replicate.sh"),
+            "#!/bin/sh\necho replicate-line-1\necho replicate-line-2\nexit 0\n",
+        );
+        std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
+
+        let mut seen: Vec<String> = Vec::new();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |line| seen.push(line.to_string())).unwrap();
+        assert!(result.ok);
+        // updatedb's two lines land before replicate's two, matching
+        // the stop-on-first-failure order - not just "all four showed
+        // up somewhere", since that would hide a step-ordering bug.
+        assert_eq!(
+            seen,
+            vec!["updatedb-line-1", "updatedb-line-2", "replicate-line-1", "replicate-line-2"]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
