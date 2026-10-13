@@ -49,6 +49,35 @@ button:active {
   filter: brightness(0.85);
 }
 
+/* No rule for this anywhere before now - a disabled button looked
+   identical to an enabled one, confusing on its own regardless of
+   .job-trigger-btn below. */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* currentColor means this automatically matches whatever color the
+   button it's inside already renders in - light vs. dark mode's own
+   per-section button colors - without a separate dark-mode rule. */
+.spinner {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.4em;
+  vertical-align: -0.1em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: bmug2-spin 0.7s linear infinite;
+}
+
+@keyframes bmug2-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 h1 {
   text-align: center;
 }

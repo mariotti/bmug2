@@ -108,8 +108,11 @@ fn remove_source(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn run_backup_now(bin_dir: String, source_path: String) -> Result<RunOutput, String> {
-    run::run_backup_now(&bin_dir, &source_path)
+fn run_backup_now(app: AppHandle, bin_dir: String, source_path: String) -> Result<RunOutput, String> {
+    use tauri::Emitter;
+    run::run_backup_now(&bin_dir, &source_path, |line| {
+        let _ = app.emit("backup-progress", line);
+    })
 }
 
 #[tauri::command]

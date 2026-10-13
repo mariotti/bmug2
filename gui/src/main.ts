@@ -477,8 +477,13 @@ function buildSourcesSection(
     const known = status.projects.find((p) => p.name === source.name);
     const settings = ignoreSettings.get(source.path);
 
-    const runBtn = el("button", { type: "button" }, ["Run now"]);
-    runBtn.addEventListener("click", () => void runBackupNow(binDir, source));
+    const runBtn = el("button", { type: "button", class: "job-trigger-btn" }, ["Run now"]);
+    const runLogEl = el("pre", { class: "log" }, []);
+    const runRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, [
+      el("td", { colspan: "4" }, [runLogEl]),
+    ]);
+    runRow.style.display = "none";
+    runBtn.addEventListener("click", () => void runBackupNow(binDir, source, runBtn, runRow, runLogEl));
     const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
     removeBtn.addEventListener("click", () => void removeSource(binDir, source));
 
@@ -545,6 +550,7 @@ function buildSourcesSection(
       ]),
       scheduleRow,
       bmuignoreRow,
+      runRow,
     );
   });
 
@@ -613,31 +619,15 @@ async function addSource(binDir: string) {
   // A freshly added source has never been backed up - run it
   // immediately instead of leaving a new, empty-looking entry that
   // needs a separate manual Run Now click to actually start protecting
-  // anything.
-  await runBackupNow(binDir, source);
-}
-
-async function removeSource(binDir: string, source: BackupSource) {
-  try {
-    await invoke("remove_source", { path: source.path });
-    void renderDashboard(binDir);
-  } catch (err) {
-    void renderDashboard(binDir, { ok: false, message: String(err) });
-  }
-}
-
-async function runBackupNow(binDir: string, source: BackupSource) {
+  // anything. Plain full-screen flow here, not runJob's inline per-row
+  // progress - there's no existing row to attach to yet, since the
+  // source was only just created and the dashboard hasn't rendered it.
   renderInstalling(`Running backup for ${source.name}…`);
   try {
-    const result = await invoke<RunOutput>("run_backup_now", {
-      binDir,
-      sourcePath: source.path,
-    });
+    const result = await invoke<RunOutput>("run_backup_now", { binDir, sourcePath: source.path });
     void renderDashboard(binDir, {
       ok: result.ok,
-      message: result.ok
-        ? `Backup for ${source.name} completed.`
-        : `Backup for ${source.name} failed.`,
+      message: result.ok ? `Backup for ${source.name} completed.` : `Backup for ${source.name} failed.`,
       log: result.ok ? undefined : result.log,
     });
   } catch (err) {
@@ -649,30 +639,92 @@ async function runBackupNow(binDir: string, source: BackupSource) {
   }
 }
 
-async function runHousekeepingNow(binDir: string) {
-  const logEl = renderRunningLog("Running housekeeping (updatedb + replicate)…");
+async function removeSource(binDir: string, source: BackupSource) {
+  try {
+    await invoke("remove_source", { path: source.path });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+// Shared by every "Run Now"/"Run now"-style action: keeps the
+// dashboard visible instead of taking over the whole screen (the
+// previous renderInstalling/renderRunningLog-based approach - a large
+// or first run of any of these can take a long time, and a static
+// full-screen message is indistinguishable from a hang). Disables
+// every other .job-trigger-btn while this one runs - jobs stay
+// serialized (only one at a time, dashboard-wide) on purpose: none of
+// backmeup.replicate.sh/backmeup.updatedb.sh take a lock, so letting
+// two jobs actually run concurrently risks reading a file mid-write by
+// a still-running backup. True concurrency needs that locking gap
+// closed first, in its own change - this only changes how a single,
+// still-serialized job is *presented*. renderDashboard rebuilds every
+// button fresh regardless of outcome, so nothing needs to be manually
+// re-enabled/restored here either way.
+async function runJob(
+  binDir: string,
+  trigger: HTMLButtonElement,
+  row: HTMLElement,
+  logEl: HTMLElement,
+  eventName: string,
+  invokeJob: () => Promise<RunOutput>,
+  messages: { ok: string; fail: string },
+) {
+  const allTriggers = Array.from(app.querySelectorAll<HTMLButtonElement>(".job-trigger-btn"));
+  allTriggers.forEach((b) => (b.disabled = true));
+  trigger.replaceChildren(el("span", { class: "spinner" }, []), "Running…");
+  logEl.textContent = "";
+  row.style.display = "";
+
   // Listen before invoking, so a line emitted right at the start can
   // never arrive before anything is listening for it.
-  const unlisten = await listen<string>("housekeeping-progress", (event) => {
+  const unlisten = await listen<string>(eventName, (event) => {
     logEl.textContent += event.payload + "\n";
     logEl.scrollTop = logEl.scrollHeight;
   });
   try {
-    const result = await invoke<RunOutput>("run_housekeeping_now", { binDir });
+    const result = await invokeJob();
     void renderDashboard(binDir, {
       ok: result.ok,
-      message: result.ok ? "Housekeeping completed." : "Housekeeping failed.",
+      message: result.ok ? messages.ok : messages.fail,
       log: result.ok ? undefined : result.log,
     });
   } catch (err) {
-    void renderDashboard(binDir, {
-      ok: false,
-      message: "Housekeeping failed.",
-      log: String(err),
-    });
+    void renderDashboard(binDir, { ok: false, message: messages.fail, log: String(err) });
   } finally {
     void unlisten();
   }
+}
+
+async function runBackupNow(
+  binDir: string,
+  source: BackupSource,
+  trigger: HTMLButtonElement,
+  row: HTMLElement,
+  logEl: HTMLElement,
+) {
+  await runJob(
+    binDir,
+    trigger,
+    row,
+    logEl,
+    "backup-progress",
+    () => invoke<RunOutput>("run_backup_now", { binDir, sourcePath: source.path }),
+    { ok: `Backup for ${source.name} completed.`, fail: `Backup for ${source.name} failed.` },
+  );
+}
+
+async function runHousekeepingNow(binDir: string, trigger: HTMLButtonElement, row: HTMLElement, logEl: HTMLElement) {
+  await runJob(
+    binDir,
+    trigger,
+    row,
+    logEl,
+    "housekeeping-progress",
+    () => invoke<RunOutput>("run_housekeeping_now", { binDir }),
+    { ok: "Housekeeping completed.", fail: "Housekeeping failed." },
+  );
 }
 
 function buildSearchSection(binDir: string): HTMLElement {
@@ -847,8 +899,11 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
     editRow.style.display = "";
   };
 
-  const runNowBtn = el("button", { type: "button" }, ["Run now"]);
-  runNowBtn.addEventListener("click", () => void runHousekeepingNow(binDir));
+  const runNowBtn = el("button", { type: "button", class: "job-trigger-btn" }, ["Run now"]);
+  const runLogEl = el("pre", { class: "log" }, []);
+  const runRow = el("div", {}, [runLogEl]);
+  runRow.style.display = "none";
+  runNowBtn.addEventListener("click", () => void runHousekeepingNow(binDir, runNowBtn, runRow, runLogEl));
 
   if (schedule) {
     const editBtn = el("button", { type: "button" }, ["Edit"]);
@@ -862,7 +917,7 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
     container.replaceChildren("Off ", setBtn, runNowBtn);
   }
 
-  return el("section", {}, [header, desc, container, editRow]);
+  return el("section", {}, [header, desc, container, editRow, runRow]);
 }
 
 async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
@@ -1478,20 +1533,6 @@ function renderError(message: string, retry: () => void) {
 
 function renderInstalling(message: string) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [message]));
-}
-
-// Like renderInstalling, but for an operation that can run for a long
-// time with no way to know in advance how long (an off-site sync to a
-// cloud remote, for instance) - a static message is indistinguishable
-// from a hang once it's been sitting there for minutes. Returns the
-// log element so the caller can append to it as progress events
-// arrive. Reuses the existing .log class (already has max-height +
-// overflow-y: auto from the failure-log display elsewhere) rather
-// than adding new CSS for what's visually the same kind of box.
-function renderRunningLog(title: string): HTMLElement {
-  const logEl = el("pre", { class: "log" }, []);
-  app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [title]), logEl);
-  return logEl;
 }
 
 // The first "navigate to a second screen and back" affordance in this

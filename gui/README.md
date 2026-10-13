@@ -39,8 +39,16 @@ well-known install location" stance):
   (the same **Run Now** path - `gui/src-tauri/src/run.rs`, a thin
   wrapper around `backmeup.sh` - rather than leaving a new, empty
   entry that needs a separate manual click); **Run Now** stays
-  available afterward too, for backing up on demand anytime. The
-  dashboard also cross-checks
+  available afterward too, for backing up on demand anytime. Clicking
+  it keeps the dashboard visible instead of taking over the whole
+  screen: the button spins, an inline log under that source grows live
+  (`backmeup.sh`'s already-verbose rsync output streamed line by line,
+  the same mechanism Housekeeping's "Run now" uses below), and every
+  other Run Now/Run now button disables itself meanwhile - jobs stay
+  one-at-a-time dashboard-wide, since `backmeup.replicate.sh`/
+  `backmeup.updatedb.sh` don't take a lock the way `backmeup.sh` itself
+  does, so two actually running at once could read a file mid-write.
+  The dashboard also cross-checks
   `backmeup.status.sh`'s project list against this: any project with
   real backup history that isn't a tracked Backup Source yet
   (typically backed up from the CLI before this app was installed)
@@ -68,13 +76,13 @@ well-known install location" stance):
   `run_housekeeping_now`, same stop-on-first-failure order as the
   installed schedule's own wrapper script) runs it on demand, whether
   or not a schedule is set, since configuring an off-site backend alone
-  doesn't schedule anything - see docs/DESTINATIONS.md. Output streams
-  live into a growing log as it runs (a Tauri event per line, read from
-  the child process as it's produced rather than buffered until exit)
-  instead of a single static "Running…" message - a large first sync
-  to a cloud remote can take a long time with the CLI's own default
-  output giving nothing to show otherwise, which read as a hang in
-  real use before this. The installed artifact is the source of truth for
+  doesn't schedule anything - see docs/DESTINATIONS.md. Same
+  non-blocking, live-streamed treatment as per-source Run Now above (a
+  Tauri event per line, read from the child process as it's produced
+  rather than buffered until exit) - a large first sync to a cloud
+  remote can take a long time with the CLI's own default output giving
+  nothing to show otherwise, which read as a hang in real use before
+  this. The installed artifact is the source of truth for
   "is this actually scheduled" - `config.json`'s copy is just a UI
   mirror, self-corrected on load if it drifts. cron/`at` stay
   CLI-only; this only ever writes each platform's native, preferred
