@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -649,7 +650,13 @@ async function runBackupNow(binDir: string, source: BackupSource) {
 }
 
 async function runHousekeepingNow(binDir: string) {
-  renderInstalling("Running housekeeping (updatedb + replicate)…");
+  const logEl = renderRunningLog("Running housekeeping (updatedb + replicate)…");
+  // Listen before invoking, so a line emitted right at the start can
+  // never arrive before anything is listening for it.
+  const unlisten = await listen<string>("housekeeping-progress", (event) => {
+    logEl.textContent += event.payload + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  });
   try {
     const result = await invoke<RunOutput>("run_housekeeping_now", { binDir });
     void renderDashboard(binDir, {
@@ -663,6 +670,8 @@ async function runHousekeepingNow(binDir: string) {
       message: "Housekeeping failed.",
       log: String(err),
     });
+  } finally {
+    void unlisten();
   }
 }
 
@@ -1469,6 +1478,20 @@ function renderError(message: string, retry: () => void) {
 
 function renderInstalling(message: string) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [message]));
+}
+
+// Like renderInstalling, but for an operation that can run for a long
+// time with no way to know in advance how long (an off-site sync to a
+// cloud remote, for instance) - a static message is indistinguishable
+// from a hang once it's been sitting there for minutes. Returns the
+// log element so the caller can append to it as progress events
+// arrive. Reuses the existing .log class (already has max-height +
+// overflow-y: auto from the failure-log display elsewhere) rather
+// than adding new CSS for what's visually the same kind of box.
+function renderRunningLog(title: string): HTMLElement {
+  const logEl = el("pre", { class: "log" }, []);
+  app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [title]), logEl);
+  return logEl;
 }
 
 // The first "navigate to a second screen and back" affordance in this

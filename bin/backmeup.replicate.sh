@@ -49,11 +49,11 @@ if [ -n "${l_BMU_DRYRUN}" ]; then
 fi;
 #
 echo "Replicating SYNC (${BMU_DIRRSYNC}) -> ${BMU_REPLICATE_REMOTE_SYNC}"
-${BMU_CMDREPLICATE} ${l_BMU_OPT} "${BMU_DIRRSYNC}" "${BMU_REPLICATE_REMOTE_SYNC}"
+${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line ${l_BMU_OPT} "${BMU_DIRRSYNC}" "${BMU_REPLICATE_REMOTE_SYNC}"
 l_BMU_RC1=$?
 #
 echo "Replicating BackUp (${BMU_DIRBACKUPS}) -> ${BMU_REPLICATE_REMOTE_BACKUPS}"
-${BMU_CMDREPLICATE} ${l_BMU_OPT} "${BMU_DIRBACKUPS}" "${BMU_REPLICATE_REMOTE_BACKUPS}"
+${BMU_CMDREPLICATE} -v --stats=10s --stats-one-line ${l_BMU_OPT} "${BMU_DIRBACKUPS}" "${BMU_REPLICATE_REMOTE_BACKUPS}"
 l_BMU_RC2=$?
 #
 if [ ${l_BMU_RC1} -ne 0 ] || [ ${l_BMU_RC2} -ne 0 ]; then

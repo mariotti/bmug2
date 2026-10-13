@@ -113,8 +113,11 @@ fn run_backup_now(bin_dir: String, source_path: String) -> Result<RunOutput, Str
 }
 
 #[tauri::command]
-fn run_housekeeping_now(bin_dir: String) -> Result<RunOutput, String> {
-    run::run_housekeeping_now(&bin_dir)
+fn run_housekeeping_now(app: AppHandle, bin_dir: String) -> Result<RunOutput, String> {
+    use tauri::Emitter;
+    run::run_housekeeping_now(&bin_dir, |line| {
+        let _ = app.emit("housekeeping-progress", line);
+    })
 }
 
 #[tauri::command]

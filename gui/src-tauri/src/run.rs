@@ -4,8 +4,10 @@
 // (persistence) - one module per concern, same split as the rest of
 // this crate.
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunOutput {
@@ -35,16 +37,55 @@ pub fn run_backup_now(bin_dir: &str, source_path: &str) -> Result<RunOutput, Str
     })
 }
 
-fn run_step(bin_path: &Path, script: &str) -> Result<RunOutput, String> {
-    let output = Command::new(bin_path.join(script))
-        .output()
+/// Like run_step, but calls `on_line` with each line of output as the
+/// child produces it, instead of only returning once the whole thing
+/// exits. A long-running step (rclone syncing a large first copy to a
+/// cloud remote can take a very long time) otherwise gives the caller
+/// nothing to show until it's already done - indistinguishable from a
+/// hang to anyone watching. stdout and stderr are read on their own
+/// threads and merged through a channel drained on the calling thread,
+/// the standard way to read two pipes at once without risking a
+/// deadlock: a child that fills one pipe's OS buffer while nobody's
+/// reading it can block on write, which would in turn block whichever
+/// single thread was trying to read the other pipe first.
+fn run_step(bin_path: &Path, script: &str, on_line: &mut dyn FnMut(&str)) -> Result<RunOutput, String> {
+    let mut child = Command::new(bin_path.join(script))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("failed to run {script}: {e}"))?;
+
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let (tx, rx) = mpsc::channel::<String>();
+
+    let tx_out = tx.clone();
+    let stdout_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx_out.send(line);
+        }
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+
     let mut log = String::new();
-    log.push_str(&String::from_utf8_lossy(&output.stdout));
-    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    for line in rx {
+        on_line(&line);
+        log.push_str(&line);
+        log.push('\n');
+    }
+    stdout_thread.join().ok();
+    stderr_thread.join().ok();
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait for {script}: {e}"))?;
     Ok(RunOutput {
         log,
-        ok: output.status.success(),
+        ok: status.success(),
     })
 }
 
@@ -56,9 +97,9 @@ fn run_step(bin_path: &Path, script: &str) -> Result<RunOutput, String> {
 /// index). Replicate only runs at all if a backend is actually
 /// configured - same silent no-op for "none configured" as the
 /// wrapper's own match.
-pub fn run_housekeeping_now(bin_dir: &str) -> Result<RunOutput, String> {
+pub fn run_housekeeping_now(bin_dir: &str, mut on_line: impl FnMut(&str)) -> Result<RunOutput, String> {
     let bin_path = Path::new(bin_dir);
-    let updatedb = run_step(bin_path, "backmeup.updatedb.sh")?;
+    let updatedb = run_step(bin_path, "backmeup.updatedb.sh", &mut on_line)?;
     if !updatedb.ok {
         return Ok(updatedb);
     }
@@ -68,7 +109,7 @@ pub fn run_housekeeping_now(bin_dir: &str) -> Result<RunOutput, String> {
         Some("proton") => "backmeup.replicate.proton.sh",
         _ => return Ok(RunOutput { log, ok: true }),
     };
-    let replicate = run_step(bin_path, script)?;
+    let replicate = run_step(bin_path, script, &mut on_line)?;
     log.push_str(&replicate.log);
     Ok(RunOutput { log, ok: replicate.ok })
 }
@@ -158,7 +199,7 @@ mod tests {
         write_stub(&dir.join("backmeup.updatedb.sh"), "#!/bin/sh\necho updatedb-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(result.ok);
         assert!(result.log.contains("updatedb-ran"));
         std::fs::remove_dir_all(&dir).ok();
@@ -171,7 +212,7 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.sh"), "#!/bin/sh\necho replicate-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(result.ok);
         assert!(result.log.contains("updatedb-ran"));
         assert!(result.log.contains("replicate-ran"));
@@ -185,7 +226,7 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.sh"), "#!/bin/sh\necho replicate-ran\nexit 0\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(!result.ok);
         assert!(!result.log.contains("replicate-ran"));
         std::fs::remove_dir_all(&dir).ok();
@@ -198,9 +239,35 @@ mod tests {
         write_stub(&dir.join("backmeup.replicate.proton.sh"), "#!/bin/sh\necho proton-failed\nexit 1\n");
         std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"proton\"\n").unwrap();
 
-        let result = run_housekeeping_now(dir.to_str().unwrap()).unwrap();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |_| {}).unwrap();
         assert!(!result.ok);
         assert!(result.log.contains("proton-failed"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn housekeeping_streams_lines_as_they_are_produced() {
+        let dir = housekeeping_sandbox("streaming");
+        write_stub(
+            &dir.join("backmeup.updatedb.sh"),
+            "#!/bin/sh\necho updatedb-line-1\necho updatedb-line-2\nexit 0\n",
+        );
+        write_stub(
+            &dir.join("backmeup.replicate.sh"),
+            "#!/bin/sh\necho replicate-line-1\necho replicate-line-2\nexit 0\n",
+        );
+        std::fs::write(dir.join("backmeup.setup.sh"), "BMU_REPLICATE_BACKEND=\"rclone\"\n").unwrap();
+
+        let mut seen: Vec<String> = Vec::new();
+        let result = run_housekeeping_now(dir.to_str().unwrap(), |line| seen.push(line.to_string())).unwrap();
+        assert!(result.ok);
+        // updatedb's two lines land before replicate's two, matching
+        // the stop-on-first-failure order - not just "all four showed
+        // up somewhere", since that would hide a step-ordering bug.
+        assert_eq!(
+            seen,
+            vec!["updatedb-line-1", "updatedb-line-2", "replicate-line-1", "replicate-line-2"]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -68,8 +68,13 @@ well-known install location" stance):
   `run_housekeeping_now`, same stop-on-first-failure order as the
   installed schedule's own wrapper script) runs it on demand, whether
   or not a schedule is set, since configuring an off-site backend alone
-  doesn't schedule anything - see docs/DESTINATIONS.md. The installed
-  artifact is the source of truth for
+  doesn't schedule anything - see docs/DESTINATIONS.md. Output streams
+  live into a growing log as it runs (a Tauri event per line, read from
+  the child process as it's produced rather than buffered until exit)
+  instead of a single static "Running…" message - a large first sync
+  to a cloud remote can take a long time with the CLI's own default
+  output giving nothing to show otherwise, which read as a hang in
+  real use before this. The installed artifact is the source of truth for
   "is this actually scheduled" - `config.json`'s copy is just a UI
   mirror, self-corrected on load if it drifts. cron/`at` stay
   CLI-only; this only ever writes each platform's native, preferred
