@@ -201,6 +201,32 @@ npm install
 npm run tauri dev
 ```
 
+## Test
+
+```
+cd gui/src-tauri && cargo test && cargo clippy --all-targets
+cd gui && npx tsc --noEmit && npm run test
+```
+
+Coverage (not gated in CI - these are local, point-in-time numbers to
+track by eye, not a pass/fail threshold):
+
+```
+# Rust - needs cargo-llvm-cov + the llvm-tools-preview rustup component once:
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+cd gui/src-tauri && cargo llvm-cov --summary-only
+
+# Frontend - needs @vitest/coverage-v8, already a devDependency:
+cd gui && npx vitest run --coverage
+```
+
+See `../docs/CONTRIBUTING.md`'s Tests section for what each suite
+covers and the known, deliberate gaps (both suites mock only Tauri's
+`invoke`/`listen` bridge or AppHandle-dependent commands where real
+end-to-end coverage isn't practical or safe here - never business
+logic that's cheap and safe to exercise for real).
+
 ## Build
 
 ```

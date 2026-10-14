@@ -48,6 +48,27 @@ rejects), real subprocess calls, and a small subset that drives the
 actual MCP stdio protocol rather than calling Python functions
 directly. Run it with `pip install -e "./mcp[dev]" && pytest mcp/tests`.
 
+`gui/` (the Tauri desktop app) has two suites, both under `gui/`: `cargo
+test` for the Rust backend (`src-tauri/`) and `npm run test` (vitest)
+for the TypeScript frontend (`src/`) - see `gui/README.md`'s own Test
+section for exact commands, including coverage. Same real-over-mocked
+preference as the other two suites where it's safe to: Rust tests spawn
+real stub/real scripts against real sandboxed directories rather than
+faking `Command::spawn`, and frontend tests mock only Tauri's
+`invoke`/`listen` bridge (nothing in this repo can run a real native
+window, so that boundary is unavoidable) while exercising the real
+DOM-building and click-handling code around it. One real regression
+this boundary let through: the Tauri command layer running blocking
+subprocess work on the main thread and freezing the whole app - caught
+only by hand-testing the real installed build, not by any test (see
+`lib.rs`'s own comment above `run_backup_now` for the full story).
+Known gap: the setup wizard, Settings screen, and Proton/Google
+Drive folder-browser UI in `main.ts`, and the ~14 Tauri commands in
+`lib.rs` that need an `AppHandle` (closing that needs either a
+runtime-generic rewrite to use Tauri's `MockRuntime` test harness, or
+confidence it wouldn't risk resolving `app_data_dir()` to a real
+install's config under test).
+
 ### What the suite covers
 
 One end-to-end test (`testUserJourneyEndToEnd`) drives a real install
