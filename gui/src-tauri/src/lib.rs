@@ -318,6 +318,117 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // A bin_dir that was never set up at all - every wrapper below is
+    // expected to error cleanly against it (no backmeup.setup.sh to read a
+    // version marker, BMU_DIRBACKUPS, or a replicate backend from), never
+    // panic or fall through to a real subprocess call. One fresh directory
+    // per call so parallel test threads never collide.
+    fn bogus_bin_dir(label: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("bmug2-libtest-{label}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_str().unwrap().to_string()
+    }
+
+    // These wrappers are one-line delegations to already-thoroughly-tested
+    // modules (dashboard.rs 91%, ignore.rs 96%, replication.rs 99%) - the
+    // point here isn't re-proving that business logic, it's covering the
+    // delegation line itself and confirming args/errors actually pass
+    // through lib.rs's own command boundary intact.
+
+    #[test]
+    fn get_status_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        assert!(get_status(bogus_bin_dir("get-status")).is_err());
+    }
+
+    #[test]
+    fn search_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        assert!(search(bogus_bin_dir("search"), vec!["x".to_string()]).is_err());
+    }
+
+    #[test]
+    fn get_ignore_settings_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        assert!(get_ignore_settings(bogus_bin_dir("ignore-get"), "/tmp/proj1".to_string()).is_err());
+    }
+
+    #[test]
+    fn set_ignore_settings_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        let settings = ignore::IgnoreSettingsInput {
+            gitignore: true,
+            bmuignore: false,
+            bmuignore_content: String::new(),
+        };
+        assert!(set_ignore_settings(bogus_bin_dir("ignore-set"), "/tmp/proj1".to_string(), settings).is_err());
+    }
+
+    // get_replication_status is documented as "always safe to call, even
+    // against an install that predates this feature entirely" - it never
+    // errors, just reads back Off for an unconfigured bin_dir.
+    #[test]
+    fn get_replication_status_reads_off_for_an_unset_up_bin_dir() {
+        assert_eq!(get_replication_status(bogus_bin_dir("repl-status")), ReplicationStatus::Off);
+    }
+
+    #[test]
+    fn get_replication_capability_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        assert!(get_replication_capability(bogus_bin_dir("repl-cap")).is_err());
+    }
+
+    // set/clear_replication both call check_flags_supported first, which
+    // errors on a missing version marker before ever shelling out to
+    // backmeup.configure.sh - so these exercise the real error path without
+    // risking a real subprocess call against a bin_dir with no real script.
+    #[test]
+    fn set_replication_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        let request = ReplicationRequest::Proton { remote: None };
+        assert!(set_replication(bogus_bin_dir("repl-set"), request).is_err());
+    }
+
+    #[test]
+    fn clear_replication_propagates_a_clean_error_for_an_unset_up_bin_dir() {
+        assert!(clear_replication(bogus_bin_dir("repl-clear")).is_err());
+    }
+
+    // check_for_update reads the version marker before ever reaching its
+    // curl call to GitHub's API - a bogus bin_dir errors out first, so this
+    // never makes a real network request.
+    #[test]
+    fn check_for_update_propagates_a_clean_error_for_an_unset_up_bin_dir_without_any_network_call() {
+        assert!(check_for_update(bogus_bin_dir("check-update")).is_err());
+    }
+
+    // Pure read-only system/CLI-presence checks with no inputs to vary -
+    // the real result depends on this machine's actual state (real
+    // launchd agents, real Full Disk Access grant, real proton-drive/
+    // rclone installs), so there's nothing meaningful to assert beyond
+    // "calling the wrapper doesn't panic and returns the expected type".
+    #[test]
+    fn get_housekeeping_schedule_does_not_panic() {
+        let _: Option<Schedule> = get_housekeeping_schedule();
+    }
+
+    #[test]
+    fn has_full_disk_access_does_not_panic() {
+        let _: bool = has_full_disk_access();
+    }
+
+    #[test]
+    fn proton_drive_available_does_not_panic() {
+        let _: bool = proton_drive_available();
+    }
+
+    #[test]
+    fn proton_drive_signed_in_does_not_panic() {
+        let _: bool = proton_drive_signed_in();
+    }
+
+    #[test]
+    fn rclone_available_does_not_panic() {
+        let _: bool = rclone_available();
+    }
+
     // run_backup_now/run_housekeeping_now once regressed to a plain
     // (non-async) fn, which silently moved their blocking child-process
     // work back onto Tauri's main thread and froze the whole app for the
