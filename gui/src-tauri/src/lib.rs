@@ -107,20 +107,36 @@ fn remove_source(app: AppHandle, path: String) -> Result<(), String> {
     sources::remove(&app, &path)
 }
 
+// A plain (non-async) #[tauri::command] runs on Tauri's main thread - run_step's
+// blocking child-process read loop would sit there for the whole job, freezing
+// window repaints and event handling the entire time (the macOS "system
+// spinner" + a blank window on app-switch a real run surfaced, not caught by
+// any test here since cargo test calls run.rs directly, with no Tauri dispatch
+// involved, and every frontend test mocks invoke entirely). spawn_blocking
+// moves the actual blocking work onto Tauri's dedicated blocking-thread pool,
+// matching Tauri's own documented pattern for this exact situation.
 #[tauri::command]
-fn run_backup_now(app: AppHandle, bin_dir: String, source_path: String) -> Result<RunOutput, String> {
+async fn run_backup_now(app: AppHandle, bin_dir: String, source_path: String) -> Result<RunOutput, String> {
     use tauri::Emitter;
-    run::run_backup_now(&bin_dir, &source_path, |line| {
-        let _ = app.emit("backup-progress", line);
+    tauri::async_runtime::spawn_blocking(move || {
+        run::run_backup_now(&bin_dir, &source_path, move |line| {
+            let _ = app.emit("backup-progress", line);
+        })
     })
+    .await
+    .map_err(|e| format!("background task panicked: {e}"))?
 }
 
 #[tauri::command]
-fn run_housekeeping_now(app: AppHandle, bin_dir: String) -> Result<RunOutput, String> {
+async fn run_housekeeping_now(app: AppHandle, bin_dir: String) -> Result<RunOutput, String> {
     use tauri::Emitter;
-    run::run_housekeeping_now(&bin_dir, |line| {
-        let _ = app.emit("housekeeping-progress", line);
+    tauri::async_runtime::spawn_blocking(move || {
+        run::run_housekeeping_now(&bin_dir, move |line| {
+            let _ = app.emit("housekeeping-progress", line);
+        })
     })
+    .await
+    .map_err(|e| format!("background task panicked: {e}"))?
 }
 
 #[tauri::command]
