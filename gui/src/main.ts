@@ -23,7 +23,7 @@ interface InstallOutcome {
 // Mirrors install.rs's UpdateCheck exactly - a plain struct (not a
 // tagged enum like ReplicationStatus/Request), so the tuple fields
 // serialize as plain 3-element arrays.
-interface UpdateCheck {
+export interface UpdateCheck {
   current: [number, number, number];
   latest: [number, number, number];
   update_available: boolean;
@@ -45,12 +45,12 @@ export interface StatusResult {
   projects: StatusProject[];
 }
 
-interface LocateHit {
+export interface LocateHit {
   path: string;
   source: string;
 }
 
-interface LocateResult {
+export interface LocateResult {
   patterns: string[];
   indexed: boolean;
   counts: { index: number; live: number; archived_filelist: number };
@@ -402,7 +402,7 @@ export function buildUntrackedProjectsNotice(
   ]);
 }
 
-function formatVersion([major, minor, patch]: [number, number, number]): string {
+export function formatVersion([major, minor, patch]: [number, number, number]): string {
   return `${major}.${minor}.${patch}`;
 }
 
@@ -410,7 +410,7 @@ function formatVersion([major, minor, patch]: [number, number, number]): string 
 // state, shown unconditionally when relevant, inline action button) -
 // not buildRunBanner's shape, since this must appear on a normal page
 // load with no preceding action.
-function buildUpdateAvailableNotice(check: UpdateCheck, binDir: string): HTMLElement | null {
+export function buildUpdateAvailableNotice(check: UpdateCheck, binDir: string): HTMLElement | null {
   if (!check.update_available) return null;
   const goBtn = el("button", { type: "button" }, ["Go to Settings"]);
   goBtn.addEventListener("click", () => void renderSettings(binDir));
@@ -579,7 +579,7 @@ function buildSourcesSection(
   return el("section", {}, [header, ...(notice ? [notice] : []), table, summary]);
 }
 
-async function setSourceSchedule(binDir: string, source: BackupSource, schedule: Schedule) {
+export async function setSourceSchedule(binDir: string, source: BackupSource, schedule: Schedule) {
   try {
     await invoke("set_source_schedule", { binDir, sourcePath: source.path, schedule });
     void renderDashboard(binDir);
@@ -588,7 +588,7 @@ async function setSourceSchedule(binDir: string, source: BackupSource, schedule:
   }
 }
 
-async function clearSourceSchedule(binDir: string, source: BackupSource) {
+export async function clearSourceSchedule(binDir: string, source: BackupSource) {
   try {
     await invoke("clear_source_schedule", { sourcePath: source.path });
     void renderDashboard(binDir);
@@ -597,7 +597,7 @@ async function clearSourceSchedule(binDir: string, source: BackupSource) {
   }
 }
 
-async function saveIgnoreSettings(binDir: string, source: BackupSource, settings: IgnoreSettingsInput) {
+export async function saveIgnoreSettings(binDir: string, source: BackupSource, settings: IgnoreSettingsInput) {
   try {
     await invoke("set_ignore_settings", { binDir, sourcePath: source.path, settings });
     void renderDashboard(binDir);
@@ -639,7 +639,7 @@ async function addSource(binDir: string) {
   }
 }
 
-async function removeSource(binDir: string, source: BackupSource) {
+export async function removeSource(binDir: string, source: BackupSource) {
   try {
     await invoke("remove_source", { path: source.path });
     void renderDashboard(binDir);
@@ -751,7 +751,7 @@ function buildSearchSection(binDir: string): HTMLElement {
   ]);
 }
 
-async function runSearch(
+export async function runSearch(
   binDir: string,
   patterns: string[],
   resultsBox: HTMLElement,
@@ -774,7 +774,7 @@ export function sourceLabel(source: string): string {
   return "archived";
 }
 
-function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
+export function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
   const children: (Node | string)[] = [];
   if (!result.indexed) {
     children.push(
@@ -920,7 +920,7 @@ function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HT
   return el("section", {}, [header, desc, container, editRow, runRow]);
 }
 
-async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
+export async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
   try {
     await invoke("set_housekeeping_schedule", { binDir, schedule });
     void renderDashboard(binDir);
@@ -929,7 +929,7 @@ async function setHousekeepingSchedule(binDir: string, schedule: Schedule) {
   }
 }
 
-async function clearHousekeepingSchedule(binDir: string) {
+export async function clearHousekeepingSchedule(binDir: string) {
   try {
     await invoke("clear_housekeeping_schedule");
     void renderDashboard(binDir);
@@ -1451,7 +1451,7 @@ function buildReplicationSection(
   return el("section", {}, [header, desc, container, editRow]);
 }
 
-async function setReplication(binDir: string, request: ReplicationRequest) {
+export async function setReplication(binDir: string, request: ReplicationRequest) {
   try {
     await invoke("set_replication", { binDir, request });
     void renderDashboard(binDir);
@@ -1460,7 +1460,7 @@ async function setReplication(binDir: string, request: ReplicationRequest) {
   }
 }
 
-async function clearReplication(binDir: string) {
+export async function clearReplication(binDir: string) {
   try {
     await invoke("clear_replication", { binDir });
     void renderDashboard(binDir);
