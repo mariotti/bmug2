@@ -315,3 +315,48 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    // run_backup_now/run_housekeeping_now once regressed to a plain
+    // (non-async) fn, which silently moved their blocking child-process
+    // work back onto Tauri's main thread and froze the whole app for the
+    // job's duration (see the comment above run_backup_now). No real test
+    // catches that directly: cargo test calling run.rs's functions involves
+    // no Tauri dispatch at all, every frontend test mocks invoke entirely,
+    // and Tauri's own MockRuntime test harness has no window or event loop
+    // to observe a freeze in even if these commands were rewritten
+    // runtime-generic to use it (confirmed by reading tauri's own source -
+    // AppHandle here concretely resolves to the real Wry runtime via its
+    // #[default_runtime] macro, not substitutable with MockRuntime without
+    // a bigger signature change). This is a blunt source-text guard
+    // instead: it can't prove the app stays responsive, but it does fail
+    // loudly the moment someone reverts the async fn + spawn_blocking shape
+    // that fixes it.
+    fn command_source(name: &str) -> String {
+        let src = include_str!("lib.rs");
+        let start = src.find(&format!("async fn {name}(")).unwrap_or_else(|| {
+            panic!(
+                "`{name}` is no longer declared `async fn` - this regresses the \
+                 main-thread-freeze fix, see the comment above run_backup_now in lib.rs"
+            )
+        });
+        src[start..].lines().take(15).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn run_backup_now_stays_async_and_offloaded() {
+        assert!(
+            command_source("run_backup_now").contains("spawn_blocking"),
+            "run_backup_now is async but no longer uses spawn_blocking - this regresses the main-thread-freeze fix"
+        );
+    }
+
+    #[test]
+    fn run_housekeeping_now_stays_async_and_offloaded() {
+        assert!(
+            command_source("run_housekeeping_now").contains("spawn_blocking"),
+            "run_housekeeping_now is async but no longer uses spawn_blocking - this regresses the main-thread-freeze fix"
+        );
+    }
+}
