@@ -12,6 +12,29 @@ bmuJsonEscape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 #
+# bmuLocateMatchBasename()
+# $1=pattern $2=file. Prints the lines of $2 (one relative/absolute
+# path per line) whose own last path component (basename) contains
+# $1, case-insensitively - never a line that only matches because an
+# ancestor directory's name happens to contain it. Without this, a
+# grep against the whole line means one hit on a directory name (e.g.
+# "myproj") drags in every single file below it in the results,
+# even though the file's own name has nothing to do with the search
+# term - confirmed as the cause of real noisy searches. tolower()
+# alone is used (not GNU awk's IGNORECASE) so this runs the same on
+# BSD/macOS awk and GNU awk; the pattern is lowercased once in the
+# shell with tr so it stays a literal-case match against the
+# lowercased basename rather than needing IGNORECASE support. Mirrors
+# locate's own "-b/--basename" flag (used alongside this for the
+# `locate` index itself in backmeup.locate.sh), so index hits and
+# grep-fallback hits agree on what counts as a match.
+bmuLocateMatchBasename() {
+    l_bmu_lmb_pat="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    awk -v pat="${l_bmu_lmb_pat}" '
+        { n = split($0, a, "/"); if (tolower(a[n]) ~ pat) print }
+    ' "$2"
+}
+#
 # bmuProtonJsonField()
 # Minimal flat-integer-field extractor for proton-drive's own "-j"
 # upload/download summaries, e.g.

@@ -1607,6 +1607,28 @@ testLocateWorksWithoutLocateInstalled() {
     assertTrue "grep fallback did not find the archived file without locate" $?
 }
 
+testSearchOnlyMatchesOwnBasenameNotAncestorDirName() {
+    # Real bug, found by hand: searching for a term that's a substring
+    # of a project/directory name (e.g. "zork" matching "zorkproj")
+    # used to return every single file under it too, even files whose
+    # own name has nothing to do with the term - because the search
+    # matched the whole path, not just each entry's own name. A search
+    # should only report a nested file when the term is actually
+    # present in that file's own name, not merely because some
+    # ancestor directory happens to contain it.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/zorkproj"
+    mkdir -p "${l_src}/sub"
+    echo "unrelated" > "${l_src}/sub/unrelated.txt"
+    echo "has the term" > "${l_src}/zork-notes.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    l_out=`"${SB}/bin/backmeup.locate.sh" zork 2>/dev/null`
+    echo "${l_out}" | grep -q "zorkproj/zork-notes.txt"
+    assertTrue "search misses the file whose own name has the term" $?
+    echo "${l_out}" | grep -q "unrelated.txt"
+    assertFalse "search must not report a nested file by its ancestor dir's name alone" $?
+}
+
 #
 # old-layout compatibility: detection, migration, no re-transfer
 # --------------------------------------------------------------
