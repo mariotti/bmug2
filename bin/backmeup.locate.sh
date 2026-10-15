@@ -33,8 +33,8 @@ fi;
 #
 if [ -z "${l_BMU_JSON}" ]; then
     if [ -n "${BMU_CMDLOCATE}" ]; then
-        ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@"
-        ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@"
+        ${BMU_CMDLOCATE} -i -b -d "${BMU_DIRDBLOCATE}/.locate.db" "$@"
+        ${BMU_CMDLOCATE} -i -b -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@"
     fi;
     #
     # Archived snapshots (backmeup.archive.sh): their files are no longer
@@ -46,7 +46,7 @@ if [ -z "${l_BMU_JSON}" ]; then
         l_bdir="${l_fl%.filelist}"
         [ -d "${l_bdir}" ] && continue
         for l_pat in "$@"; do
-            grep -i -- "${l_pat}" "${l_fl}" | \
+            bmuLocateMatchBasename "${l_pat}" "${l_fl}" | \
                 sed "s|^|${BMU_DIRBACKUPS}/|; s|\$| (archived)|"
         done
     done
@@ -58,7 +58,7 @@ if [ -z "${l_BMU_JSON}" ]; then
     for l_fl in "${BMU_DIRBACKUPS}"/*.filelist; do
         [ -f "${l_fl}" ] || continue
         for l_pat in "$@"; do
-            grep -i -- "${l_pat}" "${l_fl}" | \
+            bmuLocateMatchBasename "${l_pat}" "${l_fl}" | \
                 sed "s|^|${BMU_DIRRSYNC}/|; s|\$| (live)|"
         done
     done
@@ -88,8 +88,8 @@ trap 'rm -rf "${l_bmu_tmpdir}"' EXIT
 #
 if [ -n "${BMU_CMDLOCATE}" ]; then
     l_indexed="true"
-    { ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.db" "$@" 2>/dev/null; \
-      ${BMU_CMDLOCATE} -i -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@" 2>/dev/null; } \
+    { ${BMU_CMDLOCATE} -i -b -d "${BMU_DIRDBLOCATE}/.locate.db" "$@" 2>/dev/null; \
+      ${BMU_CMDLOCATE} -i -b -d "${BMU_DIRDBLOCATE}/.locate.dbb" "$@" 2>/dev/null; } \
       > "${l_bmu_tmpdir}/idx"
 fi;
 #
@@ -98,7 +98,7 @@ for l_fl in "${BMU_DIRBACKUPS}"/*/B-*.filelist; do
     l_bdir="${l_fl%.filelist}"
     [ -d "${l_bdir}" ] && continue
     for l_pat in "$@"; do
-        grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null | \
+        bmuLocateMatchBasename "${l_pat}" "${l_fl}" 2>/dev/null | \
             sed "s|^|${BMU_DIRBACKUPS}/|" >> "${l_bmu_tmpdir}/arch"
     done
 done
@@ -106,7 +106,7 @@ done
 for l_fl in "${BMU_DIRBACKUPS}"/*.filelist; do
     [ -f "${l_fl}" ] || continue
     for l_pat in "$@"; do
-        grep -i -- "${l_pat}" "${l_fl}" 2>/dev/null | \
+        bmuLocateMatchBasename "${l_pat}" "${l_fl}" 2>/dev/null | \
             sed "s|^|${BMU_DIRRSYNC}/|" >> "${l_bmu_tmpdir}/live"
     done
 done
