@@ -20,14 +20,30 @@ import {
   runJob,
   buildRunBanner,
   renderDashboard,
+  formatVersion,
+  buildUpdateAvailableNotice,
+  runSearch,
+  renderSearchResults,
+  setSourceSchedule,
+  clearSourceSchedule,
+  saveIgnoreSettings,
+  removeSource,
+  setHousekeepingSchedule,
+  clearHousekeepingSchedule,
+  setReplication,
+  clearReplication,
   type Schedule,
   type StatusProject,
   type StatusResult,
   type BackupSource,
   type IgnoreSettings,
+  type IgnoreSettingsInput,
   type ReplicationStatus,
+  type ReplicationRequest,
   type RunOutput,
   type RunBanner,
+  type UpdateCheck,
+  type LocateResult,
 } from "./main";
 
 // runJob awaits listen() before doing anything else observable from a test
@@ -712,4 +728,192 @@ describe("user journeys (renderDashboard end to end)", () => {
     expect(resetTrigger.disabled).toBe(false);
     expect(document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!.disabled).toBe(false);
   });
+});
+
+describe("formatVersion", () => {
+  it("joins a [major, minor, patch] tuple with dots", () => {
+    expect(formatVersion([2, 16, 3])).toBe("2.16.3");
+  });
+});
+
+describe("buildUpdateAvailableNotice", () => {
+  it("returns null when no update is available", () => {
+    const check: UpdateCheck = { current: [2, 16, 2], latest: [2, 16, 2], update_available: false };
+    expect(buildUpdateAvailableNotice(check, "/bin")).toBeNull();
+  });
+
+  it("names both versions and offers a way to Settings when an update is available", () => {
+    const check: UpdateCheck = { current: [2, 16, 2], latest: [2, 16, 3], update_available: true };
+    const notice = buildUpdateAvailableNotice(check, "/bin");
+    expect(notice?.textContent).toContain("2.16.3");
+    expect(notice?.textContent).toContain("2.16.2");
+    expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
+  });
+});
+
+describe("renderSearchResults", () => {
+  function result(overrides: Partial<LocateResult> = {}): LocateResult {
+    return { patterns: ["x"], indexed: true, counts: { index: 0, live: 0, archived_filelist: 0 }, results: [], ...overrides };
+  }
+
+  it("notes when nothing is indexed", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(result({ indexed: false }), box);
+    expect(box.textContent).toContain("No locate installed");
+  });
+
+  it("shows No matches for an empty result set", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(result({ results: [] }), box);
+    expect(box.textContent).toContain("No matches.");
+  });
+
+  it("lists each hit with its source tag and path", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(
+      result({ results: [{ path: "/sync/proj1/a.txt", source: "live" }, { path: "/archive/proj1/b.txt", source: "archived_filelist" }] }),
+      box,
+    );
+    const items = box.querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain("/sync/proj1/a.txt");
+    expect(items[0].querySelector(".source-tag")?.className).toBe("source-tag source-live");
+    expect(items[1].querySelector(".source-tag")?.textContent).toBe("archived");
+  });
+});
+
+describe("runSearch", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("shows a loading state immediately, then the real results on success", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      patterns: ["x"],
+      indexed: true,
+      counts: { index: 1, live: 0, archived_filelist: 0 },
+      results: [{ path: "/sync/proj1/a.txt", source: "index" }],
+    });
+    const box = el("div", {}, []);
+    const run = runSearch("/bin", ["x"], box);
+    expect(box.textContent).toBe("Searching…");
+    await run;
+    expect(box.textContent).toContain("/sync/proj1/a.txt");
+  });
+
+  it("shows the error message on failure instead of leaving Searching… stuck", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("locate: command not found"));
+    const box = el("div", {}, []);
+    await runSearch("/bin", ["x"], box);
+    expect(box.textContent).toContain("locate: command not found");
+  });
+});
+
+// The eight simplest dashboard mutators (schedule/ignore/replication
+// set-or-clear, remove) all share one shape: invoke a single command, then
+// re-render cleanly on success or with an error banner on failure. One
+// table covers all of them instead of eight near-identical test bodies.
+describe("dashboard mutators (schedule/ignore/replication/remove)", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+  });
+
+  function baseSource(overrides: Partial<BackupSource> = {}): BackupSource {
+    return { name: "proj1", path: "/src/proj1", schedule: null, ...overrides };
+  }
+
+  // Every mutator's catch block fires renderDashboard with `void` rather
+  // than awaiting it, so the mutator's own promise can resolve before the
+  // re-render (several more invoke round-trips) actually finishes.
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  function mockInvoke(command: string, behavior: "resolve" | "reject") {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === command) {
+        if (behavior === "reject") throw new Error(`${command} failed`);
+        return undefined;
+      }
+      switch (cmd) {
+        case "get_status":
+          return { sync_dir: "/fake/sync", history_dir: "/fake/sync-BP", projects: [] } satisfies StatusResult;
+        case "list_sources":
+          return [] as BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  const mutators: { name: string; command: string; run: () => Promise<void> }[] = [
+    {
+      name: "setSourceSchedule",
+      command: "set_source_schedule",
+      run: () => setSourceSchedule("/bin", baseSource(), { hour: 2, minute: 0 }),
+    },
+    {
+      name: "clearSourceSchedule",
+      command: "clear_source_schedule",
+      run: () => clearSourceSchedule("/bin", baseSource()),
+    },
+    {
+      name: "saveIgnoreSettings",
+      command: "set_ignore_settings",
+      run: () =>
+        saveIgnoreSettings("/bin", baseSource(), {
+          gitignore: true,
+          bmuignore: false,
+          bmuignore_content: "",
+        } satisfies IgnoreSettingsInput),
+    },
+    { name: "removeSource", command: "remove_source", run: () => removeSource("/bin", baseSource()) },
+    {
+      name: "setHousekeepingSchedule",
+      command: "set_housekeeping_schedule",
+      run: () => setHousekeepingSchedule("/bin", { hour: 2, minute: 0 }),
+    },
+    {
+      name: "clearHousekeepingSchedule",
+      command: "clear_housekeeping_schedule",
+      run: () => clearHousekeepingSchedule("/bin"),
+    },
+    {
+      name: "setReplication",
+      command: "set_replication",
+      run: () => setReplication("/bin", { backend: "proton", remote: null } satisfies ReplicationRequest),
+    },
+    { name: "clearReplication", command: "clear_replication", run: () => clearReplication("/bin") },
+  ];
+
+  for (const { name, command, run } of mutators) {
+    it(`${name} invokes ${command} and re-renders cleanly with no banner on success`, async () => {
+      mockInvoke(command, "resolve");
+      await run();
+      await waitFor(() => document.querySelector("#app")!.textContent!.includes("bmug2"));
+      expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === command)).toBe(true);
+      expect(document.querySelector(".run-banner")).toBeNull();
+    });
+
+    it(`${name} shows an error banner with the failure message when ${command} rejects`, async () => {
+      mockInvoke(command, "reject");
+      await run();
+      await waitFor(() => document.querySelector(".run-banner") !== null);
+      const banner = document.querySelector(".run-banner");
+      expect(banner?.className).toBe("run-banner run-banner-error");
+      expect(banner?.textContent).toContain(`${command} failed`);
+    });
+  }
 });
