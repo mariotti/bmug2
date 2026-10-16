@@ -74,6 +74,9 @@ if you "control" it: `rsync` already does the heavy lifting, and
 it for searching. No proprietary format: the backup depends only on
 the destination filesystem, not on bmug2 itself.
 
+What bmug2 deliberately is and isn't for, who it fits, and a worked
+example (backing up a thesis): **[docs/USECASES.md](docs/USECASES.md)**.
+
 ## Requirements
 
 A real rsync (>= 3.x) — `backmeup.sh` detects and refuses to run with
@@ -113,7 +116,9 @@ HISTORY actually live — local disks, Dropbox/Google Drive, and why S3
 needs a different approach: **[docs/DESTINATIONS.md](docs/DESTINATIONS.md)**.
 Running it unattended — cron, `at`, systemd timers, launchd, and the
 PATH gotcha that trips up most scheduled jobs:
-**[docs/SCHEDULING.md](docs/SCHEDULING.md)**.
+**[docs/SCHEDULING.md](docs/SCHEDULING.md)**. What bmug2 is (and
+deliberately isn't) for, who it fits, and a worked example:
+**[docs/USECASES.md](docs/USECASES.md)**.
 
 ## Design goals
 
