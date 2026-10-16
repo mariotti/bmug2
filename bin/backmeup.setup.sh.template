@@ -24,6 +24,18 @@ BMU_DIRRSYNC="${HOME}/Backups/rsyncBackup"
 BMU_DIRBACKUPS="${BMU_DIRRSYNC}-BP"
 BMU_DIRDBLOCATE="${BMU_DIRRSYNC}/.locate.dir"
 #
+# BMU_DIRRSYNC_MOUNT/BMU_DIRBACKUPS_MOUNT: the mount point (bmuMountPoint,
+# in backmeup.shellfunctions.sh) each directory above resolved to when
+# backmeup.configure.sh last ran - backmeup.sh compares this against the
+# live value on every run, refusing rather than silently writing to the
+# system disk if an external drive isn't actually mounted right now.
+# Always empty here (this template is sourced standalone, with no real
+# configure.sh run behind it) and for any install that predates this
+# check - empty means the live check is skipped, not "verified safe".
+# Re-run backmeup.configure.sh once to populate these for a real install.
+BMU_DIRRSYNC_MOUNT=""
+BMU_DIRBACKUPS_MOUNT=""
+#
 # OS Options
 # ----------
 #BMU_INSTDIR="/usr/local/bmu"

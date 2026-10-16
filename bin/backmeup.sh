@@ -45,6 +45,41 @@ if [ -z "${BMU_CMDRSYNC}" ]; then
     exit 1
 fi;
 
+#Refuse to run if SYNC/HISTORY no longer resolve to the filesystem they
+#were configured on - typically an external drive that isn't actually
+#mounted right now. Without this check, its mountpoint directory still
+#exists (and is writable) on the system disk even when nothing is
+#mounted there: mkdir -p below would just recreate it, and rsync would
+#happily fill it, silently consuming space on the very disk this backup
+#is meant to protect - a real, confirmed gap, not a hypothetical one.
+#Skipped entirely when either var is empty: an install that predates
+#this check, or was never run through backmeup.configure.sh since -
+#re-run it once to opt in, same as any other config refresh.
+if [ -n "${BMU_DIRRSYNC_MOUNT}" ]; then
+    l_bmu_live_mount=`bmuMountPoint "${BMU_DIRRSYNC}"`
+    if [ "${l_bmu_live_mount}" != "${BMU_DIRRSYNC_MOUNT}" ]; then
+        echo "ERROR: SYNC directory (${BMU_DIRRSYNC}) is not on its configured"
+        echo "filesystem (expected mount: ${BMU_DIRRSYNC_MOUNT}, found: ${l_bmu_live_mount:-<none>})."
+        echo "This usually means its drive isn't connected or mounted right now -"
+        echo "refusing to run rather than silently writing to the wrong disk."
+        echo "If this location has genuinely changed on purpose, re-run"
+        echo "backmeup.configure.sh to confirm the new one."
+        exit 1
+    fi
+fi;
+if [ -n "${BMU_DIRBACKUPS_MOUNT}" ]; then
+    l_bmu_live_mount=`bmuMountPoint "${BMU_DIRBACKUPS}"`
+    if [ "${l_bmu_live_mount}" != "${BMU_DIRBACKUPS_MOUNT}" ]; then
+        echo "ERROR: BackUp/HISTORY directory (${BMU_DIRBACKUPS}) is not on its"
+        echo "configured filesystem (expected mount: ${BMU_DIRBACKUPS_MOUNT}, found:"
+        echo "${l_bmu_live_mount:-<none>}). This usually means its drive isn't"
+        echo "connected or mounted right now - refusing to run rather than"
+        echo "silently writing to the wrong disk. If this location has genuinely"
+        echo "changed on purpose, re-run backmeup.configure.sh to confirm the new one."
+        exit 1
+    fi
+fi;
+
 #Old (pre-bmug2) layout detection: the mirror used to live one level deeper
 #(sync/<project>/<project>). Running the fixed layout against it would archive
 #the whole old mirror into today's B- dir and re-transfer everything, so

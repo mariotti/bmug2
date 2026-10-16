@@ -785,6 +785,114 @@ testConfigureRejectsRelativePathFlag() {
 }
 
 #
+# mount-point guard: refuse rather than silently write to the system
+# disk when SYNC/HISTORY's drive isn't actually mounted
+# ---------------------------------------------------------------------
+
+testConfigureCapturesMountPointsAndNormalRunStillSucceeds() {
+    # Proves two things with one install: configure.sh really does
+    # capture a non-empty mount point for both directories (so the
+    # guard below has something real to compare against), and a
+    # completely ordinary run - same filesystem, nothing unplugged -
+    # is not a false positive.
+    l_home="${SHUNIT_TMPDIR}/mountcapturehome"
+    l_checkout="${SHUNIT_TMPDIR}/mountcapturecheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/mountcapture-install.log" 2>&1
+    assertEquals "install failed, see mountcapture-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    l_mount=`grep '^BMU_DIRRSYNC_MOUNT=' "${l_setup}" | sed 's/^[^=]*=//'`
+    assertNotEquals "BMU_DIRRSYNC_MOUNT was not captured" '""' "${l_mount}"
+    l_mount=`grep '^BMU_DIRBACKUPS_MOUNT=' "${l_setup}" | sed 's/^[^=]*=//'`
+    assertNotEquals "BMU_DIRBACKUPS_MOUNT was not captured" '""' "${l_mount}"
+
+    l_src="${l_home}/src/mountokproj"
+    mkdir -p "${l_src}"
+    echo "fine" > "${l_src}/fine.txt"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/mountcapture-run.log" 2>&1
+    assertEquals "a normal run must not be refused by the mount guard, see mountcapture-run.log" \
+        0 $?
+    assertTrue "fine.txt did not reach the mirror" \
+        "[ -f '${l_home}/sync/mountokproj/fine.txt' ]"
+}
+
+testBackupRefusesWhenDestinationNotOnConfiguredMount() {
+    # Simulates the real bug: the drive recorded at configure time is
+    # no longer what's actually there (e.g. unplugged, with its
+    # mountpoint directory silently still present and writable on the
+    # system disk) - by rewriting the recorded expected mount point to
+    # something it will never live-match, same idiom this suite
+    # already uses elsewhere to simulate an environment change
+    # (testLocateWorksWithoutLocateInstalled appends an override rather
+    # than physically uninstalling locate).
+    l_home="${SHUNIT_TMPDIR}/mountmismatchhome"
+    l_checkout="${SHUNIT_TMPDIR}/mountmismatchcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/mountmismatch-install.log" 2>&1
+    assertEquals "install failed, see mountmismatch-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    echo 'BMU_DIRRSYNC_MOUNT="/nonexistent-bmu-test-mount"' >> "${l_setup}"
+
+    l_src="${l_home}/src/mountbadproj"
+    mkdir -p "${l_src}"
+    echo "should not arrive" > "${l_src}/blocked.txt"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/mountmismatch-run.log" 2>&1
+    assertEquals "a mount mismatch must refuse to run" 1 $?
+    grep -q "refusing to run rather than silently writing" \
+        "${SHUNIT_TMPDIR}/mountmismatch-run.log"
+    assertTrue "no clear mount-mismatch error message" $?
+    assertFalse "blocked.txt must not have reached the mirror on the wrong filesystem" \
+        "[ -e '${l_home}/sync/mountbadproj' ]"
+}
+
+testBackupStillRunsWithoutMountCheckConfigured() {
+    # An install that predates this check (its backmeup.setup.sh simply
+    # never mentions BMU_DIRRSYNC_MOUNT/BMU_DIRBACKUPS_MOUNT at all, the
+    # same as every real install generated before this feature existed)
+    # must keep working exactly as before - the guard is opt-in via a
+    # reconfigure, not retroactively enforced.
+    l_home="${SHUNIT_TMPDIR}/nomountcheckhome"
+    l_checkout="${SHUNIT_TMPDIR}/nomountcheckcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/nomountcheck-install.log" 2>&1
+    assertEquals "install failed, see nomountcheck-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    l_oldsetup="${SHUNIT_TMPDIR}/nomountcheck-oldstyle-setup.sh"
+    grep -v '^BMU_DIR\(RSYNC\|BACKUPS\)_MOUNT=' "${l_setup}" > "${l_oldsetup}"
+    cp "${l_oldsetup}" "${l_setup}"
+
+    l_src="${l_home}/src/nomountcheckproj"
+    mkdir -p "${l_src}"
+    echo "fine" > "${l_src}/fine.txt"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/nomountcheck-run.log" 2>&1
+    assertEquals "a pre-upgrade install without these vars must still run, see nomountcheck-run.log" \
+        0 $?
+    assertTrue "fine.txt did not reach the mirror" \
+        "[ -f '${l_home}/sync/nomountcheckproj/fine.txt' ]"
+}
+
+#
 # non-interactive replication flags (--replicate-backend= etc, a GUI's
 # own way to configure/clear either backend without a terminal)
 # ---------------------------------------------------------------------
