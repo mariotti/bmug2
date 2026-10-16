@@ -5,6 +5,7 @@ import {
   isDaily,
   el,
   formatKb,
+  buildProjectStatsCells,
   formatSchedule,
   timeInputValue,
   parseTimeInput,
@@ -245,11 +246,63 @@ describe("buildUntrackedProjectsNotice", () => {
       "/bin",
     );
     expect(notice).not.toBeNull();
-    const items = notice!.querySelectorAll("li");
-    expect(items).toHaveLength(2);
-    expect(items[0].textContent).toContain("docs");
-    expect(items[1].textContent).toContain("photos");
+    const rows = notice!.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("docs");
+    expect(rows[1].textContent).toContain("photos");
     expect(notice!.querySelector("button")).not.toBeNull();
+  });
+
+  it("shows last-run and size stats for an untracked project, not just its name", () => {
+    const notice = buildUntrackedProjectsNotice(
+      [
+        project({
+          name: "docs",
+          last_run: "2026-10-16 10:00:00",
+          last_change: "2026-10-15 09:00:00",
+          snapshot_count: 3,
+          mirror_size_kb: 2048,
+          history_size_kb: 512,
+        }),
+      ],
+      "/bin",
+    );
+    const row = notice!.querySelector("tbody tr")!;
+    expect(row.textContent).toContain("2026-10-16 10:00:00");
+    expect(row.textContent).toContain("2026-10-15 09:00:00");
+    expect(row.textContent).toContain("3");
+    expect(row.textContent).toContain("2.0 MB");
+    expect(row.textContent).toContain("512 KB");
+  });
+});
+
+describe("buildProjectStatsCells", () => {
+  it("renders a dash in every cell when there is no known status yet", () => {
+    const cells = buildProjectStatsCells(undefined);
+    expect(cells).toHaveLength(4);
+    expect(cells.map((c) => c.textContent)).toEqual(["-", "-", "-", "-"]);
+  });
+
+  it("renders a known project's real stats", () => {
+    const cells = buildProjectStatsCells(
+      project({
+        last_change: "2026-10-15 09:00:00",
+        snapshot_count: 3,
+        mirror_size_kb: 2048,
+        history_size_kb: 512,
+      }),
+    );
+    expect(cells.map((c) => c.textContent)).toEqual([
+      "2026-10-15 09:00:00",
+      "3",
+      "2.0 MB",
+      "512 KB",
+    ]);
+  });
+
+  it("renders a dash for a history size that's genuinely null", () => {
+    const cells = buildProjectStatsCells(project({ history_size_kb: null }));
+    expect(cells[3].textContent).toBe("-");
   });
 });
 
@@ -727,6 +780,76 @@ describe("user journeys (renderDashboard end to end)", () => {
     const resetTrigger = sectionByHeading("Housekeeping").querySelector<HTMLButtonElement>(".job-trigger-btn")!;
     expect(resetTrigger.disabled).toBe(false);
     expect(document.querySelector<HTMLButtonElement>(".sources-table .job-trigger-btn")!.disabled).toBe(false);
+  });
+});
+
+describe("renderDashboard shows each source's own status inline", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+    vi.mocked(listen).mockReset();
+  });
+
+  function mockStatus(projects: StatusProject[]) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      switch (cmd) {
+        case "get_status":
+          return { sync_dir: "/fake/sync", history_dir: "/fake/sync-BP", projects } satisfies StatusResult;
+        case "list_sources":
+          return [{ name: "proj1", path: "/fake/src/proj1", schedule: null }] satisfies BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_ignore_settings":
+          return {
+            gitignore: true,
+            gitignore_exists: true,
+            bmuignore: false,
+            bmuignore_content: "",
+          } satisfies IgnoreSettings;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("shows a tracked source's real stats in its own row, with no separate status table", async () => {
+    mockStatus([
+      project({
+        name: "proj1",
+        last_run: "2026-10-16 10:00:00",
+        last_change: "2026-10-15 09:00:00",
+        snapshot_count: 3,
+        mirror_size_kb: 2048,
+        history_size_kb: 512,
+      }),
+    ]);
+
+    await renderDashboard("/bin");
+
+    expect(document.querySelector(".status-table")).toBeNull();
+    const row = document.querySelector(".sources-table .source-info-row")!;
+    expect(row.textContent).toContain("2026-10-15 09:00:00");
+    expect(row.textContent).toContain("3");
+    expect(row.textContent).toContain("2.0 MB");
+    expect(row.textContent).toContain("512 KB");
+  });
+
+  it("scopes the old-layout badge and warning to that one source's row", async () => {
+    mockStatus([project({ name: "proj1", old_layout: true })]);
+
+    await renderDashboard("/bin");
+
+    const row = document.querySelector(".sources-table .source-info-row")!;
+    expect(row.querySelector(".badge-old-layout")).not.toBeNull();
+    const warning = document.querySelector(".note-old-layout")!;
+    expect(warning.textContent).toContain("proj1: old layout");
   });
 });
 

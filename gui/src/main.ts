@@ -149,66 +149,20 @@ export function formatKb(kb: number | null): string {
   return `${kb} KB`;
 }
 
-function buildStatusSection(status: StatusResult, binDir: string): HTMLElement {
-  const refreshBtn = el("button", { type: "button" }, ["Refresh"]);
-  refreshBtn.addEventListener("click", () => void renderDashboard(binDir));
-
-  const header = el("div", { class: "dashboard-header" }, [
-    el("p", {}, [
-      el("strong", {}, ["SYNC: "]),
-      el("code", {}, [status.sync_dir]),
-    ]),
-    el("p", {}, [
-      el("strong", {}, ["HISTORY: "]),
-      el("code", {}, [status.history_dir]),
-    ]),
-    refreshBtn,
-  ]);
-
-  if (status.projects.length === 0) {
-    return el("section", {}, [
-      header,
-      el("p", {}, [`(no projects found in ${status.sync_dir})`]),
-    ]);
-  }
-
-  const rows = status.projects.map((p) =>
-    el("tr", {}, [
-      el("td", {}, [
-        p.old_layout ? el("span", { class: "badge-old-layout" }, ["⚠"]) : "",
-        p.name,
-      ]),
-      el("td", {}, [p.last_run ?? "-"]),
-      el("td", {}, [p.last_change ?? "-"]),
-      el("td", {}, [String(p.snapshot_count)]),
-      el("td", {}, [formatKb(p.mirror_size_kb)]),
-      el("td", {}, [formatKb(p.history_size_kb)]),
-    ]),
-  );
-
-  const oldLayoutNotes = status.projects
-    .filter((p) => p.old_layout)
-    .map((p) =>
-      el("p", { class: "note-old-layout" }, [
-        `${p.name}: old layout, run backmeup.migrate.sh ${p.name} on the command line.`,
-      ]),
-    );
-
-  const table = el("table", { class: "status-table" }, [
-    el("thead", {}, [
-      el("tr", {}, [
-        el("th", {}, ["Project"]),
-        el("th", {}, ["Last run"]),
-        el("th", {}, ["Last change"]),
-        el("th", {}, ["Snapshots"]),
-        el("th", {}, ["Mirror"]),
-        el("th", {}, ["History"]),
-      ]),
-    ]),
-    el("tbody", {}, rows),
-  ]);
-
-  return el("section", {}, [header, table, ...oldLayoutNotes]);
+// Last change, snapshot count, mirror/history size: the four fields
+// every per-project status view needs, whether that's a tracked
+// Backup Source's own row or the untracked-projects fallback table
+// below - extracted once so both render identically and stay in sync.
+// `known` is undefined when a source has never produced a status
+// entry at all (e.g. its first backup hasn't run yet) - every cell
+// renders "-" in that case, distinct from a real recorded 0.
+export function buildProjectStatsCells(known: StatusProject | undefined): HTMLElement[] {
+  return [
+    el("td", {}, [known?.last_change ?? "-"]),
+    el("td", {}, [known ? String(known.snapshot_count) : "-"]),
+    el("td", {}, [formatKb(known?.mirror_size_kb ?? null)]),
+    el("td", {}, [formatKb(known?.history_size_kb ?? null)]),
+  ];
 }
 
 export function formatSchedule(schedule: Schedule): string {
@@ -392,13 +346,37 @@ export function buildUntrackedProjectsNotice(
   const rows = untracked.map((project) => {
     const locateBtn = el("button", { type: "button" }, ["Locate folder…"]);
     locateBtn.addEventListener("click", () => void linkExistingProject(binDir, project));
-    return el("li", {}, [`${project.name} `, locateBtn]);
+    return el("tr", {}, [
+      el("td", {}, [project.name]),
+      el("td", {}, [project.last_run ?? "-"]),
+      ...buildProjectStatsCells(project),
+      el("td", {}, [locateBtn]),
+    ]);
   });
+  // Reuses .status-table - free the moment the old standalone status
+  // section is gone, and already styled compactly, matching the
+  // "small fallback, not a full duplicate table" intent: no
+  // Folder/Schedule columns, since those are source-specific concepts
+  // that don't exist yet for a project with no tracked source.
+  const table = el("table", { class: "status-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", {}, ["Project"]),
+        el("th", {}, ["Last run"]),
+        el("th", {}, ["Last change"]),
+        el("th", {}, ["Snapshots"]),
+        el("th", {}, ["Mirror"]),
+        el("th", {}, ["History"]),
+        el("th", {}, [""]),
+      ]),
+    ]),
+    el("tbody", {}, rows),
+  ]);
   return el("div", { class: "untracked-notice" }, [
     el("p", {}, [
       `Already backed up but not tracked here yet - point each at its source folder to get Run Now and scheduling for it:`,
     ]),
-    el("ul", {}, rows),
+    table,
   ]);
 }
 
@@ -480,7 +458,7 @@ function buildSourcesSection(
     const runBtn = el("button", { type: "button", class: "job-trigger-btn" }, ["Run now"]);
     const runLogEl = el("pre", { class: "log" }, []);
     const runRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, [
-      el("td", { colspan: "4" }, [runLogEl]),
+      el("td", { colspan: "8" }, [runLogEl]),
     ]);
     runRow.style.display = "none";
     runBtn.addEventListener("click", () => void runBackupNow(binDir, source, runBtn, runRow, runLogEl));
@@ -497,7 +475,7 @@ function buildSourcesSection(
           scheduleRow.style.display = "none";
         },
       );
-      scheduleRow.replaceChildren(el("td", { colspan: "4" }, [editor]));
+      scheduleRow.replaceChildren(el("td", { colspan: "8" }, [editor]));
       scheduleRow.style.display = "";
     };
     const scheduleBtn = source.schedule
@@ -523,7 +501,7 @@ function buildSourcesSection(
             bmuignoreRow.style.display = "none";
           },
         );
-        bmuignoreRow.replaceChildren(el("td", { colspan: "4" }, [editor]));
+        bmuignoreRow.replaceChildren(el("td", { colspan: "8" }, [editor]));
         bmuignoreRow.style.display = "";
       });
     }
@@ -534,19 +512,37 @@ function buildSourcesSection(
       const toggles = buildIgnoreToggles(settings, (field, value) =>
         void saveIgnoreSettings(binDir, source, { ...settings, [field]: value }),
       );
-      togglesRow.replaceChildren(el("td", { colspan: "4" }, [toggles]));
+      togglesRow.replaceChildren(el("td", { colspan: "8" }, [toggles]));
     }
+
+    // A tracked source whose underlying project still has the old
+    // pre-migration layout: visible by default (not behind a toggle,
+    // unlike the editor rows above) since this is a data-integrity
+    // warning, not something opened on demand. Reuses the exact
+    // wording the old standalone status table showed.
+    const oldLayoutRow = known?.old_layout
+      ? el("tr", { class: groupClass }, [
+          el("td", { colspan: "8", class: "note-old-layout" }, [
+            `${source.name}: old layout, run backmeup.migrate.sh ${source.name} on the command line.`,
+          ]),
+        ])
+      : null;
 
     rows.push(
       el("tr", { class: `source-info-row ${groupClass}` }, [
-        el("td", {}, [el("strong", {}, [source.name])]),
-        el("td", {}, [el("code", {}, [source.path])]),
+        el("td", {}, [
+          known?.old_layout ? el("span", { class: "badge-old-layout" }, ["⚠"]) : "",
+          el("strong", {}, [source.name]),
+        ]),
+        el("td", {}, [el("code", { class: "source-folder-path", title: source.path }, [source.path])]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
+        ...buildProjectStatsCells(known),
         el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),
       ]),
+      ...(oldLayoutRow ? [oldLayoutRow] : []),
       togglesRow,
       el("tr", { class: groupClass }, [
-        el("td", { class: "source-commands", colspan: "4" }, commandBtns),
+        el("td", { class: "source-commands", colspan: "8" }, commandBtns),
       ]),
       scheduleRow,
       bmuignoreRow,
@@ -560,6 +556,10 @@ function buildSourcesSection(
         el("th", {}, ["Name"]),
         el("th", {}, ["Folder"]),
         el("th", {}, ["Last run"]),
+        el("th", {}, ["Last change"]),
+        el("th", {}, ["Snapshots"]),
+        el("th", {}, ["Mirror"]),
+        el("th", {}, ["History"]),
         el("th", {}, ["Schedule"]),
       ]),
     ]),
@@ -859,13 +859,24 @@ export async function renderDashboard(binDir: string, banner?: RunBanner) {
     const notice = buildUpdateAvailableNotice(cachedUpdateCheck, binDir);
     if (notice) children.push(notice);
   }
+  // Global, not per-project - these lived inside the old standalone
+  // status section; moved here now that per-project stats live on
+  // each source's own row instead.
+  const refreshBtn = el("button", { type: "button" }, ["Refresh"]);
+  refreshBtn.addEventListener("click", () => void renderDashboard(binDir));
+  children.push(
+    el("div", { class: "dashboard-header" }, [
+      el("p", {}, [el("strong", {}, ["SYNC: "]), el("code", {}, [status.sync_dir])]),
+      el("p", {}, [el("strong", {}, ["HISTORY: "]), el("code", {}, [status.history_dir])]),
+      refreshBtn,
+    ]),
+  );
   const scheduleInfoPanel = buildScheduleInfoPanel(hasFullDiskAccess);
   children.push(
     buildSourcesSection(sources, status, ignoreSettings, binDir),
     buildHousekeepingSection(housekeeping, binDir),
     buildReplicationSection(replicationStatus, replicationCapability, binDir),
     ...(scheduleInfoPanel ? [scheduleInfoPanel] : []),
-    buildStatusSection(status, binDir),
     buildSearchSection(binDir),
   );
   app.replaceChildren(...children);
