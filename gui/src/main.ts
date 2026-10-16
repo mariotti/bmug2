@@ -534,7 +534,7 @@ function buildSourcesSection(
           known?.old_layout ? el("span", { class: "badge-old-layout" }, ["⚠"]) : "",
           el("strong", {}, [source.name]),
         ]),
-        el("td", {}, [el("code", {}, [source.path])]),
+        el("td", {}, [el("code", { class: "source-folder-path", title: source.path }, [source.path])]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
         ...buildProjectStatsCells(known),
         el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),

@@ -18,7 +18,7 @@ use rclone_browse::RemoteEntry as RcloneRemoteEntry;
 use replication::{ReplicationRequest, ReplicationStatus};
 use run::RunOutput;
 use serde::Deserialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, LogicalSize, Manager};
 
 #[tauri::command]
 fn check_existing_install(app: AppHandle) -> Option<String> {
@@ -275,6 +275,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // tauri.conf.json's static 800x600 is just a fallback for when
+        // this fails - real sizing is a fraction of whichever monitor
+        // the window actually opens on, not one fixed pixel size that
+        // happens to look right on a single screen. Best-effort: a
+        // missing monitor (e.g. a weird CI/headless environment) just
+        // keeps the static fallback instead of failing the whole app.
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let physical = monitor.size();
+                    let scale = monitor.scale_factor();
+                    let width = physical.width as f64 / scale * 0.7;
+                    let height = physical.height as f64 / scale * 0.7;
+                    let _ = window.set_size(LogicalSize::new(width, height));
+                    let _ = window.center();
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             check_existing_install,
             get_default_paths,

@@ -84,7 +84,7 @@ h1 {
 
 .container {
   width: 100%;
-  max-width: 720px;
+  max-width: 1400px;
   margin-inline: auto;
   padding-inline: 1.5em;
   box-sizing: border-box;
@@ -390,6 +390,20 @@ form button[type="submit"] {
   padding: 0.4em 0.6em;
   border-bottom: 1px solid #ddd;
   white-space: nowrap;
+}
+
+/* The single biggest offender once the per-project stat columns
+   landed on this table too: an absolute path easily outweighs every
+   other column combined, pushing them past the window's edge behind
+   a scrollbar that isn't obvious in a desktop window. Truncated with
+   an ellipsis, full path still on hover via its title attribute and
+   still in the DOM/text content for anything that reads it. */
+.source-folder-path {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 /* Each source spans several rows (info, options, commands, and up to
