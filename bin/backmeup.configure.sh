@@ -124,8 +124,15 @@ echo ""
 # BMU_DIRRSYNC
 bmuConfigureDir "SYNC" "BMU_DIRRSYNC" "${BMU_DIRRSYNC}" "--sync-dir" "${BMU_CLI_DIRRSYNC}"
 #
+# Captured now, right after the directory is confirmed to exist, so
+# backmeup.sh can later refuse rather than silently write to the system
+# disk if this turns out to be an external drive that isn't mounted -
+# see bmuMountPoint's own comment in backmeup.shellfunctions.sh.
+BMU_DIRRSYNC_MOUNT="`bmuMountPoint \"${BMU_DIRRSYNC}\"`"
+#
 # BMU_DIRBACKUPS
 bmuConfigureDir "BackUp" "BMU_DIRBACKUPS" "${BMU_DIRBACKUPS}" "--backup-dir" "${BMU_CLI_DIRBACKUPS}"
+BMU_DIRBACKUPS_MOUNT="`bmuMountPoint \"${BMU_DIRBACKUPS}\"`"
 #
 #
 # BMU_DIRDBLOCATE
@@ -330,7 +337,9 @@ echo "# scripts. To change these settings, re-run backmeup.configure.sh." \
 for curvar in \
  BMU_VERSION \
  BMU_DIRRSYNC \
+ BMU_DIRRSYNC_MOUNT \
  BMU_DIRBACKUPS \
+ BMU_DIRBACKUPS_MOUNT \
  BMU_DIRDBLOCATE \
  BMU_INSTDIR \
  BMU_OPTRSYNC \

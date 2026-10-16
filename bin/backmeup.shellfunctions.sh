@@ -123,6 +123,29 @@ bmuDetectIndexer() {
     done
 }
 #
+# bmuMountPoint()
+# $1=path (must exist). Prints the mount point currently backing it -
+# e.g. "/", "/Volumes/MyUSB", "/mnt/backup" - or nothing if the path
+# can't be stat'd. Used to detect, at backup time, whether BMU_DIRRSYNC/
+# BMU_DIRBACKUPS still resolve to the external drive they were
+# configured on, or have silently fallen through to the system disk
+# because that drive isn't mounted right now (the mountpoint directory
+# itself still exists and is writable even when nothing is mounted on
+# it - `mkdir -p` would happily recreate it there, and rsync would
+# happily fill it, with no error at all).
+# `df -P` (POSIX output format) rather than `stat -f`/`stat -c`: this
+# project has elsewhere deliberately avoided stat/date flag differences
+# between BSD and GNU (see backmeup.sh's comment on skipping mtime
+# reads) - `df -P`'s column layout (ending in "Mounted on") is POSIX-
+# mandated and identical on both, no capability detection needed. The
+# `awk 'NR>1 {line=$NF} END {print line}'` form (not just `NR==2`)
+# also tolerates a very long device name wrapping df's single data row
+# onto two physical lines - whichever line is last always has the real
+# "Mounted on" field.
+bmuMountPoint() {
+    df -P "$1" 2>/dev/null | awk 'NR>1 {line=$NF} END {print line}'
+}
+#
 # bmuDetectRclone()
 # Sets BMU_CMDRCLONE to the first usable rclone found on PATH or in the
 # common Homebrew/system locations, resolved to its absolute path via
