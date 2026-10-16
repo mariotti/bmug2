@@ -581,15 +581,6 @@ form button[type="submit"] {
   font-size: 0.9em;
 }
 
-.untracked-notice ul {
-  margin: 0.4em 0 0;
-  padding-left: 1.2em;
-}
-
-.untracked-notice li {
-  margin-bottom: 0.3em;
-}
-
 .untracked-notice button {
   border-radius: 6px;
   border: 1px solid #396cd8;
