@@ -8,15 +8,28 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+# Lets a `--cov` run measure these subprocess-spawned servers too, via
+# coverage.py's own native subprocess mechanism (a .pth hook it installs
+# that checks for this exact env var at interpreter startup) - otherwise
+# server.py reports as 0% covered despite being fully exercised for
+# real by every test in this file, since coverage.py only tracks the
+# process it's running in by default. MCP's stdio client only forwards
+# a safe allowlisted subset of the parent's environment to the child
+# (not arbitrary vars like this one), so it has to be passed explicitly
+# via `env=` rather than just being inherited.
+_COV_SUBPROCESS_ENV = {"COVERAGE_PROCESS_START": str(Path(__file__).parent.parent / "pyproject.toml")}
 
 
 async def _call_tools(bin_dir, project_dir):
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "bmug2_mcp.server", "--bin-dir", str(bin_dir)],
+        env=_COV_SUBPROCESS_ENV,
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -114,6 +127,7 @@ async def _call_unarchive_and_migrate(bin_dir):
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "bmug2_mcp.server", "--bin-dir", str(bin_dir)],
+        env=_COV_SUBPROCESS_ENV,
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -153,6 +167,7 @@ async def _call_retrieve(bin_dir, destination):
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "bmug2_mcp.server", "--bin-dir", str(bin_dir)],
+        env=_COV_SUBPROCESS_ENV,
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
