@@ -3,6 +3,8 @@
 <!-- unofficially, also a "Beer MUG for 2" -->
 
 [![Tests](https://github.com/mariotti/bmug2/actions/workflows/tests.yml/badge.svg)](https://github.com/mariotti/bmug2/actions/workflows/tests.yml)
+<!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
+![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
