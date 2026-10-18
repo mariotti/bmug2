@@ -79,6 +79,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: actions/setup-node@v7
         with:
           # jsdom (added for the frontend unit test suite) requires
@@ -104,8 +107,10 @@ jobs:
       - name: Run frontend unit tests
         working-directory: gui
         run: npm test
-      - name: Run Rust test suite
+      - name: Run Rust test suite with coverage
         working-directory: gui/src-tauri
+        # cargo-llvm-cov wraps cargo test itself - this replaces the
+        # plain `cargo test` run, not a second pass over the suite.
         # --test-threads=1: replication.rs's sandbox()/fake_configure_script()
         # test helpers write a small shell script, chmod it executable, then
         # immediately exec it, with no synchronization against any other test
@@ -116,13 +121,23 @@ jobs:
         # whole suite is the simple fix; this binary's tests are fast enough
         # (well under a minute total) that losing parallelism here is cheap
         # compared to chasing a non-deterministic failure.
-        run: cargo test -- --test-threads=1
+        run: cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=1
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gui/src-tauri/lcov.info
+          flags: rust
+          fail_ci_if_error: false
 
   gui-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: actions/setup-node@v7
         with:
           # jsdom (added for the frontend unit test suite) requires
@@ -146,9 +161,16 @@ jobs:
       - name: Run frontend unit tests
         working-directory: gui
         run: npm test
-      - name: Run Rust test suite
+      - name: Run Rust test suite with coverage
         working-directory: gui/src-tauri
         # See the gui-linux job's own comment on this same flag - same
         # unsynchronized write+chmod+exec race in replication.rs's test
-        # helpers, same fix.
-        run: cargo test -- --test-threads=1
+        # helpers, same fix. cargo-llvm-cov wraps cargo test itself.
+        run: cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=1
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gui/src-tauri/lcov.info
+          flags: rust
+          fail_ci_if_error: false
