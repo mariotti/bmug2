@@ -21,7 +21,7 @@ pub fn list(app: &AppHandle) -> Vec<BackupSource> {
     let mut sources = config::load(app).map(|cfg| cfg.sources).unwrap_or_default();
     let mut changed = false;
     for source in sources.iter_mut() {
-        let actual = schedule::status(&schedule::source_label(&source.path));
+        let actual = schedule::status(&schedule::source_label(&source.path), &schedule::source_file_hint(&source.path));
         if actual != source.schedule {
             source.schedule = actual;
             changed = true;
@@ -49,7 +49,7 @@ pub fn remove(app: &AppHandle, path: &str) -> Result<(), String> {
     // orphaned job left behind by a failed uninstall is a smaller
     // problem than "Remove doesn't work," and list()'s reconciliation
     // above will keep self-correcting the displayed status regardless.
-    let _ = schedule::uninstall(&schedule::source_label(path));
+    let _ = schedule::uninstall(&schedule::source_label(path), &schedule::source_file_hint(path));
     sources.retain(|s| s.path != path);
     if sources.len() == before {
         return Err(format!("no backup source tracked at {path}"));

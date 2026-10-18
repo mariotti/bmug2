@@ -43,6 +43,39 @@ pub fn source_label(source_path: &str) -> String {
 
 pub const HOUSEKEEPING_LABEL: &str = "io.github.mariotti.bmug2.housekeeping";
 
+/// Filesystem-safe fragment taken from the source path's own
+/// basename - purely cosmetic, appended to the wrapper/plist/log (or
+/// service/timer) filenames so macOS's "Allow in the Background"
+/// list, which displays each LaunchAgent by its wrapper script's own
+/// filename rather than the plist's internal Label, is identifiable
+/// per project instead of showing only source_label()'s opaque hash.
+/// Never used for the launchd Label/systemd unit name itself - that
+/// stays source_label()'s hash, unchanged, so an already-installed
+/// schedule's real identity is never affected by this.
+pub fn source_file_hint(source_path: &str) -> String {
+    let name = Path::new(source_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .take(40)
+        .collect()
+}
+
+/// The filename stem used for a schedule's on-disk files - the bare
+/// label when there's no hint (housekeeping, and the exact pre-fix
+/// shape for a per-source schedule), or label-hint otherwise. Never
+/// used for the plist's internal Label/systemd unit name - see
+/// source_file_hint above.
+fn file_stem(label: &str, hint: &str) -> String {
+    if hint.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}-{hint}")
+    }
+}
+
 pub fn build_source_wrapper(bin_dir: &str, source_path: &str) -> String {
     format!(
         "#!/bin/sh\nset -e\n\"{bin_dir}/backmeup.sh\" \"{source_path}\"\n",
@@ -199,25 +232,25 @@ pub fn parse_timer_schedule(contents: &str) -> Option<Schedule> {
 mod platform {
     use super::*;
 
-    fn plist_path(label: &str) -> Result<PathBuf, String> {
+    fn plist_path(label: &str, hint: &str) -> Result<PathBuf, String> {
         let home = std::env::var("HOME").map_err(|_| "cannot resolve HOME".to_string())?;
         Ok(PathBuf::from(home)
             .join("Library/LaunchAgents")
-            .join(format!("{label}.plist")))
+            .join(format!("{}.plist", file_stem(label, hint))))
     }
 
-    fn wrapper_path(label: &str) -> Result<PathBuf, String> {
+    fn wrapper_path(label: &str, hint: &str) -> Result<PathBuf, String> {
         let home = std::env::var("HOME").map_err(|_| "cannot resolve HOME".to_string())?;
         Ok(PathBuf::from(home)
             .join("Library/Application Support/io.github.mariotti.bmug2/schedules")
-            .join(format!("{label}.sh")))
+            .join(format!("{}.sh", file_stem(label, hint))))
     }
 
-    fn log_path(label: &str) -> Result<PathBuf, String> {
+    fn log_path(label: &str, hint: &str) -> Result<PathBuf, String> {
         let home = std::env::var("HOME").map_err(|_| "cannot resolve HOME".to_string())?;
         Ok(PathBuf::from(home)
             .join("Library/Logs")
-            .join(format!("{label}.log")))
+            .join(format!("{}.log", file_stem(label, hint))))
     }
 
     pub fn install(
@@ -225,16 +258,33 @@ mod platform {
         wrapper_content: &str,
         schedule: &Schedule,
         _description: &str,
+        hint: &str,
     ) -> Result<(), String> {
-        let wrapper = wrapper_path(label)?;
+        // Best-effort cleanup of a pre-this-change install's old
+        // (hint-less) files, so re-saving an already-installed
+        // schedule self-heals its on-disk filenames. Never fails the
+        // install if these are already gone or never existed.
+        if !hint.is_empty() {
+            if let Ok(old) = wrapper_path(label, "") {
+                std::fs::remove_file(old).ok();
+            }
+            if let Ok(old) = plist_path(label, "") {
+                std::fs::remove_file(old).ok();
+            }
+            if let Ok(old) = log_path(label, "") {
+                std::fs::remove_file(old).ok();
+            }
+        }
+
+        let wrapper = wrapper_path(label, hint)?;
         std::fs::create_dir_all(wrapper.parent().unwrap())
             .map_err(|e| format!("cannot create {}: {e}", wrapper.parent().unwrap().display()))?;
         std::fs::write(&wrapper, wrapper_content)
             .map_err(|e| format!("cannot write {}: {e}", wrapper.display()))?;
         set_executable(&wrapper)?;
 
-        let log = log_path(label)?;
-        let plist = plist_path(label)?;
+        let log = log_path(label, hint)?;
+        let plist = plist_path(label, hint)?;
         let content = build_plist(label, wrapper.to_str().unwrap(), schedule, log.to_str().unwrap());
         std::fs::write(&plist, content).map_err(|e| format!("cannot write {}: {e}", plist.display()))?;
 
@@ -244,19 +294,32 @@ mod platform {
         run_launchctl(&["bootstrap", &format!("gui/{}", uid()?), plist.to_str().unwrap()])
     }
 
-    pub fn uninstall(label: &str) -> Result<(), String> {
+    pub fn uninstall(label: &str, hint: &str) -> Result<(), String> {
         let _ = run_launchctl(&["bootout", &format!("gui/{}/{label}", uid()?)]);
-        let plist = plist_path(label)?;
-        std::fs::remove_file(&plist).ok();
-        if let Ok(wrapper) = wrapper_path(label) {
-            std::fs::remove_file(wrapper).ok();
+        // Always try both the current (hinted) and the old (hint-less)
+        // paths - removing an already-missing file is a no-op, and
+        // this is what lets uninstall() fully clean up a schedule that
+        // was installed before this change and never re-saved since.
+        for candidate_hint in [hint, ""] {
+            if let Ok(plist) = plist_path(label, candidate_hint) {
+                std::fs::remove_file(plist).ok();
+            }
+            if let Ok(wrapper) = wrapper_path(label, candidate_hint) {
+                std::fs::remove_file(wrapper).ok();
+            }
         }
         Ok(())
     }
 
-    pub fn status(label: &str) -> Option<Schedule> {
-        let plist = plist_path(label).ok()?;
-        let contents = std::fs::read_to_string(plist).ok()?;
+    pub fn status(label: &str, hint: &str) -> Option<Schedule> {
+        let plist = plist_path(label, hint).ok()?;
+        let contents = match std::fs::read_to_string(&plist) {
+            Ok(contents) => contents,
+            Err(_) => {
+                let old_plist = plist_path(label, "").ok()?;
+                std::fs::read_to_string(old_plist).ok()?
+            }
+        };
         parse_plist_schedule(&contents)
     }
 
@@ -302,15 +365,15 @@ mod platform {
         Ok(PathBuf::from(home).join(".config/systemd/user"))
     }
 
-    fn wrapper_path(label: &str) -> Result<PathBuf, String> {
+    fn wrapper_path(label: &str, hint: &str) -> Result<PathBuf, String> {
         let home = std::env::var("HOME").map_err(|_| "cannot resolve HOME".to_string())?;
         Ok(PathBuf::from(home)
             .join(".local/share/io.github.mariotti.bmug2/schedules")
-            .join(format!("{label}.sh")))
+            .join(format!("{}.sh", file_stem(label, hint))))
     }
 
-    fn unit_name(label: &str) -> String {
-        format!("bmug2-{label}")
+    fn unit_name(label: &str, hint: &str) -> String {
+        format!("bmug2-{}", file_stem(label, hint))
     }
 
     pub fn install(
@@ -318,8 +381,24 @@ mod platform {
         wrapper_content: &str,
         schedule: &Schedule,
         description: &str,
+        hint: &str,
     ) -> Result<(), String> {
-        let wrapper = wrapper_path(label)?;
+        // Best-effort cleanup of a pre-this-change install's old
+        // (hint-less) files, so re-saving an already-installed
+        // schedule self-heals its on-disk filenames. Never fails the
+        // install if these are already gone or never existed.
+        if !hint.is_empty() {
+            if let Ok(old) = wrapper_path(label, "") {
+                std::fs::remove_file(old).ok();
+            }
+            if let Ok(dir) = systemd_user_dir() {
+                let old_name = unit_name(label, "");
+                std::fs::remove_file(dir.join(format!("{old_name}.service"))).ok();
+                std::fs::remove_file(dir.join(format!("{old_name}.timer"))).ok();
+            }
+        }
+
+        let wrapper = wrapper_path(label, hint)?;
         std::fs::create_dir_all(wrapper.parent().unwrap())
             .map_err(|e| format!("cannot create {}: {e}", wrapper.parent().unwrap().display()))?;
         std::fs::write(&wrapper, wrapper_content)
@@ -328,7 +407,7 @@ mod platform {
 
         let dir = systemd_user_dir()?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        let name = unit_name(label);
+        let name = unit_name(label, hint);
         let service_path = dir.join(format!("{name}.service"));
         let timer_path = dir.join(format!("{name}.timer"));
         std::fs::write(&service_path, build_service(description, wrapper.to_str().unwrap()))
@@ -340,24 +419,34 @@ mod platform {
         run_systemctl(&["--user", "enable", "--now", &format!("{name}.timer")])
     }
 
-    pub fn uninstall(label: &str) -> Result<(), String> {
-        let name = unit_name(label);
-        let _ = run_systemctl(&["--user", "disable", "--now", &format!("{name}.timer")]);
+    pub fn uninstall(label: &str, hint: &str) -> Result<(), String> {
         let dir = systemd_user_dir()?;
-        std::fs::remove_file(dir.join(format!("{name}.service"))).ok();
-        std::fs::remove_file(dir.join(format!("{name}.timer"))).ok();
-        let _ = run_systemctl(&["--user", "daemon-reload"]);
-        if let Ok(wrapper) = wrapper_path(label) {
-            std::fs::remove_file(wrapper).ok();
+        // Always try both the current (hinted) and the old (hint-less)
+        // unit names - removing an already-missing file is a no-op,
+        // and this is what lets uninstall() fully clean up a schedule
+        // that was installed before this change and never re-saved
+        // since.
+        for candidate_hint in [hint, ""] {
+            let name = unit_name(label, candidate_hint);
+            let _ = run_systemctl(&["--user", "disable", "--now", &format!("{name}.timer")]);
+            std::fs::remove_file(dir.join(format!("{name}.service"))).ok();
+            std::fs::remove_file(dir.join(format!("{name}.timer"))).ok();
+            if let Ok(wrapper) = wrapper_path(label, candidate_hint) {
+                std::fs::remove_file(wrapper).ok();
+            }
         }
+        let _ = run_systemctl(&["--user", "daemon-reload"]);
         Ok(())
     }
 
-    pub fn status(label: &str) -> Option<Schedule> {
+    pub fn status(label: &str, hint: &str) -> Option<Schedule> {
         let dir = systemd_user_dir().ok()?;
-        let timer_path = dir.join(format!("{}.timer", unit_name(label)));
-        let contents = std::fs::read_to_string(timer_path).ok()?;
-        parse_timer_schedule(&contents)
+        let timer_path = dir.join(format!("{}.timer", unit_name(label, hint)));
+        let contents = std::fs::read_to_string(&timer_path).or_else(|_| {
+            let old_timer_path = dir.join(format!("{}.timer", unit_name(label, "")));
+            std::fs::read_to_string(old_timer_path)
+        });
+        parse_timer_schedule(&contents.ok()?)
     }
 
     fn set_executable(path: &Path) -> Result<(), String> {
@@ -391,6 +480,7 @@ pub fn install(
     wrapper_content: &str,
     schedule: &Schedule,
     description: &str,
+    hint: &str,
 ) -> Result<(), String> {
     match *schedule {
         Schedule::Daily { hour, minute } if hour > 23 || minute > 59 => {
@@ -401,17 +491,17 @@ pub fn install(
         }
         _ => {}
     }
-    platform::install(label, wrapper_content, schedule, description)
+    platform::install(label, wrapper_content, schedule, description, hint)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn uninstall(label: &str) -> Result<(), String> {
-    platform::uninstall(label)
+pub fn uninstall(label: &str, hint: &str) -> Result<(), String> {
+    platform::uninstall(label, hint)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn status(label: &str) -> Option<Schedule> {
-    platform::status(label)
+pub fn status(label: &str, hint: &str) -> Option<Schedule> {
+    platform::status(label, hint)
 }
 
 /// Whether this app already has macOS's Full Disk Access (TCC)
@@ -458,6 +548,37 @@ mod tests {
         let label = source_label("/Users/alex/Documents");
         assert!(label.starts_with("io.github.mariotti.bmug2.backup."));
         assert_eq!(label, source_label("/Users/alex/Documents"));
+    }
+
+    #[test]
+    fn source_file_hint_takes_the_basename_and_sanitizes_it() {
+        assert_eq!(source_file_hint("/Users/alex/My Documents"), "My_Documents");
+        assert_eq!(source_file_hint("/Users/alex/kidsmesh.ch's site"), "kidsmesh_ch_s_site");
+        assert_eq!(source_file_hint("/"), "");
+    }
+
+    #[test]
+    fn source_file_hint_truncates_long_names() {
+        let long_name = "a".repeat(100);
+        let hint = source_file_hint(&format!("/Users/alex/{long_name}"));
+        assert_eq!(hint.len(), 40);
+    }
+
+    #[test]
+    fn file_stem_with_empty_hint_reproduces_the_bare_label() {
+        // The critical backward-compat invariant: an empty hint must
+        // produce byte-for-byte the same filename bmug2 always wrote
+        // before this change, so an already-installed schedule's
+        // files are still found under their original names.
+        assert_eq!(file_stem("io.github.mariotti.bmug2.backup.abc123", ""), "io.github.mariotti.bmug2.backup.abc123");
+    }
+
+    #[test]
+    fn file_stem_with_a_hint_appends_it() {
+        assert_eq!(
+            file_stem("io.github.mariotti.bmug2.backup.abc123", "Documents"),
+            "io.github.mariotti.bmug2.backup.abc123-Documents"
+        );
     }
 
     #[test]
@@ -581,10 +702,10 @@ mod tests {
 mod macos_real_tests {
     use super::*;
 
-    struct Cleanup(String);
+    struct Cleanup(String, String);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = platform::uninstall(&self.0);
+            let _ = platform::uninstall(&self.0, &self.1);
         }
     }
 
@@ -592,30 +713,56 @@ mod macos_real_tests {
     #[ignore]
     fn install_and_uninstall_a_real_daily_launchd_agent() {
         let label = format!("io.github.mariotti.bmug2.test.daily.{}", std::process::id());
-        let _cleanup = Cleanup(label.clone());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
         let daily = Schedule::Daily { hour: 3, minute: 30 };
 
-        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test").expect("install should succeed");
-        let found = status(&label).expect("status should read back what was just installed");
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test", hint).expect("install should succeed");
+        let found = status(&label, hint).expect("status should read back what was just installed");
         assert_eq!(found, daily);
 
-        uninstall(&label).expect("uninstall should succeed");
-        assert!(status(&label).is_none(), "status should be gone after uninstall");
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "status should be gone after uninstall");
     }
 
     #[test]
     #[ignore]
     fn install_and_uninstall_a_real_interval_launchd_agent() {
         let label = format!("io.github.mariotti.bmug2.test.interval.{}", std::process::id());
-        let _cleanup = Cleanup(label.clone());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
         let interval = Schedule::Interval { minutes: 15 };
 
-        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test").expect("install should succeed");
-        let found = status(&label).expect("status should read back what was just installed");
+        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test", hint).expect("install should succeed");
+        let found = status(&label, hint).expect("status should read back what was just installed");
         assert_eq!(found, interval);
 
-        uninstall(&label).expect("uninstall should succeed");
-        assert!(status(&label).is_none(), "status should be gone after uninstall");
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "status should be gone after uninstall");
+    }
+
+    /// Regression guard: a schedule installed before this change
+    /// wrote its plist/wrapper under the bare (hint-less) label. This
+    /// confirms status()/uninstall() still find and fully remove that
+    /// old-style file when called with a non-empty hint, so upgrading
+    /// the app never orphans a real, already-installed LaunchAgent.
+    #[test]
+    #[ignore]
+    fn status_and_uninstall_find_an_old_style_hint_less_install() {
+        let label = format!("io.github.mariotti.bmug2.test.oldstyle.{}", std::process::id());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
+        let daily = Schedule::Daily { hour: 4, minute: 0 };
+
+        // Simulate a pre-fix install: write directly under the bare
+        // label, bypassing install()'s hint-aware paths entirely.
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test", "").expect("install should succeed");
+
+        let found = status(&label, hint).expect("status should fall back to the old-style file");
+        assert_eq!(found, daily);
+
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "old-style file should be gone after uninstall");
     }
 }
 
@@ -631,10 +778,10 @@ mod macos_real_tests {
 mod linux_real_tests {
     use super::*;
 
-    struct Cleanup(String);
+    struct Cleanup(String, String);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = platform::uninstall(&self.0);
+            let _ = platform::uninstall(&self.0, &self.1);
         }
     }
 
@@ -642,29 +789,55 @@ mod linux_real_tests {
     #[ignore]
     fn install_and_uninstall_a_real_daily_systemd_timer() {
         let label = format!("io.github.mariotti.bmug2.test.daily.{}", std::process::id());
-        let _cleanup = Cleanup(label.clone());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
         let daily = Schedule::Daily { hour: 3, minute: 30 };
 
-        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test").expect("install should succeed");
-        let found = status(&label).expect("status should read back what was just installed");
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test", hint).expect("install should succeed");
+        let found = status(&label, hint).expect("status should read back what was just installed");
         assert_eq!(found, daily);
 
-        uninstall(&label).expect("uninstall should succeed");
-        assert!(status(&label).is_none(), "status should be gone after uninstall");
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "status should be gone after uninstall");
     }
 
     #[test]
     #[ignore]
     fn install_and_uninstall_a_real_interval_systemd_timer() {
         let label = format!("io.github.mariotti.bmug2.test.interval.{}", std::process::id());
-        let _cleanup = Cleanup(label.clone());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
         let interval = Schedule::Interval { minutes: 15 };
 
-        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test").expect("install should succeed");
-        let found = status(&label).expect("status should read back what was just installed");
+        install(&label, "#!/bin/sh\nexit 0\n", &interval, "bmug2 schedule test", hint).expect("install should succeed");
+        let found = status(&label, hint).expect("status should read back what was just installed");
         assert_eq!(found, interval);
 
-        uninstall(&label).expect("uninstall should succeed");
-        assert!(status(&label).is_none(), "status should be gone after uninstall");
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "status should be gone after uninstall");
+    }
+
+    /// Regression guard: a schedule installed before this change
+    /// wrote its unit files under the bare (hint-less) label. This
+    /// confirms status()/uninstall() still find and fully remove that
+    /// old-style file when called with a non-empty hint, so upgrading
+    /// the app never orphans a real, already-installed systemd timer.
+    #[test]
+    #[ignore]
+    fn status_and_uninstall_find_an_old_style_hint_less_install() {
+        let label = format!("io.github.mariotti.bmug2.test.oldstyle.{}", std::process::id());
+        let hint = "readable-name";
+        let _cleanup = Cleanup(label.clone(), hint.to_string());
+        let daily = Schedule::Daily { hour: 4, minute: 0 };
+
+        // Simulate a pre-fix install: write directly under the bare
+        // label, bypassing install()'s hint-aware paths entirely.
+        install(&label, "#!/bin/sh\nexit 0\n", &daily, "bmug2 schedule test", "").expect("install should succeed");
+
+        let found = status(&label, hint).expect("status should fall back to the old-style file");
+        assert_eq!(found, daily);
+
+        uninstall(&label, hint).expect("uninstall should succeed");
+        assert!(status(&label, hint).is_none(), "old-style file should be gone after uninstall");
     }
 }
