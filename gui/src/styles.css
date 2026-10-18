@@ -627,6 +627,20 @@ form button[type="submit"] {
   margin-right: 0.3em;
 }
 
+.help-icon {
+  display: inline-block;
+  margin-left: 0.3em;
+  font-size: 0.75em;
+  color: #888;
+  cursor: help;
+  border: 1px solid #888;
+  border-radius: 50%;
+  width: 1.3em;
+  height: 1.3em;
+  line-height: 1.3em;
+  text-align: center;
+}
+
 .note-old-layout,
 .note-not-indexed {
   font-size: 0.85em;
@@ -726,6 +740,11 @@ form button[type="submit"] {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;
+  }
+
+  .help-icon {
+    color: #aaa;
+    border-color: #aaa;
   }
 
   .status-table th,

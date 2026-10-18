@@ -140,6 +140,16 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
+// A small "(?)" icon with a native tooltip bridging what the GUI just
+// did to the real CLI command it wraps - for someone who also uses
+// the CLI, or wants to understand/replicate a GUI action by hand.
+// Native `title`, same pattern already used for the folder-path and
+// old-layout-badge tooltips - no new overlay/widget idiom.
+export function helpIcon(description: string, cliExample?: string): HTMLElement {
+  const title = cliExample ? `${description}\n\nCLI equivalent:\n${cliExample}` : description;
+  return el("span", { class: "help-icon", title }, ["(?)"]);
+}
+
 function renderLoading() {
   app.replaceChildren(el("p", {}, ["Loading…"]));
 }
@@ -272,10 +282,21 @@ export function buildIgnoreToggles(
     el("label", {}, [
       gitignoreCheck,
       current.gitignore_exists
-        ? " Respect .gitignore"
-        : " Respect .gitignore (not present in this folder)",
+        ? " Respect .gitignore "
+        : " Respect .gitignore (not present in this folder) ",
+      helpIcon(
+        "On by default - files your project's own .gitignore excludes never reach the mirror.",
+        'echo \'BMU_GITIGNORE="no"\' > HISTORY/<project>/.bmuconfig',
+      ),
     ]),
-    el("label", {}, [bmuignoreCheck, " Use .bmuignore"]),
+    el("label", {}, [
+      bmuignoreCheck,
+      " Use .bmuignore ",
+      helpIcon(
+        "Off by default - an extra, backup-specific exclude list on top of .gitignore.",
+        'echo \'BMU_BMUIGNORE="yes"\' > HISTORY/<project>/.bmuconfig',
+      ),
+    ]),
   ]);
 }
 
@@ -429,7 +450,13 @@ function buildSourcesSection(
   addBtn.addEventListener("click", () => void addSource(binDir));
 
   const header = el("div", { class: "sources-header" }, [
-    el("h2", {}, ["Backup sources"]),
+    el("h2", {}, [
+      "Backup sources ",
+      helpIcon(
+        "The GUI's own list of folders to back up - backmeup.sh itself doesn't remember this between runs.",
+        "backmeup.sh ~/Documents",
+      ),
+    ]),
     addBtn,
   ]);
 
@@ -582,11 +609,20 @@ function buildSourcesSection(
         el("th", {}, ["Name"]),
         el("th", {}, ["Folder"]),
         el("th", {}, ["Last run"]),
-        el("th", {}, ["Last change"]),
+        el("th", {}, [
+          "Last change ",
+          helpIcon("The same numbers `bmu status` reports, per project.", "backmeup.status.sh"),
+        ]),
         el("th", {}, ["Snapshots"]),
         el("th", {}, ["Mirror"]),
         el("th", {}, ["History"]),
-        el("th", {}, ["Schedule"]),
+        el("th", {}, [
+          "Schedule ",
+          helpIcon(
+            "Installs a real launchd (macOS) or systemd timer (Linux) that runs this on its own.",
+            "0 2 * * * ~/usr/bmu/bin/backmeup.sh ~/Documents   # crontab -e",
+          ),
+        ]),
       ]),
     ]),
     el("tbody", {}, rows),
@@ -771,7 +807,13 @@ function buildSearchSection(binDir: string): HTMLElement {
   });
 
   return el("section", {}, [
-    el("h2", {}, ["Search"]),
+    el("h2", {}, [
+      "Search ",
+      helpIcon(
+        "Checks the locate index first, then falls back to live/archived filelists for anything too new to be indexed yet.",
+        "backmeup.locate.sh report.pdf",
+      ),
+    ]),
     form,
     resultsBox,
   ]);
@@ -938,7 +980,13 @@ export async function renderDashboard(binDir: string, banner?: RunBanner) {
 // several backup lines, then one updatedb line, then optionally
 // replicate).
 function buildHousekeepingSection(schedule: Schedule | null, binDir: string): HTMLElement {
-  const header = el("h2", {}, ["Housekeeping"]);
+  const header = el("h2", {}, [
+    "Housekeeping ",
+    helpIcon(
+      "Reindexes search and pushes off-site replication, in that order - not part of any single project's own schedule.",
+      "backmeup.updatedb.sh && backmeup.replicate.sh",
+    ),
+  ]);
   const desc = el("p", {}, [
     "Keeps search indexed and (if configured) replicates off-site. Runs independently of the schedules above.",
   ]);
@@ -1463,7 +1511,13 @@ function buildReplicationSection(
   capability: ReplicationCapability,
   binDir: string,
 ): HTMLElement {
-  const header = el("h2", {}, ["Off-site replication"]);
+  const header = el("h2", {}, [
+    "Off-site replication ",
+    helpIcon(
+      "A separate copy step on top of the local mirror - rclone mirrors SYNC+HISTORY, native Proton Drive uploads HISTORY only.",
+      "backmeup.configure.sh --replicate-backend=rclone --replicate-remote-sync=remote:bucket/sync --replicate-remote-backups=remote:bucket/sync-BP",
+    ),
+  ]);
   const desc = el("p", {}, [
     "Copies SYNC/HISTORY to an off-site destination - rclone (any remote) or native Proton Drive (HISTORY only). See docs/DESTINATIONS.md.",
   ]);
@@ -1627,7 +1681,16 @@ async function renderSettings(binDir: string) {
     if (check.update_available) {
       const updateBtn = el("button", { type: "button" }, ["Update now…"]);
       updateBtn.addEventListener("click", () => showUpdateConfirm(binDir, check!));
-      versionBox.append(el("p", {}, [updateBtn]));
+      versionBox.append(
+        el("p", {}, [
+          updateBtn,
+          " ",
+          helpIcon(
+            "Re-downloads the latest release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
+            "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
+          ),
+        ]),
+      );
     } else {
       versionBox.append(el("p", { class: "settings-uptodate" }, ["You're up to date."]));
     }

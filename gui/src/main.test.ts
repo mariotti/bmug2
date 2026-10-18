@@ -5,6 +5,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   isDaily,
   el,
+  helpIcon,
   formatKb,
   buildProjectStatsCells,
   formatSchedule,
@@ -122,6 +123,27 @@ describe("el", () => {
     const child = el("span", {}, ["inner"]);
     const parent = el("div", {}, [child]);
     expect(parent.firstElementChild).toBe(child);
+  });
+});
+
+describe("helpIcon", () => {
+  it("shows (?) with the description as its tooltip", () => {
+    const icon = helpIcon("Does the thing.");
+    expect(icon.textContent).toBe("(?)");
+    expect(icon.getAttribute("title")).toBe("Does the thing.");
+  });
+
+  it("appends a CLI equivalent to the tooltip when given one", () => {
+    const icon = helpIcon("Does the thing.", "backmeup.sh ~/Documents");
+    const title = icon.getAttribute("title")!;
+    expect(title).toContain("Does the thing.");
+    expect(title).toContain("CLI equivalent:");
+    expect(title).toContain("backmeup.sh ~/Documents");
+  });
+
+  it("omits the CLI equivalent section entirely when none is given", () => {
+    const icon = helpIcon("Does the thing.");
+    expect(icon.getAttribute("title")).not.toContain("CLI equivalent");
   });
 });
 
@@ -677,8 +699,10 @@ describe("user journeys (renderDashboard end to end)", () => {
   }
 
   function sectionByHeading(heading: string): HTMLElement {
+    // startsWith, not === : an h2's own textContent now also includes
+    // its trailing helpIcon's "(?)" (see main.ts's helpIcon calls).
     const section = Array.from(document.querySelectorAll<HTMLElement>("#app > section")).find(
-      (s) => s.querySelector("h2")?.textContent === heading,
+      (s) => s.querySelector("h2")?.textContent?.startsWith(heading),
     );
     if (!section) throw new Error(`no section with heading "${heading}"`);
     return section;
@@ -875,6 +899,25 @@ describe("renderDashboard shows each source's own status inline", () => {
     expect(row.textContent).toContain("3");
     expect(row.textContent).toContain("2.0 MB");
     expect(row.textContent).toContain("512 KB");
+  });
+
+  it("wires a non-empty help tooltip onto every (?) icon on the dashboard", async () => {
+    mockStatus([]);
+
+    await renderDashboard("/bin");
+
+    // 8 of the 9 planned icons live on this screen - one source (the
+    // fixed "proj1" from mockStatus's list_sources mock) each gets a
+    // Respect .gitignore + Use .bmuignore icon, plus one each for the
+    // Backup sources/Schedule-column/Housekeeping/Off-site
+    // replication/Search/Last-change-column headers. The 9th (Update
+    // now) lives on the separate Settings screen, not rendered here.
+    const icons = document.querySelectorAll<HTMLElement>(".help-icon");
+    expect(icons).toHaveLength(8);
+    icons.forEach((icon) => {
+      expect(icon.textContent).toBe("(?)");
+      expect(icon.getAttribute("title")).toBeTruthy();
+    });
   });
 
   it("scopes the old-layout badge and warning to that one source's row", async () => {
