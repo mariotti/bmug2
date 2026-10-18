@@ -1005,6 +1005,24 @@ describe("renderSearchResults", () => {
     expect(revealItemInDir).toHaveBeenCalledWith("/sync/proj1/a.txt");
   });
 
+  it("explains a stale result clearly instead of showing a raw OS error", async () => {
+    // Real bug, found by the user: a result whose file has since moved
+    // or been deleted (e.g. a build-output dir regenerated after the
+    // index was last refreshed) rejected with a bare OS errno string -
+    // "No such file or directory (os error 2)" - no context for why.
+    vi.mocked(revealItemInDir).mockRejectedValueOnce(new Error("No such file or directory (os error 2)"));
+    const box = el("div", {}, []);
+    renderSearchResults(result({ results: [{ path: "/sync/proj1/gone.txt", source: "live" }] }), box);
+
+    box.querySelector<HTMLButtonElement>(".reveal-btn")!.dispatchEvent(new Event("click"));
+    await Promise.resolve(); // let the rejected promise's .catch run
+    await Promise.resolve();
+
+    const errorText = box.querySelector(".reveal-error")!.textContent!;
+    expect(errorText).toContain("no longer there");
+    expect(errorText).toContain("No such file or directory (os error 2)");
+  });
+
   it("hides pagination controls entirely when everything fits on one page", () => {
     const box = el("div", {}, []);
     renderSearchResults(result({ results: hits(5) }), box);
