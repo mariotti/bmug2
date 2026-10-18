@@ -20,11 +20,16 @@ jobs:
         # build. Running the whole invocation inside that container
         # (re-installing the same 3 test-runtime deps there) avoids any
         # host/container glibc mismatch from extracting just the
-        # binary. Pinned to v42 - the newest tag Docker Hub actually
-        # has published (confirmed via its API; v43 is out upstream on
-        # GitHub but hasn't landed there yet) - rather than :latest,
-        # for the same reason every other tool here is pinned to a
-        # specific version.
+        # binary. v42 - the newest versioned tag Docker Hub actually
+        # has - turned out to be a dead end for real (confirmed in
+        # this PR's own earlier CI runs): it's a 2023-era Debian 11
+        # build whose debian-security pool has since moved point
+        # releases out from under it, 404ing on `apt-get install`.
+        # kcov/kcov:latest-alpine is rebuilt often (last rebuilt
+        # 2026-04-02, per Docker Hub's API) and Alpine's rolling apk
+        # index doesn't have that failure mode - so this uses it
+        # un-pinned, the one real exception to pinning everything else
+        # in this file to an exact version.
         #
         # Installed inside the container: plocate (the mlocate-style
         # updatedb/locate dialect, exercising the non-GNU branch of the
@@ -47,8 +52,8 @@ jobs:
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$(pwd)":/code -w /code \
-            kcov/kcov:v42 \
-            sh -c "apt-get update -qq && apt-get install -y -qq rsync plocate zsh rclone >/dev/null && kcov --include-path=/code/bin /code/kcov-out sh tests/test_backmeup.sh"
+            kcov/kcov:latest-alpine \
+            sh -c "apk add --no-cache rsync plocate zsh rclone >/dev/null && kcov --include-path=/code/bin /code/kcov-out sh tests/test_backmeup.sh"
           report=$(find kcov-out -name cobertura.xml | head -1)
           echo "coverage report: ${report:-<none found>}"
           echo "report=$report" >> "$GITHUB_OUTPUT"
