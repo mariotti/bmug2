@@ -20,9 +20,11 @@ jobs:
         # build. Running the whole invocation inside that container
         # (re-installing the same 3 test-runtime deps there) avoids any
         # host/container glibc mismatch from extracting just the
-        # binary. Pinned to v43 (matches the version Launchpad has
-        # packaged) rather than :latest, for the same reason every
-        # other tool here is pinned to a specific version.
+        # binary. Pinned to v42 - the newest tag Docker Hub actually
+        # has published (confirmed via its API; v43 is out upstream on
+        # GitHub but hasn't landed there yet) - rather than :latest,
+        # for the same reason every other tool here is pinned to a
+        # specific version.
         #
         # Installed inside the container: plocate (the mlocate-style
         # updatedb/locate dialect, exercising the non-GNU branch of the
@@ -45,7 +47,7 @@ jobs:
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$(pwd)":/code -w /code \
-            kcov/kcov:v43 \
+            kcov/kcov:v42 \
             sh -c "apt-get update -qq && apt-get install -y -qq rsync plocate zsh rclone >/dev/null && kcov --include-path=/code/bin /code/kcov-out sh tests/test_backmeup.sh"
           report=$(find kcov-out -name cobertura.xml | head -1)
           echo "coverage report: ${report:-<none found>}"
