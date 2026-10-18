@@ -856,7 +856,14 @@ function buildSearchResultRow(hit: LocateHit): HTMLElement {
   revealBtn.addEventListener("click", () => {
     errorMsg.textContent = "";
     revealItemInDir(hit.path).catch((err) => {
-      errorMsg.textContent = ` ${String(err)}`;
+      // Real bug, found by the user: a stale result (its file has
+      // since moved or been deleted, e.g. a build-output dir
+      // regenerated after the index was last refreshed) rejected with
+      // a bare OS errno string and no context. Every reveal failure
+      // reasonably means "this path isn't there anymore" - wrap it
+      // once, generically, rather than guessing at OS-specific error
+      // wording across platforms.
+      errorMsg.textContent = ` This file is no longer there (the search index can be behind the last backup run): ${String(err)}`;
     });
   });
   return el("li", {}, [
