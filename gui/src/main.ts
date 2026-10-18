@@ -587,9 +587,9 @@ function buildSourcesSection(
           el("strong", {}, [source.name]),
         ]),
         el("td", {}, [el("code", { class: "source-folder-path", title: source.path }, [source.path])]),
+        el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),
         el("td", {}, [known?.last_run ?? "never run yet"]),
         ...buildProjectStatsCells(known),
-        el("td", {}, [source.schedule ? formatSchedule(source.schedule) : "Off"]),
       ]),
       ...(oldLayoutRow ? [oldLayoutRow] : []),
       togglesRow,
@@ -607,6 +607,13 @@ function buildSourcesSection(
       el("tr", {}, [
         el("th", {}, ["Name"]),
         el("th", {}, ["Folder"]),
+        el("th", {}, [
+          "Schedule ",
+          helpIcon(
+            "Installs a real launchd (macOS) or systemd timer (Linux) that runs this on its own.",
+            "0 2 * * * ~/usr/bmu/bin/backmeup.sh ~/Documents   # crontab -e",
+          ),
+        ]),
         el("th", {}, ["Last run"]),
         el("th", {}, [
           "Last change ",
@@ -615,13 +622,6 @@ function buildSourcesSection(
         el("th", {}, ["Snapshots"]),
         el("th", {}, ["Mirror"]),
         el("th", {}, ["History"]),
-        el("th", {}, [
-          "Schedule ",
-          helpIcon(
-            "Installs a real launchd (macOS) or systemd timer (Linux) that runs this on its own.",
-            "0 2 * * * ~/usr/bmu/bin/backmeup.sh ~/Documents   # crontab -e",
-          ),
-        ]),
       ]),
     ]),
     el("tbody", {}, rows),
