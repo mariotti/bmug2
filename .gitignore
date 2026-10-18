@@ -13,3 +13,7 @@ __pycache__/
 
 # Personal shell-activity dumps (not project-generated), wherever they land
 hist.*
+
+# kcov's own output when run locally (CI's own run lands in the
+# runner's throwaway workspace, never committed)
+/kcov-out/

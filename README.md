@@ -6,11 +6,12 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell still has no flag (no native coverage tooling
-     for the shell engine, see the project memory on this). -->
+     repo-wide %. Shell's is kcov-based and Linux-only (ptrace), so it
+     only ever gets updated by the linux CI job, not macos. -->
 [![codecov (Python)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=python)](https://codecov.io/gh/mariotti/bmug2)
 [![codecov (Rust)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=rust)](https://codecov.io/gh/mariotti/bmug2)
 [![codecov (TypeScript)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=typescript)](https://codecov.io/gh/mariotti/bmug2)
+[![codecov (shell)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=shell)](https://codecov.io/gh/mariotti/bmug2)
 
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style

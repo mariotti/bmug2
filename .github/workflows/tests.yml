@@ -14,10 +14,34 @@ jobs:
         # exercising the non-GNU branch of the capability detection;
         # zsh is needed for the _bmu completion file's syntax check
         # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
-        # backmeup.replicate.sh for real
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
-      - name: Run test suite
-        run: sh tests/test_backmeup.sh
+        # backmeup.replicate.sh for real; kcov measures coverage for the
+        # shell engine (bin/) - it's ptrace-based, Linux-only, which is
+        # why this runs only here and not in the macos job below.
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone kcov
+      - name: Run test suite with coverage (kcov)
+        id: shell_coverage
+        # kcov traces the whole process tree it launches, so every
+        # bin/*.sh script the suite execs as its own subprocess gets
+        # instrumented too, not just the top-level `sh` invocation.
+        # --include-path scopes the report to the actual engine code,
+        # excluding tests/ and the bundled shunit2. The exact output
+        # layout isn't documented precisely enough to hardcode, so
+        # this finds whatever cobertura.xml kcov produced rather than
+        # guessing a path - and the upload step below no-ops instead
+        # of failing CI if that search comes up empty.
+        run: |
+          kcov --include-path="$(pwd)/bin" kcov-out sh tests/test_backmeup.sh
+          report=$(find kcov-out -name cobertura.xml | head -1)
+          echo "coverage report: ${report:-<none found>}"
+          echo "report=$report" >> "$GITHUB_OUTPUT"
+      - name: Upload coverage to Codecov
+        if: steps.shell_coverage.outputs.report != ''
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ steps.shell_coverage.outputs.report }}
+          flags: shell
+          fail_ci_if_error: false
 
   macos:
     runs-on: macos-latest
