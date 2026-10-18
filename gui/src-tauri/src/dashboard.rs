@@ -47,6 +47,15 @@ pub struct LocateResult {
     pub patterns: Vec<String>,
     pub indexed: bool,
     pub counts: LocateCounts,
+    // #[serde(default)]: a real bug, found by the user - this GUI
+    // binary can be newer than the installed backmeup.locate.sh it
+    // calls (e.g. a user who grabbed a newer experimental GUI build
+    // without re-running "Update now" yet). Without this, an older
+    // CLI's JSON (missing this field entirely) hard-crashed parsing
+    // instead of degrading - same reasoning as BackupSource.schedule
+    // in config.rs. Defaults to false: worst case, the "showing N of
+    // M" note just doesn't show, not a broken search.
+    #[serde(default)]
     pub truncated: bool,
     pub results: Vec<LocateHit>,
 }
@@ -119,6 +128,20 @@ mod tests {
         assert_eq!(parsed.results.len(), 3);
         assert_eq!(parsed.results[0].source, "index");
         assert_eq!(parsed.results[2].source, "live");
+    }
+
+    // Real bug, found by the user: this GUI binary can be newer than
+    // the backmeup.locate.sh it's calling (e.g. a newer experimental
+    // GUI build installed ahead of running "Update now" against the
+    // CLI side). An older locate.sh's JSON simply never mentions
+    // "truncated" at all - must still parse, not hard-crash the
+    // search. The user's real locate.sh version predates it.
+    #[test]
+    fn parses_locate_json_from_an_older_cli_missing_the_truncated_field() {
+        let old_json = r#"{"patterns":["A"],"indexed":true,"counts":{"index":1,"archived_filelist":0,"live":0},"results":[{"path":"/sync/proj1/a.txt","source":"index"}]}"#;
+        let parsed: LocateResult = serde_json::from_str(old_json).unwrap();
+        assert!(!parsed.truncated);
+        assert_eq!(parsed.results.len(), 1);
     }
 
     #[test]
