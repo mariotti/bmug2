@@ -271,6 +271,17 @@ form button[type="submit"] {
   cursor: pointer;
 }
 
+.settings-back-btn {
+  display: block;
+  margin: 0.4em 0 1em;
+  border-radius: 8px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.4em 0.9em;
+  cursor: pointer;
+}
+
 .settings-version,
 .settings-confirm {
   text-align: left;
@@ -792,6 +803,7 @@ form button[type="submit"] {
   .housekeeping-control button,
   .schedule-info button,
   .dashboard-top-bar button,
+  .settings-back-btn,
   .settings-version button,
   .settings-confirm button,
   .reveal-btn,
