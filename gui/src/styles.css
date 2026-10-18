@@ -703,6 +703,23 @@ form button[type="submit"] {
   font-size: 0.9em;
 }
 
+.search-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: 0.85em;
+}
+
+.search-page-prev,
+.search-page-next {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.2em 0.6em;
+  cursor: pointer;
+}
+
 .source-tag {
   display: inline-block;
   font-size: 0.75em;
@@ -777,7 +794,9 @@ form button[type="submit"] {
   .dashboard-top-bar button,
   .settings-version button,
   .settings-confirm button,
-  .reveal-btn {
+  .reveal-btn,
+  .search-page-prev,
+  .search-page-next {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
