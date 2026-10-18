@@ -1695,7 +1695,7 @@ async function renderSettings(binDir: string) {
     checkError = String(err);
   }
 
-  const backBtn = el("button", { type: "button" }, ["← Back to dashboard"]);
+  const backBtn = el("button", { type: "button", class: "settings-back-btn" }, ["← Back to dashboard"]);
   backBtn.addEventListener("click", () => void renderDashboard(binDir));
 
   const versionBox = el("div", { class: "settings-version" }, []);
