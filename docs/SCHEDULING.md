@@ -393,6 +393,32 @@ active for that user; it does not run at the login window or make any
 promises under FileVault's pre-boot lock screen (Tier 3 — behavior
 here has also shifted across macOS versions).
 
+### The GUI's own scheduling (one LaunchAgent per Backup Source)
+
+The GUI's per-source schedule picker and the Housekeeping schedule
+both install a real LaunchAgent under the hood
+(`gui/src-tauri/src/schedule.rs`) — not a timer running inside the app
+itself, so these keep firing on schedule even when the GUI isn't open,
+same launchd mechanics as the manual recipe above.
+
+Each shows up as its own entry under **System Settings → General →
+Login Items & Extensions → Allow in the Background** — one per
+scheduled Backup Source, plus one shared entry for Housekeeping.
+macOS displays each entry by its wrapper script's own filename, not
+by the plist's internal `Label`, so the filename includes a readable
+fragment of the source's folder name (e.g.
+`io.github.mariotti.bmug2.backup.<hash>-Documents.sh`), not just the
+hash. That hash is the LaunchAgent's real, internal identity and
+never changes across app updates — only the on-disk filename gained
+the readable part — so an already-scheduled source keeps the same
+LaunchAgent across an upgrade rather than getting a second, duplicate
+one.
+
+Turn a schedule off from inside the GUI (Edit schedule → Clear), not
+from that system list — removing an entry there only revokes the
+background-execution permission; it doesn't uninstall the LaunchAgent
+or its files.
+
 ### Proton Drive and unattended Keychain access
 
 [`backmeup.replicate.proton.sh`](MANUAL.md#backmeupreplicateprotonsh)
