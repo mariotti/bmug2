@@ -35,6 +35,12 @@ import {
   clearHousekeepingSchedule,
   setReplication,
   clearReplication,
+  renderSetup,
+  renderSettings,
+  buildProtonFolderBrowser,
+  buildGoogleDriveFolderBrowser,
+  buildReplicationSection,
+  init,
   type Schedule,
   type StatusProject,
   type StatusResult,
@@ -48,6 +54,9 @@ import {
   type UpdateCheck,
   type LocateResult,
   type LocateHit,
+  type DefaultPaths,
+  type InstallOutcome,
+  type RemoteEntry,
 } from "./main";
 
 // runJob awaits listen() before doing anything else observable from a test
@@ -74,6 +83,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
   revealItemInDir: vi.fn(() => Promise.resolve()),
 }));
+// directoryField's Browse button goes through this - same reasoning
+// as the two mocks above. Defaults to a never-resolving promise so a
+// test that doesn't click Browse never relies on the dialog picker.
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(pendingForever) }));
 
 function ignoreSettings(overrides: Partial<IgnoreSettings> = {}): IgnoreSettings {
   return {
@@ -1209,4 +1222,593 @@ describe("dashboard mutators (schedule/ignore/replication/remove)", () => {
       expect(banner?.textContent).toContain(`${command} failed`);
     });
   }
+});
+
+describe("user journeys (install setup wizard)", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  const defaults: DefaultPaths = {
+    sync_dir: "/home/alex/Backups/rsyncBackup",
+    backup_dir: "/home/alex/Backups/rsyncBackup-BP",
+    index_dir: "/home/alex/Backups/rsyncBackup/.locate.dir",
+    install_dir: "/home/alex/usr/bmu",
+  };
+
+  // overrides[cmd] is either a value to resolve with, or an Error to
+  // throw - lets each test only spell out the one or two commands it
+  // actually cares about, same economy as the dashboard-mutator tests'
+  // own mockInvoke above.
+  function mockInstallFlow(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "get_default_paths":
+          return defaults;
+        case "find_existing_installs":
+          return [] as string[];
+        case "get_status":
+          return { sync_dir: "/x", history_dir: "/x-BP", projects: [] } satisfies StatusResult;
+        case "list_sources":
+          return [] as BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  it("shows the new-install tab active by default, form pre-filled from get_default_paths", async () => {
+    mockInstallFlow();
+    await renderSetup();
+    const tabs = document.querySelectorAll<HTMLButtonElement>(".tabs .tab");
+    expect(tabs[0].classList.contains("active")).toBe(true);
+    expect(tabs[1].classList.contains("active")).toBe(false);
+    const inputs = document.querySelectorAll<HTMLInputElement>("form input[type=text]");
+    expect(inputs[0].value).toBe(defaults.sync_dir);
+    expect(inputs[3].value).toBe(defaults.install_dir);
+  });
+
+  it("switching to the existing-install tab shows its own form instead", async () => {
+    mockInstallFlow({ find_existing_installs: [] });
+    await renderSetup();
+    document.querySelectorAll<HTMLButtonElement>(".tabs .tab")[1].dispatchEvent(new Event("click"));
+
+    // build() fully replaces the tabs on every re-render, so re-query
+    // rather than reuse the (now-detached) button captured above.
+    const [newTab, existingTab] = document.querySelectorAll<HTMLButtonElement>(".tabs .tab");
+    expect(newTab.classList.contains("active")).toBe(false);
+    expect(existingTab.classList.contains("active")).toBe(true);
+    expect(document.querySelector("form input#bin-dir")).not.toBeNull();
+    expect(document.querySelector("form input#sync-dir")).toBeNull();
+  });
+
+  it("submitting the new-install form calls install_bmug2 with the typed paths and renders the dashboard on success", async () => {
+    mockInstallFlow({
+      install_bmug2: { bin_dir: "/home/alex/usr/bmu/bin", log: "" } satisfies InstallOutcome,
+    });
+    await renderSetup();
+    const inputs = document.querySelectorAll<HTMLInputElement>("form input[type=text]");
+    inputs[0].value = "/custom/sync";
+    document.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "install_bmug2"));
+    const [, args] = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "install_bmug2")!;
+    expect(args).toEqual({
+      request: {
+        mode: "new",
+        sync_dir: "/custom/sync",
+        backup_dir: defaults.backup_dir,
+        index_dir: defaults.index_dir,
+        install_dir: defaults.install_dir,
+      },
+    });
+    // A fresh install has no sources yet - buildSourcesSection shows
+    // this message instead of a table (see its own `sources.length ===
+    // 0` branch), so that's the real marker a dashboard render landed.
+    await waitFor(() => document.querySelector("#app")!.textContent!.includes("No backup sources yet"));
+  });
+
+  it("a failed new install renders the error screen, and Back returns to setup", async () => {
+    mockInstallFlow({ install_bmug2: new Error("disk full") });
+    await renderSetup();
+    document.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+
+    await waitFor(() => document.querySelector(".error-heading") !== null);
+    expect(document.querySelector("pre")!.textContent).toBe("Error: disk full");
+
+    buttonLabeled(document.body, "Back").dispatchEvent(new Event("click"));
+    await waitFor(() => document.querySelector(".tabs") !== null);
+  });
+
+  it("existing-install suggestions are clickable and fill the bin-dir field", async () => {
+    mockInstallFlow({ find_existing_installs: ["/home/alex/usr/bmu"] });
+    await renderSetup();
+    const [, existingTab] = document.querySelectorAll<HTMLButtonElement>(".tabs .tab");
+    existingTab.dispatchEvent(new Event("click"));
+
+    await waitFor(() => document.querySelector(".suggestion-btn") !== null);
+    document.querySelector<HTMLButtonElement>(".suggestion-btn")!.dispatchEvent(new Event("click"));
+    expect(document.querySelector<HTMLInputElement>("#bin-dir")!.value).toBe("/home/alex/usr/bmu");
+  });
+
+  it("an empty find_existing_installs result shows no suggestions, just the manual field", async () => {
+    mockInstallFlow({ find_existing_installs: [] });
+    await renderSetup();
+    const [, existingTab] = document.querySelectorAll<HTMLButtonElement>(".tabs .tab");
+    existingTab.dispatchEvent(new Event("click"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "find_existing_installs"));
+    expect(document.querySelector(".suggestion-btn")).toBeNull();
+  });
+
+  it("submitting the existing-install form with a typed path calls install_bmug2 with mode existing", async () => {
+    mockInstallFlow({
+      find_existing_installs: [],
+      install_bmug2: { bin_dir: "/typed/bin", log: "" } satisfies InstallOutcome,
+    });
+    await renderSetup();
+    const [, existingTab] = document.querySelectorAll<HTMLButtonElement>(".tabs .tab");
+    existingTab.dispatchEvent(new Event("click"));
+    document.querySelector<HTMLInputElement>("#bin-dir")!.value = "/typed/bin";
+    document.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "install_bmug2"));
+    const [, args] = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "install_bmug2")!;
+    expect(args).toEqual({ request: { mode: "existing", bin_dir: "/typed/bin" } });
+  });
+});
+
+describe("user journeys (Settings/update)", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  function mockSettingsFlow(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "get_status":
+          return { sync_dir: "/x", history_dir: "/x-BP", projects: [] } satisfies StatusResult;
+        case "list_sources":
+          return [] as BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  const upToDate: UpdateCheck = { current: [2, 15, 0], latest: [2, 15, 0], update_available: false };
+  const behind: UpdateCheck = { current: [2, 15, 0], latest: [2, 16, 0], update_available: true };
+
+  it("shows up-to-date with no Update button when already current", async () => {
+    mockSettingsFlow({ check_for_update: upToDate });
+    await renderSettings("/bin");
+    expect(document.querySelector(".settings-uptodate")).not.toBeNull();
+    expect(Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Update now…")).toBe(
+      false,
+    );
+  });
+
+  it("offers Update now when behind, and shows an inline error (not a full error screen) when the check itself fails", async () => {
+    mockSettingsFlow({ check_for_update: behind });
+    await renderSettings("/bin");
+    expect(buttonLabeled(document.body, "Update now…")).toBeTruthy();
+
+    document.querySelector("#app")!.innerHTML = "";
+    mockSettingsFlow({ check_for_update: new Error("offline") });
+    await renderSettings("/bin");
+    expect(document.querySelector(".settings-check-error")!.textContent).toContain("offline");
+    expect(document.querySelector(".error-heading")).toBeNull();
+  });
+
+  it("Update now -> confirm -> apply_update success renders the dashboard with a success banner", async () => {
+    mockSettingsFlow({
+      check_for_update: behind,
+      apply_update: { bin_dir: "/bin", log: "re-ran install.sh" } satisfies InstallOutcome,
+    });
+    await renderSettings("/bin");
+    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    expect(document.querySelector(".settings-confirm")).not.toBeNull();
+
+    buttonLabeled(document.body, "Yes, install the update").dispatchEvent(new Event("click"));
+    await waitFor(() => document.querySelector(".run-banner") !== null);
+    const banner = document.querySelector(".run-banner");
+    expect(banner?.className).toBe("run-banner run-banner-ok");
+    expect(banner?.textContent).toContain("Updated successfully.");
+  });
+
+  it("Update now -> confirm -> apply_update failure renders the error screen", async () => {
+    mockSettingsFlow({ check_for_update: behind, apply_update: new Error("network down") });
+    await renderSettings("/bin");
+    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    buttonLabeled(document.body, "Yes, install the update").dispatchEvent(new Event("click"));
+
+    await waitFor(() => document.querySelector(".error-heading") !== null);
+    expect(document.querySelector("pre")!.textContent).toBe("Error: network down");
+  });
+
+  it("Cancel on the confirm screen returns to Settings without updating", async () => {
+    mockSettingsFlow({ check_for_update: behind });
+    await renderSettings("/bin");
+    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    buttonLabeled(document.body, "Cancel").dispatchEvent(new Event("click"));
+
+    await waitFor(() => document.querySelector(".settings-version") !== null);
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "apply_update")).toBe(false);
+  });
+});
+
+describe("user journeys (app bootstrap: init)", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  function mockBootstrap(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "check_for_update":
+          // Deliberately not cached here - init() treats a failed
+          // background check as non-blocking either way.
+          throw new Error("offline");
+        case "get_status":
+          return { sync_dir: "/x", history_dir: "/x-BP", projects: [] } satisfies StatusResult;
+        case "list_sources":
+          return [] as BackupSource[];
+        case "get_housekeeping_schedule":
+          return null;
+        case "get_replication_status":
+          return { backend: "off" } satisfies ReplicationStatus;
+        case "get_replication_capability":
+          return undefined;
+        case "has_full_disk_access":
+          return true;
+        case "get_default_paths":
+          return {
+            sync_dir: "/x",
+            backup_dir: "/x-BP",
+            index_dir: "/x/.locate.dir",
+            install_dir: "/usr/bmu",
+          } satisfies DefaultPaths;
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  it("an existing install renders the dashboard", async () => {
+    mockBootstrap({ check_existing_install: "/usr/bmu/bin" });
+    await init();
+    // No sources mocked - buildSourcesSection shows this instead of a
+    // table (see its own `sources.length === 0` branch).
+    await waitFor(() => document.querySelector("#app")!.textContent!.includes("No backup sources yet"));
+  });
+
+  it("no existing install renders the setup wizard", async () => {
+    mockBootstrap({ check_existing_install: null });
+    await init();
+    await waitFor(() => document.querySelector(".tabs") !== null);
+  });
+
+  it("check_existing_install itself failing renders the error screen", async () => {
+    mockBootstrap({ check_existing_install: new Error("permission denied") });
+    await init();
+    await waitFor(() => document.querySelector(".error-heading") !== null);
+    expect(document.querySelector("pre")!.textContent).toBe("Error: permission denied");
+  });
+});
+
+describe("buildReplicationSection", () => {
+  it("off: shows a Set up button that reveals the (already-tested) editor", () => {
+    const section = buildReplicationSection({ backend: "off" }, { ok: true }, "/bin");
+    expect(section.textContent).toContain("Off");
+    buttonLabeled(section, "Set up replication").dispatchEvent(new Event("click"));
+    expect(section.querySelector("select")).not.toBeNull();
+  });
+
+  it("configured for rclone: shows both remotes and Edit/Turn off", () => {
+    const status: ReplicationStatus = { backend: "rclone", remote_sync: "gdrive:a", remote_backups: "gdrive:b" };
+    const section = buildReplicationSection(status, { ok: true }, "/bin");
+    expect(section.textContent).toContain("rclone -> gdrive:a / gdrive:b");
+    expect(() => buttonLabeled(section, "Edit")).not.toThrow();
+    expect(() => buttonLabeled(section, "Turn off")).not.toThrow();
+  });
+
+  it("configured for Proton Drive: shows the HISTORY-only label", () => {
+    const status: ReplicationStatus = { backend: "proton", remote: "/my-files/bmug2" };
+    const section = buildReplicationSection(status, { ok: true }, "/bin");
+    expect(section.textContent).toContain("Proton Drive (HISTORY only) -> /my-files/bmug2");
+  });
+
+  it("Turn off calls clear_replication for the right binDir", () => {
+    vi.mocked(invoke).mockImplementation(pendingForever);
+    const status: ReplicationStatus = { backend: "proton", remote: "/my-files/bmug2" };
+    const section = buildReplicationSection(status, { ok: true }, "/the-bin-dir");
+    buttonLabeled(section, "Turn off").dispatchEvent(new Event("click"));
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("clear_replication", { binDir: "/the-bin-dir" });
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("an unmet capability renders just the message, no controls", () => {
+    const section = buildReplicationSection(
+      { backend: "off" },
+      { ok: false, message: "rclone/proton-drive not found on PATH" },
+      "/bin",
+    );
+    expect(section.textContent).toContain("rclone/proton-drive not found on PATH");
+    expect(section.querySelector("button")).toBeNull();
+  });
+});
+
+describe("buildProtonFolderBrowser", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  function mockProton(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "proton_drive_signed_in":
+          return true;
+        case "list_proton_folder":
+          return [] as RemoteEntry[];
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("not signed in: offers a sign-in button, and signing in re-renders loaded", async () => {
+    mockProton({ proton_drive_signed_in: false });
+    const browser = buildProtonFolderBrowser("/my-files", vi.fn(), vi.fn());
+    await waitFor(() => browser.textContent!.includes("Not signed in"));
+
+    mockProton({ proton_drive_login: undefined, list_proton_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "Sign in to Proton Drive…").dispatchEvent(new Event("click"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "proton_drive_login"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "list_proton_folder"));
+  });
+
+  it("signed in: lists folders only, descending into one re-fetches that path", async () => {
+    mockProton({
+      list_proton_folder: [
+        { name: "Documents", is_folder: true },
+        { name: "notes.txt", is_folder: false },
+      ] satisfies RemoteEntry[],
+    });
+    const browser = buildProtonFolderBrowser("/my-files", vi.fn(), vi.fn());
+    await waitFor(() => browser.querySelector(".remote-folder-list") !== null);
+
+    expect(browser.textContent).toContain("Documents");
+    expect(browser.textContent).not.toContain("notes.txt");
+
+    mockProton({ list_proton_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "Documents").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_proton_folder" && (args as { path: string }).path === "/my-files/Documents",
+      ),
+    );
+  });
+
+  it(`"Use" fires onChoose with the current path`, async () => {
+    mockProton();
+    const onChoose = vi.fn();
+    const browser = buildProtonFolderBrowser("/my-files", onChoose, vi.fn());
+    await waitFor(() => browser.querySelector(".remote-folder-list") !== null);
+    buttonLabeled(browser, 'Use "/my-files"').dispatchEvent(new Event("click"));
+    expect(onChoose).toHaveBeenCalledWith("/my-files");
+  });
+
+  it("creating a folder calls create_proton_folder then reloads the listing", async () => {
+    mockProton();
+    const browser = buildProtonFolderBrowser("/my-files", vi.fn(), vi.fn());
+    await waitFor(() => browser.querySelector(".remote-folder-list") !== null);
+
+    mockProton({ create_proton_folder: undefined, list_proton_folder: [] as RemoteEntry[] });
+    browser.querySelector<HTMLInputElement>('input[placeholder="New folder name"]')!.value = "Archive";
+    buttonLabeled(browser, "Create").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "create_proton_folder"),
+    );
+    const [, args] = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "create_proton_folder")!;
+    expect(args).toEqual({ parent: "/my-files", name: "Archive" });
+  });
+
+  it("a listing failure shows an inline error and Cancel", async () => {
+    mockProton({ list_proton_folder: new Error("rpc timeout") });
+    const onCancel = vi.fn();
+    const browser = buildProtonFolderBrowser("/my-files", vi.fn(), onCancel);
+    await waitFor(() => browser.querySelector(".settings-check-error") !== null);
+    expect(browser.textContent).toContain("rpc timeout");
+    buttonLabeled(browser, "Cancel").dispatchEvent(new Event("click"));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildGoogleDriveFolderBrowser", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  function mockDrive(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "list_drive_remotes":
+          return [] as string[];
+        case "list_rclone_folder":
+          return [] as RemoteEntry[];
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("no remotes: offers to connect, and connecting reloads remotes", async () => {
+    mockDrive({ list_drive_remotes: [] as string[] });
+    const browser = buildGoogleDriveFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() => browser.textContent!.includes("No Google Drive remote configured yet."));
+
+    mockDrive({ create_drive_remote: undefined, list_drive_remotes: ["gdrive"] as string[] });
+    buttonLabeled(browser, "Connect Google Drive…").dispatchEvent(new Event("click"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "create_drive_remote"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "list_rclone_folder"),
+    );
+  });
+
+  it("exactly one remote: auto-selected, no picker shown", async () => {
+    mockDrive({ list_drive_remotes: ["gdrive"] as string[] });
+    const browser = buildGoogleDriveFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "gdrive:",
+      ),
+    );
+    expect(browser.textContent).not.toContain("Choose a Google Drive remote");
+  });
+
+  it("multiple remotes with no matching startValue: shows a picker, picking one loads its folder", async () => {
+    mockDrive({ list_drive_remotes: ["work", "personal"] as string[] });
+    const browser = buildGoogleDriveFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() => browser.textContent!.includes("Choose a Google Drive remote"));
+
+    mockDrive({ list_rclone_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "personal").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "personal:",
+      ),
+    );
+  });
+
+  it("a startValue naming a known remote:path parses straight into that folder, no picker", async () => {
+    mockDrive({ list_drive_remotes: ["work", "personal"] as string[], list_rclone_folder: [] as RemoteEntry[] });
+    const browser = buildGoogleDriveFolderBrowser("work:Projects/bmug2", vi.fn(), vi.fn());
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "work:Projects/bmug2",
+      ),
+    );
+    expect(browser.textContent).not.toContain("Choose a Google Drive remote");
+  });
+
+  it(`folder navigation, "Use", and folder creation all target the selected remote`, async () => {
+    mockDrive({
+      list_drive_remotes: ["gdrive"] as string[],
+      list_rclone_folder: [{ name: "Projects", is_folder: true }] satisfies RemoteEntry[],
+    });
+    const onChoose = vi.fn();
+    const browser = buildGoogleDriveFolderBrowser("", onChoose, vi.fn());
+    await waitFor(() => browser.querySelector(".remote-folder-list") !== null);
+
+    mockDrive({ list_rclone_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "Projects").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "gdrive:Projects",
+      ),
+    );
+
+    buttonLabeled(browser, 'Use "gdrive:Projects"').dispatchEvent(new Event("click"));
+    expect(onChoose).toHaveBeenCalledWith("gdrive:Projects");
+
+    mockDrive({ create_rclone_folder: undefined, list_rclone_folder: [] as RemoteEntry[] });
+    browser.querySelector<HTMLInputElement>('input[placeholder="New folder name"]')!.value = "Archive";
+    buttonLabeled(browser, "Create").dispatchEvent(new Event("click"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "create_rclone_folder"));
+    const [, args] = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "create_rclone_folder")!;
+    expect(args).toEqual({ path: "gdrive:Projects/Archive" });
+  });
+
+  it("a listing failure shows an inline error and Cancel", async () => {
+    mockDrive({ list_drive_remotes: ["gdrive"] as string[], list_rclone_folder: new Error("rpc timeout") });
+    const onCancel = vi.fn();
+    const browser = buildGoogleDriveFolderBrowser("", vi.fn(), onCancel);
+    await waitFor(() => browser.querySelector(".settings-check-error") !== null);
+    expect(browser.textContent).toContain("rpc timeout");
+    buttonLabeled(browser, "Cancel").dispatchEvent(new Event("click"));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 });

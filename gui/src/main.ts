@@ -8,14 +8,14 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 // ported from bin/backmeup.configure.sh's own prompts/tips, not
 // reinvented - keep the two in sync if either changes.
 
-interface DefaultPaths {
+export interface DefaultPaths {
   sync_dir: string;
   backup_dir: string;
   index_dir: string;
   install_dir: string;
 }
 
-interface InstallOutcome {
+export interface InstallOutcome {
   bin_dir: string;
   log: string;
 }
@@ -1236,7 +1236,7 @@ export function buildReplicationEditor(
   ]);
 }
 
-interface RemoteEntry {
+export interface RemoteEntry {
   name: string;
   is_folder: boolean;
 }
@@ -1250,7 +1250,7 @@ interface RemoteEntry {
 // bare "/" root only has other Proton-specific categories (devices,
 // shared-with-me, trash, photos, ...) that are never useful backup
 // destinations, so they're deliberately never exposed here.
-function buildProtonFolderBrowser(
+export function buildProtonFolderBrowser(
   startPath: string,
   onChoose: (path: string) => void,
   onCancel: () => void,
@@ -1364,7 +1364,7 @@ function buildProtonFolderBrowser(
 // which remote to browse first. Scoped to "drive"-type remotes only -
 // see rclone_browse.rs's own module doc for why this isn't a general
 // "browse any rclone remote" picker.
-function buildGoogleDriveFolderBrowser(
+export function buildGoogleDriveFolderBrowser(
   startValue: string,
   onChoose: (path: string) => void,
   onCancel: () => void,
@@ -1532,7 +1532,7 @@ function buildGoogleDriveFolderBrowser(
 // opt-in capability, not per-source. See docs/DESTINATIONS.md for the
 // two backends' own tradeoffs (rclone mirrors SYNC+HISTORY to any
 // remote; Proton Drive is HISTORY only, natively end-to-end encrypted).
-function buildReplicationSection(
+export function buildReplicationSection(
   status: ReplicationStatus,
   capability: ReplicationCapability,
   binDir: string,
@@ -1683,7 +1683,7 @@ function renderInstalling(message: string) {
 // cachedUpdateCheck) since opening Settings is itself a deliberate
 // "tell me the current state" action - and updates that same shared
 // cache so a return to the dashboard reflects it too.
-async function renderSettings(binDir: string) {
+export async function renderSettings(binDir: string) {
   app.replaceChildren(el("h1", {}, ["Settings"]), el("p", {}, ["Checking for updates…"]));
 
   let check: UpdateCheck | null = null;
@@ -1764,7 +1764,7 @@ async function performUpdate(binDir: string) {
   }
 }
 
-async function renderSetup() {
+export async function renderSetup() {
   let defaults: DefaultPaths;
   try {
     defaults = await invoke<DefaultPaths>("get_default_paths");
@@ -1991,7 +1991,7 @@ async function runInstall(request: InstallRequest) {
 // and updates it too, so a return to the dashboard reflects that.
 let cachedUpdateCheck: UpdateCheck | null = null;
 
-async function init() {
+export async function init() {
   renderLoading();
   try {
     const existing = await invoke<string | null>("check_existing_install");
