@@ -149,6 +149,7 @@ struct LatestRelease {
     tarball_url: Option<String>,
 }
 
+#[derive(Debug)]
 struct RunOutput {
     log: String,
     ok: bool,
@@ -221,6 +222,7 @@ fn install_dir_bin(install_dir: &str) -> String {
     format!("{install_dir}/bin")
 }
 
+#[derive(Debug)]
 struct InstalledDirs {
     sync_dir: String,
     backup_dir: String,
@@ -486,6 +488,87 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // The other 3 vars' own ok_or(...)? each return a distinct error
+    // only reachable if every var that's checked before it is already
+    // present - missing_dir_var_errors_clearly above only ever reaches
+    // BMU_DIRBACKUPS's. These walk one var further each time so every
+    // one of the 4 actually gets exercised, not just the first.
+    #[test]
+    fn missing_index_dir_var_errors_clearly() {
+        let dir =
+            std::env::temp_dir().join(format!("bmug2-dirs-missing-index-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            "BMU_DIRRSYNC=\"/x\"\nBMU_DIRBACKUPS=\"/x-BP\"\n",
+        )
+        .unwrap();
+        let err = read_installed_dirs(&dir).unwrap_err();
+        assert!(err.contains("BMU_DIRDBLOCATE"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_install_dir_var_errors_clearly() {
+        let dir = std::env::temp_dir()
+            .join(format!("bmug2-dirs-missing-install-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            "BMU_DIRRSYNC=\"/x\"\nBMU_DIRBACKUPS=\"/x-BP\"\nBMU_DIRDBLOCATE=\"/x/.locate.dir\"\n",
+        )
+        .unwrap();
+        let err = read_installed_dirs(&dir).unwrap_err();
+        assert!(err.contains("BMU_INSTDIR"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_installed_dirs_errors_clearly_when_setup_file_is_missing_entirely() {
+        let dir = std::env::temp_dir()
+            .join(format!("bmug2-dirs-no-setup-file-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = read_installed_dirs(&dir).unwrap_err();
+        assert!(err.contains("backmeup.setup.sh"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn install_dir_bin_appends_bin_matching_install_sh() {
+        assert_eq!(install_dir_bin("/home/alex/usr/bmu"), "/home/alex/usr/bmu/bin");
+    }
+
+    #[test]
+    fn run_reports_success_for_a_zero_exit_command() {
+        let result = run(&mut Command::new("true")).unwrap();
+        assert!(result.ok);
+    }
+
+    #[test]
+    fn run_reports_failure_for_a_nonzero_exit_command_without_erroring() {
+        // A command that RAN but failed is a clean Ok(RunOutput{ok:false,..}),
+        // not an Err - Err is reserved for failing to even start the process.
+        let result = run(&mut Command::new("false")).unwrap();
+        assert!(!result.ok);
+    }
+
+    #[test]
+    fn run_captures_combined_stdout_and_stderr() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo out; echo err 1>&2"]);
+        let result = run(&mut cmd).unwrap();
+        assert!(result.ok);
+        assert!(result.log.contains("out"));
+        assert!(result.log.contains("err"));
+    }
+
+    #[test]
+    fn run_errors_clearly_when_the_binary_does_not_exist() {
+        let err = run(&mut Command::new("bmug2-definitely-not-a-real-binary")).unwrap_err();
+        assert!(err.contains("bmug2-definitely-not-a-real-binary"));
+    }
+
     #[test]
     fn finds_single_extracted_dir() {
         let tmp = std::env::temp_dir().join(format!("bmug2-test-single-{}", std::process::id()));
@@ -501,6 +584,18 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         assert!(find_extracted_dir(&tmp).is_err());
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    // Distinct from errors_on_zero_extracted_dirs above: that one is a
+    // real, existing-but-empty directory (read_dir succeeds, the match
+    // on dirs.len() hits the 0 arm); this one is read_dir itself
+    // failing because extract_dir doesn't exist at all.
+    #[test]
+    fn errors_clearly_when_extract_dir_itself_does_not_exist() {
+        let tmp = std::env::temp_dir().join(format!("bmug2-test-missing-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let err = find_extracted_dir(&tmp).unwrap_err();
+        assert!(err.contains(&tmp.display().to_string()));
     }
 
     #[test]
