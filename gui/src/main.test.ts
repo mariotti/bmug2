@@ -813,11 +813,37 @@ describe("renderDashboard shows each source's own status inline", () => {
           return undefined;
         case "has_full_disk_access":
           return true;
+        case "remove_source":
+          return undefined;
         default:
           throw new Error(`unmocked invoke command in test: ${cmd}`);
       }
     });
   }
+
+  it("Remove needs a second click to confirm, and Cancel backs out without removing anything", async () => {
+    mockStatus([project({ name: "proj1" })]);
+
+    await renderDashboard("/bin");
+
+    const removeBtn = document.querySelector<HTMLButtonElement>(".sources-table .remove-btn")!;
+    expect(removeBtn.textContent).toBe("Remove");
+
+    removeBtn.dispatchEvent(new Event("click"));
+    expect(removeBtn.textContent).toBe("Really remove?");
+    const cancelBtn = document.querySelector<HTMLButtonElement>(".remove-cancel-btn")!;
+    expect(cancelBtn.style.display).not.toBe("none");
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("remove_source", expect.anything());
+
+    cancelBtn.dispatchEvent(new Event("click"));
+    expect(removeBtn.textContent).toBe("Remove");
+    expect(cancelBtn.style.display).toBe("none");
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("remove_source", expect.anything());
+
+    removeBtn.dispatchEvent(new Event("click"));
+    removeBtn.dispatchEvent(new Event("click"));
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("remove_source", { path: "/fake/src/proj1" });
+  });
 
   it("shows a tracked source's real stats in its own row, with no separate status table", async () => {
     mockStatus([
