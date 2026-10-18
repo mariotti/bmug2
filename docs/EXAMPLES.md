@@ -117,14 +117,17 @@ $ backmeup.sh ~/code/hobby-site
 sending incremental file list
 created directory /Users/alex/Backups/rsyncBackup/hobby-site
 ./
-.git/
-.git/HEAD
 src/
 src/app.py
 
-sent 288 bytes  received 144 bytes  864.00 bytes/sec
-total size is 36  speedup is 0.08
+sent 240 bytes  received 115 bytes  710.00 bytes/sec
+total size is 20  speedup is 0.06
 ```
+
+(`.git/` itself never shows up here - gitignore-respecting is on by
+default since bmug2 2.11, covered below, and it excludes `.git`
+unconditionally whenever it's active, with or without a project's own
+`.gitignore` file.)
 
 `backmeup.status.sh` shows all of them at a glance, independently:
 
@@ -183,13 +186,14 @@ sending incremental file list
 ./
 
 sent 160 bytes  received 28 bytes  376.00 bytes/sec
-total size is 36  speedup is 0.19
+total size is 20  speedup is 0.19
 $ find ~/Backups/rsyncBackup/hobby-site -type f
-/Users/alex/Backups/rsyncBackup/hobby-site/.git/HEAD
 /Users/alex/Backups/rsyncBackup/hobby-site/src/app.py
 ```
 
-Only `.git/HEAD` and `src/app.py` made it in. Don't remove `-av
+Only `src/app.py` made it in (`.git/` is excluded unconditionally
+whenever gitignore-respecting is on, independent of this `--exclude`
+customization - see the next section). Don't remove `-av
 --delete --backup` from `BMU_OPTRSYNC` — those three flags are load
 bearing: `--delete` mirrors deletions, `--backup` is what sends the old
 version to history instead of just discarding it, and without `-a`
@@ -228,6 +232,19 @@ $ find ~/Backups/rsyncBackup/hobby-site -type f
 manual `--exclude` recipe above, without hand-editing `BMU_OPTRSYNC`.
 `.gitignore` itself gets backed up too, same as a real git checkout
 would show it.
+
+**`.git/` itself is always excluded while this is on**, project
+`.gitignore` content or not — a `.gitignore` file never needs to
+mention `.git`, since git doesn't need telling to ignore its own
+metadata directory, so respecting `.gitignore` alone was never enough
+to keep it out. There's nothing a file-level snapshot of `.git/` gives
+you that the repository's own history doesn't already, and it can be
+large, so bmug2 excludes it unconditionally rather than asking every
+project to spell it out in its own `.bmuignore`. This is tied
+specifically to the literal `.git` directory name — `.github` (GitHub
+Actions config) is a different, longer name and is never affected.
+Turning `.gitignore`-respecting off (next section) also turns this
+off; `.git/` is then backed up like any other directory.
 
 **Want an extra, backup-specific ignore list without touching your
 real `.gitignore`?** Add a `.bmuignore` file (same syntax, same

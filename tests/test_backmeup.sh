@@ -2556,6 +2556,46 @@ testGitignoreExcludedByDefault() {
     assertFalse "nested .gitignore pattern was not honored" $?
 }
 
+testGitDirExcludedButGithubDirKeptWhenGitignoreRespected() {
+    # Real gap, found by the user: .gitignore itself never needs to
+    # mention .git (git doesn't need telling to ignore its own
+    # metadata - it's implicit), so respecting .gitignore alone never
+    # excluded it - every project's full git history got mirrored for
+    # no benefit, since the project is already versioned by git
+    # itself. Excluded unconditionally whenever gitignore-respecting
+    # is on, rather than something each project's own .bmuignore has
+    # to spell out. .github (CI config) is a different, longer name
+    # and must never be caught by this - it's real project content.
+    l_src="${SB}/src/gitdirproj"
+    mkdir -p "${l_src}/.git" "${l_src}/.github/workflows"
+    echo "keep" > "${l_src}/keep.txt"
+    echo "git internals" > "${l_src}/.git/HEAD"
+    echo "ci config" > "${l_src}/.github/workflows/ci.yml"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/gitdir.log" 2>&1
+    assertEquals "backup must still succeed" 0 $?
+    assertTrue "keep.txt missing from the mirror" \
+        "[ -f '${SB}/sync/gitdirproj/keep.txt' ]"
+    assertFalse ".git must not be mirrored while respecting .gitignore" \
+        "[ -e '${SB}/sync/gitdirproj/.git' ]"
+    assertTrue ".github must still be backed up - it is not .git" \
+        "[ -f '${SB}/sync/gitdirproj/.github/workflows/ci.yml' ]"
+}
+
+testGitDirStillBackedUpWhenGitignoreDisabled() {
+    l_src="${SB}/src/gitdiroffproj"
+    mkdir -p "${l_src}/.git"
+    echo "keep" > "${l_src}/keep.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+
+    echo 'BMU_GITIGNORE="no"' > "${SB}/sync-BP/gitdiroffproj/.bmuconfig"
+    echo "git internals" > "${l_src}/.git/HEAD"
+    sleep 1
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${SB}/gitdiroff.log" 2>&1
+    assertEquals 0 $?
+    assertTrue ".git exclusion is tied to gitignore-respecting - BMU_GITIGNORE=no must back it up too" \
+        "[ -f '${SB}/sync/gitdiroffproj/.git/HEAD' ]"
+}
+
 testBmuignoreNotConsultedByDefault() {
     l_src="${SB}/src/bmuiproj"
     mkdir -p "${l_src}"
