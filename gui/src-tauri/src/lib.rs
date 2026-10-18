@@ -156,20 +156,21 @@ fn set_source_schedule(
     schedule: Schedule,
 ) -> Result<(), String> {
     let label = schedule::source_label(&source_path);
+    let hint = schedule::source_file_hint(&source_path);
     let wrapper = schedule::build_source_wrapper(&bin_dir, &source_path);
-    schedule::install(&label, &wrapper, &schedule, &format!("bmug2 backup ({source_path})"))?;
+    schedule::install(&label, &wrapper, &schedule, &format!("bmug2 backup ({source_path})"), &hint)?;
     config::set_source_schedule(&app, &source_path, Some(schedule))
 }
 
 #[tauri::command]
 fn clear_source_schedule(app: AppHandle, source_path: String) -> Result<(), String> {
-    schedule::uninstall(&schedule::source_label(&source_path))?;
+    schedule::uninstall(&schedule::source_label(&source_path), &schedule::source_file_hint(&source_path))?;
     config::set_source_schedule(&app, &source_path, None)
 }
 
 #[tauri::command]
 fn get_housekeeping_schedule() -> Option<Schedule> {
-    schedule::status(schedule::HOUSEKEEPING_LABEL)
+    schedule::status(schedule::HOUSEKEEPING_LABEL, "")
 }
 
 #[tauri::command]
@@ -180,6 +181,7 @@ fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, schedule: Schedule
         &wrapper,
         &schedule,
         "bmug2 housekeeping (updatedb/replicate)",
+        "",
     )?;
     config::set_housekeeping_schedule(&app, Some(schedule))
 }
@@ -191,7 +193,7 @@ fn has_full_disk_access() -> bool {
 
 #[tauri::command]
 fn clear_housekeeping_schedule(app: AppHandle) -> Result<(), String> {
-    schedule::uninstall(schedule::HOUSEKEEPING_LABEL)?;
+    schedule::uninstall(schedule::HOUSEKEEPING_LABEL, "")?;
     config::set_housekeeping_schedule(&app, None)
 }
 
