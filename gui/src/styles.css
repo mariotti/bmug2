@@ -629,16 +629,19 @@ form button[type="submit"] {
 
 .help-icon {
   display: inline-block;
-  vertical-align: middle;
-  margin-left: 0.3em;
-  font-size: 0.75em;
+  /* Sits raised like a math exponent (x²) rather than on the text's
+     own baseline - smaller and less visually heavy next to a heading
+     than a full-size inline badge. */
+  vertical-align: super;
+  margin-left: 0.2em;
+  font-size: 0.6em;
   color: #888;
   cursor: help;
   border: 1px solid #888;
   border-radius: 50%;
-  width: 1.3em;
-  height: 1.3em;
-  line-height: 1.3em;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1.2em;
   text-align: center;
 }
 
