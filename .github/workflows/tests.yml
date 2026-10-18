@@ -42,7 +42,16 @@ jobs:
       - name: Install bmug2-mcp
         run: pip install -e "./mcp[dev]"
       - name: Run test suite
-        run: pytest mcp/tests
+        run: pytest mcp/tests --cov=bmug2_mcp --cov-report=xml
+      - name: Upload coverage to Codecov
+        # Codecov's own upload hiccups shouldn't fail this job - pytest's
+        # exit code above is what actually gates CI.
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: python
+          fail_ci_if_error: false
 
   mcp-macos:
     runs-on: macos-latest
@@ -56,7 +65,14 @@ jobs:
       - name: Install bmug2-mcp
         run: pip install -e "./mcp[dev]"
       - name: Run test suite
-        run: pytest mcp/tests
+        run: pytest mcp/tests --cov=bmug2_mcp --cov-report=xml
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: python
+          fail_ci_if_error: false
 
   gui-linux:
     runs-on: ubuntu-latest

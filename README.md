@@ -5,6 +5,11 @@
 [![Tests](https://github.com/mariotti/bmug2/actions/workflows/tests.yml/badge.svg)](https://github.com/mariotti/bmug2/actions/workflows/tests.yml)
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
+<!-- Python (mcp/) coverage only so far - shell/Rust/TS have no flag
+     wired up yet (no native coverage tooling for the shell engine,
+     see the project memory on this); label says "Python" rather than
+     a bare "coverage" so this never reads as repo-wide. -->
+[![codecov (Python)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=python)](https://codecov.io/gh/mariotti/bmug2)
 
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
