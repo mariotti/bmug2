@@ -127,9 +127,9 @@ describe("el", () => {
 });
 
 describe("helpIcon", () => {
-  it("shows (?) with the description as its tooltip", () => {
+  it("shows a circled ? with the description as its tooltip", () => {
     const icon = helpIcon("Does the thing.");
-    expect(icon.textContent).toBe("(?)");
+    expect(icon.textContent).toBe("?");
     expect(icon.getAttribute("title")).toBe("Does the thing.");
   });
 
@@ -700,7 +700,7 @@ describe("user journeys (renderDashboard end to end)", () => {
 
   function sectionByHeading(heading: string): HTMLElement {
     // startsWith, not === : an h2's own textContent now also includes
-    // its trailing helpIcon's "(?)" (see main.ts's helpIcon calls).
+    // its trailing helpIcon's "?" (see main.ts's helpIcon calls).
     const section = Array.from(document.querySelectorAll<HTMLElement>("#app > section")).find(
       (s) => s.querySelector("h2")?.textContent?.startsWith(heading),
     );
@@ -915,7 +915,7 @@ describe("renderDashboard shows each source's own status inline", () => {
     const icons = document.querySelectorAll<HTMLElement>(".help-icon");
     expect(icons).toHaveLength(8);
     icons.forEach((icon) => {
-      expect(icon.textContent).toBe("(?)");
+      expect(icon.textContent).toBe("?");
       expect(icon.getAttribute("title")).toBeTruthy();
     });
   });

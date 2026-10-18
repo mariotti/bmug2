@@ -140,14 +140,14 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-// A small "(?)" icon with a native tooltip bridging what the GUI just
+// A small circled "?" icon with a native tooltip bridging what the GUI just
 // did to the real CLI command it wraps - for someone who also uses
 // the CLI, or wants to understand/replicate a GUI action by hand.
 // Native `title`, same pattern already used for the folder-path and
 // old-layout-badge tooltips - no new overlay/widget idiom.
 export function helpIcon(description: string, cliExample?: string): HTMLElement {
   const title = cliExample ? `${description}\n\nCLI equivalent:\n${cliExample}` : description;
-  return el("span", { class: "help-icon", title }, ["(?)"]);
+  return el("span", { class: "help-icon", title }, ["?"]);
 }
 
 function renderLoading() {
