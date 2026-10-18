@@ -47,6 +47,7 @@ import {
   type RunBanner,
   type UpdateCheck,
   type LocateResult,
+  type LocateHit,
 } from "./main";
 
 // runJob awaits listen() before doing anything else observable from a test
@@ -959,10 +960,13 @@ describe("renderSearchResults", () => {
       patterns: ["x"],
       indexed: true,
       counts: { index: 0, live: 0, archived_filelist: 0 },
-      truncated: false,
       results: [],
       ...overrides,
     };
+  }
+
+  function hits(n: number): LocateHit[] {
+    return Array.from({ length: n }, (_, i) => ({ path: `/sync/proj1/file${i}.txt`, source: "live" }));
   }
 
   afterEach(() => {
@@ -1001,24 +1005,55 @@ describe("renderSearchResults", () => {
     expect(revealItemInDir).toHaveBeenCalledWith("/sync/proj1/a.txt");
   });
 
-  it("does not show a refine-search note when the result set wasn't truncated", () => {
+  it("hides pagination controls entirely when everything fits on one page", () => {
     const box = el("div", {}, []);
-    renderSearchResults(result({ truncated: false, results: [{ path: "/a.txt", source: "live" }] }), box);
-    expect(box.textContent).not.toContain("refine your search");
+    renderSearchResults(result({ results: hits(5) }), box);
+    expect(box.querySelectorAll("li")).toHaveLength(5);
+    expect(box.querySelector(".search-pagination")).toBeNull();
   });
 
-  it("shows a refine-search note, with the true total, when truncated", () => {
+  it("paginates a large result set entirely client-side - no re-fetch, all real matches reachable", () => {
     const box = el("div", {}, []);
-    renderSearchResults(
-      result({
-        truncated: true,
-        counts: { index: 500, live: 11500, archived_filelist: 0 },
-        results: [{ path: "/a.txt", source: "live" }],
-      }),
-      box,
-    );
-    expect(box.textContent).toContain("Showing first 1 of 12000");
-    expect(box.textContent).toContain("refine your search");
+    renderSearchResults(result({ results: hits(250) }), box);
+
+    // Page 1: first 100, label reflects the true total.
+    expect(box.querySelectorAll("li")).toHaveLength(100);
+    expect(box.querySelector("li")!.textContent).toContain("file0.txt");
+    const pagination = box.querySelector(".search-pagination")!;
+    expect(pagination.textContent).toContain("Page 1 of 3");
+    expect(pagination.textContent).toContain("250");
+    const prevBtn = pagination.querySelector<HTMLButtonElement>(".search-page-prev")!;
+    const nextBtn = pagination.querySelector<HTMLButtonElement>(".search-page-next")!;
+    expect(prevBtn.disabled).toBe(true);
+    expect(nextBtn.disabled).toBe(false);
+
+    // Next: page 2, a different slice of the same in-memory array.
+    nextBtn.dispatchEvent(new Event("click"));
+    expect(box.querySelectorAll("li")).toHaveLength(100);
+    expect(box.querySelector("li")!.textContent).toContain("file100.txt");
+    expect(box.querySelector(".search-pagination")!.textContent).toContain("Page 2 of 3");
+
+    // Next again: the final, shorter page (250 - 200 = 50).
+    box.querySelector<HTMLButtonElement>(".search-page-next")!.dispatchEvent(new Event("click"));
+    expect(box.querySelectorAll("li")).toHaveLength(50);
+    expect(box.querySelector("li")!.textContent).toContain("file200.txt");
+    const lastPagination = box.querySelector(".search-pagination")!;
+    expect(lastPagination.textContent).toContain("Page 3 of 3");
+    expect(lastPagination.querySelector<HTMLButtonElement>(".search-page-next")!.disabled).toBe(true);
+
+    // Previous: back to page 2.
+    box.querySelector<HTMLButtonElement>(".search-page-prev")!.dispatchEvent(new Event("click"));
+    expect(box.querySelector(".search-pagination")!.textContent).toContain("Page 2 of 3");
+  });
+
+  it("Reveal on a later page operates on that page's actual hit, not page 1's", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(result({ results: hits(150) }), box);
+    box.querySelector<HTMLButtonElement>(".search-page-next")!.dispatchEvent(new Event("click"));
+
+    const revealBtn = box.querySelector<HTMLButtonElement>(".reveal-btn")!;
+    revealBtn.dispatchEvent(new Event("click"));
+    expect(revealItemInDir).toHaveBeenCalledWith("/sync/proj1/file100.txt");
   });
 });
 
@@ -1032,7 +1067,6 @@ describe("runSearch", () => {
       patterns: ["x"],
       indexed: true,
       counts: { index: 1, live: 0, archived_filelist: 0 },
-      truncated: false,
       results: [{ path: "/sync/proj1/a.txt", source: "index" }],
     });
     const box = el("div", {}, []);

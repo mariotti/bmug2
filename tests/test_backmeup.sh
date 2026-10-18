@@ -1584,8 +1584,6 @@ testLocateJsonReportsLiveSource() {
     assertTrue "json output should tag the hit as live source" $?
     echo "${l_json}" | grep -q '"live":1'
     assertTrue "json counts should report 1 live hit" $?
-    echo "${l_json}" | grep -q '"truncated":false'
-    assertTrue "a result set well under the cap should not be marked truncated" $?
 }
 
 testLocateJsonEscapesBackslashAndQuoteInPaths() {
@@ -1645,47 +1643,43 @@ testLocateJsonHandlesLargeResultSetsQuickly() {
         > "${SHUNIT_TMPDIR}/perfjson.log" 2>&1
     assertEquals "large-result-set json search timed out or failed" 0 $?
 
-    # Real bug, found by the user: an unselective pattern used to hand
-    # every hit straight to the GUI, which froze rendering tens of
-    # thousands of DOM rows. Results are capped (BMU_LOCATE_LIMIT,
-    # default 500) while counts stay the true total - the GUI can
-    # still say "showing 500 of 3000, refine your search" honestly.
     python3 -c "
 import json
 d = json.load(open('${SHUNIT_TMPDIR}/perfjson.log'))
 assert d['counts']['live'] == 3000, d['counts']
-assert len(d['results']) == 500, len(d['results'])
-assert d['truncated'] is True, d['truncated']
+assert len(d['results']) == 3000, len(d['results'])
 "
-    assertTrue "large-result-set json output was invalid, had the wrong count, or wasn't capped" $?
+    assertTrue "large-result-set json output was invalid or had the wrong count" $?
 
     rm -f "${l_fl}"
 }
 
-testLocateJsonCapIsOverridableAndCountsStayTrue() {
-    # Small, controlled fixture (not the 3000-line perf one above) to
-    # pin the cap/truncated mechanics precisely: a limit of 3 against
-    # 10 real matches must return exactly 3 results, report the true
-    # count of 10, and mark the response truncated.
-    l_fl="${SB}/sync-BP/capjsonproj.filelist"
+testLocateJsonNeverTruncatesResults() {
+    # The CLI's own contract, restored after a real bug: an earlier
+    # version capped results server-side to protect the GUI from
+    # rendering too many DOM rows, breaking "the CLI stays compatible
+    # with any GUI version" - a GUI newer than the installed CLI
+    # crashed outright on a field the old CLI didn't send. Pagination
+    # belongs in the GUI, operating on the complete result set; the
+    # CLI must never silently drop a match. A modest, deliberate
+    # fixture (not the 3000-line perf one above, which is about speed
+    # - this one is specifically about completeness).
+    l_fl="${SB}/sync-BP/nocapjsonproj.filelist"
     i=0
-    while [ $i -lt 10 ]; do
-        echo "capjsonproj/zzzcapmarkerxyz${i}.txt" >> "${l_fl}"
+    while [ $i -lt 50 ]; do
+        echo "nocapjsonproj/zzznocapmarkerxyz${i}.txt" >> "${l_fl}"
         i=`expr $i + 1`
     done
 
-    BMU_LOCATE_LIMIT=3 "${SB}/bin/backmeup.locate.sh" --json zzzcapmarkerxyz \
-        > "${SHUNIT_TMPDIR}/capjson.log" 2>&1
-    assertEquals "capped json search failed" 0 $?
-
+    "${SB}/bin/backmeup.locate.sh" --json zzznocapmarkerxyz \
+        > "${SHUNIT_TMPDIR}/nocapjson.log" 2>&1
     python3 -c "
 import json
-d = json.load(open('${SHUNIT_TMPDIR}/capjson.log'))
-assert d['counts']['live'] == 10, d['counts']
-assert len(d['results']) == 3, len(d['results'])
-assert d['truncated'] is True, d['truncated']
+d = json.load(open('${SHUNIT_TMPDIR}/nocapjson.log'))
+assert d['counts']['live'] == 50, d['counts']
+assert len(d['results']) == 50, len(d['results'])
 "
-    assertTrue "cap override did not limit results or kept a false true-count" $?
+    assertTrue "the CLI must return every match, never a silently truncated subset" $?
 
     rm -f "${l_fl}"
 }

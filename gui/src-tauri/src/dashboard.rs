@@ -47,7 +47,6 @@ pub struct LocateResult {
     pub patterns: Vec<String>,
     pub indexed: bool,
     pub counts: LocateCounts,
-    pub truncated: bool,
     pub results: Vec<LocateHit>,
 }
 
@@ -94,7 +93,7 @@ mod tests {
     // Captured from a real run against a real sandbox (backmeup.sh run
     // twice, backmeup.updatedb.sh run once) - not hand-typed guesses.
     const REAL_STATUS_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","projects":[{"name":"proj1","last_run":"2026-09-10 21:35:44","last_change":"20260910-213544","snapshot_count":1,"mirror_size_kb":4,"history_size_kb":12,"old_layout":false}]}"#;
-    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"truncated":false,"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
+    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
 
     #[test]
     fn parses_real_status_json() {
@@ -115,10 +114,33 @@ mod tests {
         assert_eq!(parsed.counts.index, 2);
         assert_eq!(parsed.counts.archived_filelist, 0);
         assert_eq!(parsed.counts.live, 1);
-        assert!(!parsed.truncated);
         assert_eq!(parsed.results.len(), 3);
         assert_eq!(parsed.results[0].source, "index");
         assert_eq!(parsed.results[2].source, "live");
+    }
+
+    // The CLI's permanent contract with any future GUI version - a
+    // real bug, found by the user, that happened once already: a
+    // previous change added a required "truncated" field to this
+    // struct, so a GUI built against it hard-crashed against any
+    // already-installed CLI whose backmeup.locate.sh predated that
+    // field ("missing field `truncated`"). This exact shape (today's
+    // real, minimal backmeup.locate.sh --json output) must keep
+    // deserializing forever. If this test ever needs to change to
+    // keep compiling, that's the signal a new LocateResult field was
+    // added as required instead of #[serde(default)] - fix the field,
+    // not this fixture.
+    const MINIMAL_LOCATE_JSON_CONTRACT: &str =
+        r#"{"patterns":["x"],"indexed":true,"counts":{"index":0,"archived_filelist":0,"live":0},"results":[]}"#;
+
+    #[test]
+    fn parses_the_minimal_locate_json_contract_forever() {
+        let parsed: LocateResult =
+            serde_json::from_str(MINIMAL_LOCATE_JSON_CONTRACT).expect(
+                "a LocateResult field was added as required instead of #[serde(default)] - \
+                 this must keep parsing an old CLI's output, not just today's",
+            );
+        assert!(parsed.results.is_empty());
     }
 
     #[test]
@@ -195,6 +217,13 @@ mod tests {
         assert_eq!(found.patterns, vec!["hello.txt".to_string()]);
         assert_eq!(found.counts.live, 1);
         assert!(found.results.iter().any(|r| r.source == "live"));
+        // The real-CLI-binary version of the same contract as
+        // parses_the_minimal_locate_json_contract_forever above: the
+        // actual installed backmeup.locate.sh must never silently
+        // drop a match - results.len() always equals the summed
+        // counts, no server-side capping.
+        let total_counts = found.counts.index + found.counts.archived_filelist + found.counts.live;
+        assert_eq!(found.results.len() as u64, total_counts);
 
         std::fs::remove_dir_all(&base).ok();
     }

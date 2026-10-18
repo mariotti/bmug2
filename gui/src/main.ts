@@ -54,7 +54,6 @@ export interface LocateResult {
   patterns: string[];
   indexed: boolean;
   counts: { index: number; live: number; archived_filelist: number };
-  truncated: boolean;
   results: LocateHit[];
 }
 
@@ -868,7 +867,15 @@ function buildSearchResultRow(hit: LocateHit): HTMLElement {
   ]);
 }
 
-export function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
+// The CLI always returns the complete result set in one response (see
+// backmeup.locate.sh's own "never silently truncate" contract) - an
+// unselective pattern can still mean thousands of hits, too many to
+// render as DOM rows at once without real jank, so pagination lives
+// entirely here, slicing the array already in memory. No re-fetch
+// between pages, unlike a server-side "page 2" would need.
+const SEARCH_PAGE_SIZE = 100;
+
+function renderSearchResultsPage(result: LocateResult, resultsBox: HTMLElement, page: number) {
   const children: (Node | string)[] = [];
   if (!result.indexed) {
     children.push(
@@ -877,22 +884,34 @@ export function renderSearchResults(result: LocateResult, resultsBox: HTMLElemen
       ]),
     );
   }
-  if (result.truncated) {
-    const total = result.counts.index + result.counts.live + result.counts.archived_filelist;
-    children.push(
-      el("p", { class: "note-not-indexed" }, [
-        `Showing first ${result.results.length} of ${total} matches - refine your search.`,
-      ]),
-    );
-  }
   if (result.results.length === 0) {
     children.push(el("p", {}, ["No matches."]));
   } else {
-    children.push(
-      el("ul", { class: "search-result-list" }, result.results.map(buildSearchResultRow)),
-    );
+    const totalPages = Math.ceil(result.results.length / SEARCH_PAGE_SIZE);
+    const start = (page - 1) * SEARCH_PAGE_SIZE;
+    const pageHits = result.results.slice(start, start + SEARCH_PAGE_SIZE);
+    children.push(el("ul", { class: "search-result-list" }, pageHits.map(buildSearchResultRow)));
+    if (totalPages > 1) {
+      const prevBtn = el("button", { type: "button", class: "search-page-prev" }, ["Previous"]);
+      const nextBtn = el("button", { type: "button", class: "search-page-next" }, ["Next"]);
+      prevBtn.disabled = page <= 1;
+      nextBtn.disabled = page >= totalPages;
+      prevBtn.addEventListener("click", () => renderSearchResultsPage(result, resultsBox, page - 1));
+      nextBtn.addEventListener("click", () => renderSearchResultsPage(result, resultsBox, page + 1));
+      children.push(
+        el("p", { class: "search-pagination" }, [
+          prevBtn,
+          ` Page ${page} of ${totalPages} (${result.results.length} total matches) `,
+          nextBtn,
+        ]),
+      );
+    }
   }
   resultsBox.replaceChildren(...children);
+}
+
+export function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
+  renderSearchResultsPage(result, resultsBox, 1);
 }
 
 export async function renderDashboard(binDir: string, banner?: RunBanner) {
