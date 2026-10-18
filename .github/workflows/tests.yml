@@ -104,9 +104,16 @@ jobs:
       - name: Type-check and build frontend
         working-directory: gui
         run: npm run build
-      - name: Run frontend unit tests
+      - name: Run frontend unit tests with coverage
         working-directory: gui
-        run: npm test
+        run: npm test -- --coverage --coverage.reporter=lcov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gui/coverage/lcov.info
+          flags: typescript
+          fail_ci_if_error: false
       - name: Run Rust test suite with coverage
         working-directory: gui/src-tauri
         # cargo-llvm-cov wraps cargo test itself - this replaces the
@@ -158,9 +165,16 @@ jobs:
       - name: Type-check and build frontend
         working-directory: gui
         run: npm run build
-      - name: Run frontend unit tests
+      - name: Run frontend unit tests with coverage
         working-directory: gui
-        run: npm test
+        run: npm test -- --coverage --coverage.reporter=lcov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gui/coverage/lcov.info
+          flags: typescript
+          fail_ci_if_error: false
       - name: Run Rust test suite with coverage
         working-directory: gui/src-tauri
         # See the gui-linux job's own comment on this same flag - same

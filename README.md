@@ -10,6 +10,7 @@
      for the shell engine, see the project memory on this). -->
 [![codecov (Python)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=python)](https://codecov.io/gh/mariotti/bmug2)
 [![codecov (Rust)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=rust)](https://codecov.io/gh/mariotti/bmug2)
+[![codecov (TypeScript)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=typescript)](https://codecov.io/gh/mariotti/bmug2)
 
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
