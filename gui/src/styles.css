@@ -627,6 +627,24 @@ form button[type="submit"] {
   margin-right: 0.3em;
 }
 
+.help-icon {
+  display: inline-block;
+  /* Sits raised like a math exponent (x²) rather than on the text's
+     own baseline - smaller and less visually heavy next to a heading
+     than a full-size inline badge. */
+  vertical-align: super;
+  margin-left: 0.2em;
+  font-size: 0.6em;
+  color: #888;
+  cursor: help;
+  border: 1px solid #888;
+  border-radius: 50%;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1.2em;
+  text-align: center;
+}
+
 .note-old-layout,
 .note-not-indexed {
   font-size: 0.85em;
@@ -726,6 +744,11 @@ form button[type="submit"] {
     background-color: #1f1f1f98;
     color: #f6f6f6;
     border-color: #444;
+  }
+
+  .help-icon {
+    color: #aaa;
+    border-color: #aaa;
   }
 
   .status-table th,
