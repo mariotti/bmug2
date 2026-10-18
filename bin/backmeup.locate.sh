@@ -115,6 +115,25 @@ l_idxcount=`wc -l < "${l_bmu_tmpdir}/idx" | tr -d ' '`
 l_archcount=`wc -l < "${l_bmu_tmpdir}/arch" | tr -d ' '`
 l_livecount=`wc -l < "${l_bmu_tmpdir}/live" | tr -d ' '`
 #
+# Real bug, found by the user: an unselective pattern (e.g. a single
+# letter) can match tens of thousands of entries, and handing all of
+# them to the GUI as JSON froze it - not the locate/grep lookup itself
+# (fast, it's an index/filelist scan), but serializing and then
+# rendering that many DOM rows. Cap only the RESULT rows fed into the
+# awk pass below, counts above stay true totals either way, so the
+# caller can still say "showing 500 of 12000, refine your search"
+# honestly. Plain POSIX head into sibling files, no <() process
+# substitution (a bashism this project's sh scripts avoid elsewhere).
+l_limit="${BMU_LOCATE_LIMIT:-500}"
+head -n "${l_limit}" "${l_bmu_tmpdir}/idx" > "${l_bmu_tmpdir}/idx.capped"
+head -n "${l_limit}" "${l_bmu_tmpdir}/arch" > "${l_bmu_tmpdir}/arch.capped"
+head -n "${l_limit}" "${l_bmu_tmpdir}/live" > "${l_bmu_tmpdir}/live.capped"
+l_truncated="false"
+if [ "${l_idxcount}" -gt "${l_limit}" ] || [ "${l_archcount}" -gt "${l_limit}" ] \
+   || [ "${l_livecount}" -gt "${l_limit}" ]; then
+    l_truncated="true"
+fi
+#
 # Same escaping bmuJsonEscape does (backslash first, then quote - so a
 # literal backslash in a path doesn't get double-escaped by the second
 # substitution), just applied to every line of all three files in one
@@ -136,9 +155,9 @@ l_results=$(awk '
     if (n++ > 0) printf ","
     printf "{\"path\":\"%s\",\"source\":\"%s\"}", path, srctag
 }
-' srctag=index "${l_bmu_tmpdir}/idx" \
-  srctag=archived_filelist "${l_bmu_tmpdir}/arch" \
-  srctag=live "${l_bmu_tmpdir}/live")
+' srctag=index "${l_bmu_tmpdir}/idx.capped" \
+  srctag=archived_filelist "${l_bmu_tmpdir}/arch.capped" \
+  srctag=live "${l_bmu_tmpdir}/live.capped")
 #
 l_patjson=""
 for l_pat in "$@"; do
@@ -147,8 +166,8 @@ for l_pat in "$@"; do
     l_patjson="${l_patjson}\"${l_pesc}\""
 done
 #
-printf '{"patterns":[%s],"indexed":%s,"counts":{"index":%d,"archived_filelist":%d,"live":%d},"results":[%s]}\n' \
-    "${l_patjson}" "${l_indexed}" "${l_idxcount}" "${l_archcount}" "${l_livecount}" "${l_results}"
+printf '{"patterns":[%s],"indexed":%s,"counts":{"index":%d,"archived_filelist":%d,"live":%d},"truncated":%s,"results":[%s]}\n' \
+    "${l_patjson}" "${l_indexed}" "${l_idxcount}" "${l_archcount}" "${l_livecount}" "${l_truncated}" "${l_results}"
 #
 # NOTES
 #

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 // First-run flow: check for a saved install, otherwise offer to
 // install a new copy or point at an existing one. Wording below is
@@ -54,6 +54,7 @@ export interface LocateResult {
   patterns: string[];
   indexed: boolean;
   counts: { index: number; live: number; archived_filelist: number };
+  truncated: boolean;
   results: LocateHit[];
 }
 
@@ -799,6 +800,32 @@ export function sourceLabel(source: string): string {
   return "archived";
 }
 
+// One row per hit: the source tag + path, same as before, plus a
+// Reveal control (revealItemInDir, @tauri-apps/plugin-opener - already
+// a dependency, already permitted by opener:default in
+// capabilities/*.json, cross-platform: Finder/NSWorkspace on macOS,
+// Explorer on Windows, the FileManager1 D-Bus interface or the
+// OpenURI portal on Linux). A plain function (not inline in .map), so
+// each row gets its own error-message element to reveal a stale
+// result cleanly (e.g. an archived snapshot path since pruned)
+// instead of silently doing nothing.
+function buildSearchResultRow(hit: LocateHit): HTMLElement {
+  const revealBtn = el("button", { type: "button", class: "reveal-btn" }, ["Reveal"]);
+  const errorMsg = el("span", { class: "reveal-error" }, []);
+  revealBtn.addEventListener("click", () => {
+    errorMsg.textContent = "";
+    revealItemInDir(hit.path).catch((err) => {
+      errorMsg.textContent = ` ${String(err)}`;
+    });
+  });
+  return el("li", {}, [
+    el("span", { class: `source-tag source-${hit.source}` }, [sourceLabel(hit.source)]),
+    `${hit.path} `,
+    revealBtn,
+    errorMsg,
+  ]);
+}
+
 export function renderSearchResults(result: LocateResult, resultsBox: HTMLElement) {
   const children: (Node | string)[] = [];
   if (!result.indexed) {
@@ -808,22 +835,19 @@ export function renderSearchResults(result: LocateResult, resultsBox: HTMLElemen
       ]),
     );
   }
+  if (result.truncated) {
+    const total = result.counts.index + result.counts.live + result.counts.archived_filelist;
+    children.push(
+      el("p", { class: "note-not-indexed" }, [
+        `Showing first ${result.results.length} of ${total} matches - refine your search.`,
+      ]),
+    );
+  }
   if (result.results.length === 0) {
     children.push(el("p", {}, ["No matches."]));
   } else {
     children.push(
-      el(
-        "ul",
-        { class: "search-result-list" },
-        result.results.map((hit) =>
-          el("li", {}, [
-            el("span", { class: `source-tag source-${hit.source}` }, [
-              sourceLabel(hit.source),
-            ]),
-            hit.path,
-          ]),
-        ),
-      ),
+      el("ul", { class: "search-result-list" }, result.results.map(buildSearchResultRow)),
     );
   }
   resultsBox.replaceChildren(...children);

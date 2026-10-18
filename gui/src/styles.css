@@ -655,12 +655,34 @@ form button[type="submit"] {
   padding: 0;
   margin: 0;
   font-size: 0.85em;
+  /* Real bug, found by the user: an unselective search could grow
+     this list long enough that you had to scroll the whole page to
+     escape it. Capped server-side too (see backmeup.locate.sh's
+     BMU_LOCATE_LIMIT), but this is what actually keeps the page
+     itself a fixed size regardless of how many results come back. */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .search-result-list li {
   padding: 0.3em 0;
   border-bottom: 1px solid #eee;
   word-break: break-all;
+}
+
+.reveal-btn {
+  border-radius: 6px;
+  border: 1px solid #396cd8;
+  color: #396cd8;
+  background-color: transparent;
+  padding: 0.1em 0.5em;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.reveal-error {
+  color: #c0392b;
+  font-size: 0.9em;
 }
 
 .source-tag {
@@ -731,10 +753,15 @@ form button[type="submit"] {
   .schedule-info button,
   .dashboard-top-bar button,
   .settings-version button,
-  .settings-confirm button {
+  .settings-confirm button,
+  .reveal-btn {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
+  }
+
+  .reveal-error {
+    color: #ff8a73;
   }
 
   .source-commands .remove-btn,

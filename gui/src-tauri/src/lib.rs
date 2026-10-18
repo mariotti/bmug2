@@ -87,9 +87,18 @@ fn get_status(bin_dir: String) -> Result<StatusResult, String> {
     dashboard::get_status(&bin_dir)
 }
 
+// Same bug class already fixed for run_backup_now/run_housekeeping_now
+// above: a plain (non-async) command runs on Tauri's main thread, so a
+// slow backmeup.locate.sh call (an unselective single-letter pattern
+// against a large install) froze the whole app, not just this one
+// panel - confirmed real by the user. No live-progress events needed
+// here, unlike those two, so this is just async + spawn_blocking with
+// nothing emitted.
 #[tauri::command]
-fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, String> {
-    dashboard::search(&bin_dir, &patterns)
+async fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, String> {
+    tauri::async_runtime::spawn_blocking(move || dashboard::search(&bin_dir, &patterns))
+        .await
+        .map_err(|e| format!("background task panicked: {e}"))?
 }
 
 #[tauri::command]
@@ -364,7 +373,15 @@ mod tests {
 
     #[test]
     fn search_propagates_a_clean_error_for_an_unset_up_bin_dir() {
-        assert!(search(bogus_bin_dir("search"), vec!["x".to_string()]).is_err());
+        // search is now async (spawn_blocking, same as run_backup_now/
+        // run_housekeeping_now) - block_on drives it inline without
+        // pulling in a new async-test dependency; it's the same
+        // runtime the production code already depends on.
+        let result = tauri::async_runtime::block_on(search(
+            bogus_bin_dir("search"),
+            vec!["x".to_string()],
+        ));
+        assert!(result.is_err());
     }
 
     #[test]
