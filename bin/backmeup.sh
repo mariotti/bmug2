@@ -157,6 +157,22 @@ set -- ${BMU_CMDRSYNC} ${l_BMU_DRYRUN} ${BMU_OPTRSYNC} --delete-excluded --backu
 #confirmed a real `!pattern` negation line does NOT re-include a file
 #the way git itself would (see docs/EXAMPLES.md).
 if [ "${BMU_GITIGNORE:-yes}" != "no" ]; then
+    #.git itself is never listed IN a .gitignore - git doesn't need
+    #telling to ignore its own metadata directory, it's implicit - so
+    #respecting .gitignore alone never excluded it. Real gap, found by
+    #the user: every project's full git history got mirrored for no
+    #benefit, since the project is already versioned by git itself;
+    #there's nothing a file-level snapshot of .git/ gives you that
+    #git's own history doesn't, and it can be large. Excluded here,
+    #unconditionally whenever gitignore-respecting is on, rather than
+    #something every single project's own .bmuignore has to spell out.
+    #A plain literal pattern (no wildcard) matches only a path
+    #component exactly equal to ".git" - .github (GitHub Actions
+    #config, real project content, must stay backed up) is a
+    #different, longer name and is never touched by this. Listed
+    #before the .gitignore dir-merge filter so it always wins, even if
+    #a project's own .gitignore tried to un-ignore .git.
+    set -- "$@" --exclude='.git/'
     set -- "$@" --filter='dir-merge,- .gitignore'
 fi
 if [ "${BMU_BMUIGNORE:-no}" = "yes" ]; then
