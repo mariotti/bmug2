@@ -47,6 +47,7 @@ pub struct LocateResult {
     pub patterns: Vec<String>,
     pub indexed: bool,
     pub counts: LocateCounts,
+    pub truncated: bool,
     pub results: Vec<LocateHit>,
 }
 
@@ -93,7 +94,7 @@ mod tests {
     // Captured from a real run against a real sandbox (backmeup.sh run
     // twice, backmeup.updatedb.sh run once) - not hand-typed guesses.
     const REAL_STATUS_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","projects":[{"name":"proj1","last_run":"2026-09-10 21:35:44","last_change":"20260910-213544","snapshot_count":1,"mirror_size_kb":4,"history_size_kb":12,"old_layout":false}]}"#;
-    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
+    const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"truncated":false,"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
 
     #[test]
     fn parses_real_status_json() {
@@ -114,6 +115,7 @@ mod tests {
         assert_eq!(parsed.counts.index, 2);
         assert_eq!(parsed.counts.archived_filelist, 0);
         assert_eq!(parsed.counts.live, 1);
+        assert!(!parsed.truncated);
         assert_eq!(parsed.results.len(), 3);
         assert_eq!(parsed.results[0].source, "index");
         assert_eq!(parsed.results[2].source, "live");

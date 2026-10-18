@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   isDaily,
   el,
@@ -62,6 +63,15 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 // "Cannot read properties of undefined (reading 'then')".
 const { pendingForever } = vi.hoisted(() => ({ pendingForever: () => new Promise(() => {}) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(pendingForever) }));
+// Real openUrl/revealItemInDir both go through the Tauri IPC bridge,
+// which doesn't exist in this jsdom test environment - mocked here
+// once for every test, same reasoning as the two mocks above. Both
+// default to a resolved promise (not undefined) since main.ts chains
+// .catch() off revealItemInDir's result.
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(() => Promise.resolve()),
+  revealItemInDir: vi.fn(() => Promise.resolve()),
+}));
 
 function ignoreSettings(overrides: Partial<IgnoreSettings> = {}): IgnoreSettings {
   return {
@@ -902,8 +912,22 @@ describe("buildUpdateAvailableNotice", () => {
 
 describe("renderSearchResults", () => {
   function result(overrides: Partial<LocateResult> = {}): LocateResult {
-    return { patterns: ["x"], indexed: true, counts: { index: 0, live: 0, archived_filelist: 0 }, results: [], ...overrides };
+    return {
+      patterns: ["x"],
+      indexed: true,
+      counts: { index: 0, live: 0, archived_filelist: 0 },
+      truncated: false,
+      results: [],
+      ...overrides,
+    };
   }
+
+  afterEach(() => {
+    // mockClear, not mockReset: keep the factory default (a resolved
+    // promise) other tests outside this block rely on implicitly -
+    // reset would wipe it and make a later fire-and-forget call crash.
+    vi.mocked(revealItemInDir).mockClear();
+  });
 
   it("notes when nothing is indexed", () => {
     const box = el("div", {}, []);
@@ -917,7 +941,7 @@ describe("renderSearchResults", () => {
     expect(box.textContent).toContain("No matches.");
   });
 
-  it("lists each hit with its source tag and path", () => {
+  it("lists each hit with its source tag, path, and a Reveal control", () => {
     const box = el("div", {}, []);
     renderSearchResults(
       result({ results: [{ path: "/sync/proj1/a.txt", source: "live" }, { path: "/archive/proj1/b.txt", source: "archived_filelist" }] }),
@@ -928,6 +952,30 @@ describe("renderSearchResults", () => {
     expect(items[0].textContent).toContain("/sync/proj1/a.txt");
     expect(items[0].querySelector(".source-tag")?.className).toBe("source-tag source-live");
     expect(items[1].querySelector(".source-tag")?.textContent).toBe("archived");
+
+    const revealBtn = items[0].querySelector<HTMLButtonElement>(".reveal-btn")!;
+    revealBtn.dispatchEvent(new Event("click"));
+    expect(revealItemInDir).toHaveBeenCalledWith("/sync/proj1/a.txt");
+  });
+
+  it("does not show a refine-search note when the result set wasn't truncated", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(result({ truncated: false, results: [{ path: "/a.txt", source: "live" }] }), box);
+    expect(box.textContent).not.toContain("refine your search");
+  });
+
+  it("shows a refine-search note, with the true total, when truncated", () => {
+    const box = el("div", {}, []);
+    renderSearchResults(
+      result({
+        truncated: true,
+        counts: { index: 500, live: 11500, archived_filelist: 0 },
+        results: [{ path: "/a.txt", source: "live" }],
+      }),
+      box,
+    );
+    expect(box.textContent).toContain("Showing first 1 of 12000");
+    expect(box.textContent).toContain("refine your search");
   });
 });
 
@@ -941,6 +989,7 @@ describe("runSearch", () => {
       patterns: ["x"],
       indexed: true,
       counts: { index: 1, live: 0, archived_filelist: 0 },
+      truncated: false,
       results: [{ path: "/sync/proj1/a.txt", source: "index" }],
     });
     const box = el("div", {}, []);
