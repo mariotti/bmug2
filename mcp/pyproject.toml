@@ -22,3 +22,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bmug2_mcp"]
+
+[tool.coverage.run]
+source = ["bmug2_mcp"]
+parallel = true
