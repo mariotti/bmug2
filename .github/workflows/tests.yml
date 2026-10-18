@@ -9,17 +9,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install dependencies
-        # plocate provides the mlocate-style updatedb/locate dialect,
-        # exercising the non-GNU branch of the capability detection;
-        # zsh is needed for the _bmu completion file's syntax check
-        # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
-        # backmeup.replicate.sh for real; kcov measures coverage for the
-        # shell engine (bin/) - it's ptrace-based, Linux-only, which is
-        # why this runs only here and not in the macos job below.
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone kcov
       - name: Run test suite with coverage (kcov)
         id: shell_coverage
+        # kcov measures coverage for the shell engine (bin/) - it's
+        # ptrace-based, Linux-only, which is why this runs only here
+        # and not in the macos job below. It's not in Ubuntu 24.04's
+        # (noble) apt archive (confirmed via Launchpad - only landed in
+        # much newer dev releases), so this uses kcov's own official
+        # Debian-based Docker image instead of apt or a from-source
+        # build. Running the whole invocation inside that container
+        # (re-installing the same 3 test-runtime deps there) avoids any
+        # host/container glibc mismatch from extracting just the
+        # binary. Pinned to v43 (matches the version Launchpad has
+        # packaged) rather than :latest, for the same reason every
+        # other tool here is pinned to a specific version.
+        #
+        # Installed inside the container: plocate (the mlocate-style
+        # updatedb/locate dialect, exercising the non-GNU branch of the
+        # capability detection), zsh (the _bmu completion file's syntax
+        # check - macOS ships zsh by default, Ubuntu doesn't), rclone
+        # (exercises backmeup.replicate.sh for real) - the same 3
+        # reasons the old host-level install had, just moved here now
+        # that the suite runs inside this container instead.
+        #
         # kcov traces the whole process tree it launches, so every
         # bin/*.sh script the suite execs as its own subprocess gets
         # instrumented too, not just the top-level `sh` invocation.
@@ -30,7 +42,11 @@ jobs:
         # guessing a path - and the upload step below no-ops instead
         # of failing CI if that search comes up empty.
         run: |
-          kcov --include-path="$(pwd)/bin" kcov-out sh tests/test_backmeup.sh
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$(pwd)":/code -w /code \
+            kcov/kcov:v43 \
+            sh -c "apt-get update -qq && apt-get install -y -qq rsync plocate zsh rclone >/dev/null && kcov --include-path=/code/bin /code/kcov-out sh tests/test_backmeup.sh"
           report=$(find kcov-out -name cobertura.xml | head -1)
           echo "coverage report: ${report:-<none found>}"
           echo "report=$report" >> "$GITHUB_OUTPUT"
