@@ -6,11 +6,16 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell still has no flag (no native coverage tooling
-     for the shell engine, see the project memory on this). -->
-[![codecov (Python)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=python)](https://codecov.io/gh/mariotti/bmug2)
-[![codecov (Rust)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=rust)](https://codecov.io/gh/mariotti/bmug2)
-[![codecov (TypeScript)](https://codecov.io/gh/mariotti/bmug2/branch/main/graph/badge.svg?flag=typescript)](https://codecov.io/gh/mariotti/bmug2)
+     repo-wide %. Shell has no flag (kcov turned out too fragile for
+     this suite - see the project memory on this, deferred for now).
+     Using shields.io's Codecov badge rather than Codecov's own: its
+     own badge always prints the generic word "codecov" regardless of
+     flag, so all 3 looked visually identical with no way to tell
+     which was which at a glance - shields.io bakes the flag name
+     itself into the badge as the visible label. -->
+[![python coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=python&label=python)](https://codecov.io/gh/mariotti/bmug2)
+[![rust coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=rust&label=rust)](https://codecov.io/gh/mariotti/bmug2)
+[![typescript coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=typescript&label=typescript)](https://codecov.io/gh/mariotti/bmug2)
 
 A small collection of POSIX shell scripts that turn `rsync` into a
 personal backup tool with Time-Machine-style history and locate-style
