@@ -462,8 +462,27 @@ function buildSourcesSection(
     ]);
     runRow.style.display = "none";
     runBtn.addEventListener("click", () => void runBackupNow(binDir, source, runBtn, runRow, runLogEl));
+    // Removing a source drops its schedule and ignore settings with no
+    // undo - unlike "Turn off" (just clears a schedule, trivially
+    // re-set), worth a second click rather than one accidental one.
+    // No modal/overlay idiom exists anywhere in this app (see
+    // renderSettings's own comment on that), so this is a plain
+    // in-place button-state swap, not a dialog.
     const removeBtn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
-    removeBtn.addEventListener("click", () => void removeSource(binDir, source));
+    const removeCancelBtn = el("button", { type: "button", class: "remove-cancel-btn" }, ["Cancel"]);
+    removeCancelBtn.style.display = "none";
+    removeBtn.addEventListener("click", () => {
+      if (removeBtn.textContent === "Remove") {
+        removeBtn.textContent = "Really remove?";
+        removeCancelBtn.style.display = "";
+        return;
+      }
+      void removeSource(binDir, source);
+    });
+    removeCancelBtn.addEventListener("click", () => {
+      removeBtn.textContent = "Remove";
+      removeCancelBtn.style.display = "none";
+    });
 
     const scheduleRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, []);
     scheduleRow.style.display = "none";
@@ -505,7 +524,7 @@ function buildSourcesSection(
         bmuignoreRow.style.display = "";
       });
     }
-    commandBtns.push(bmuignoreBtn, removeBtn);
+    commandBtns.push(bmuignoreBtn, removeBtn, removeCancelBtn);
 
     const togglesRow = el("tr", { class: `schedule-edit-row ${groupClass}` }, []);
     if (settings) {
@@ -531,7 +550,13 @@ function buildSourcesSection(
     rows.push(
       el("tr", { class: `source-info-row ${groupClass}` }, [
         el("td", {}, [
-          known?.old_layout ? el("span", { class: "badge-old-layout" }, ["⚠"]) : "",
+          known?.old_layout
+            ? el(
+                "span",
+                { class: "badge-old-layout", title: "Old pre-migration layout - see the note below" },
+                ["⚠"],
+              )
+            : "",
           el("strong", {}, [source.name]),
         ]),
         el("td", {}, [el("code", { class: "source-folder-path", title: source.path }, [source.path])]),
