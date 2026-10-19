@@ -9,7 +9,6 @@ use crate::config;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultPaths {
@@ -29,21 +28,17 @@ pub struct DefaultPaths {
 /// any script) and, once install-dir became independently editable,
 /// had zero effect on where bmug2 actually installs. Dropped from
 /// both sides together rather than just hidden here.
-pub fn default_paths(app: &AppHandle) -> Result<DefaultPaths, String> {
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|e| format!("cannot resolve home directory: {e}"))?;
-    let sync_dir = home.join("Backups").join("rsyncBackup");
+pub fn default_paths(home_dir: &Path) -> DefaultPaths {
+    let sync_dir = home_dir.join("Backups").join("rsyncBackup");
     let backup_dir_str = format!("{}-BP", sync_dir.display());
     let index_dir = sync_dir.join(".locate.dir");
-    let install_dir = home.join("usr").join("bmu");
-    Ok(DefaultPaths {
+    let install_dir = home_dir.join("usr").join("bmu");
+    DefaultPaths {
         sync_dir: sync_dir.display().to_string(),
         backup_dir: backup_dir_str,
         index_dir: index_dir.display().to_string(),
         install_dir: install_dir.display().to_string(),
-    })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,7 +48,7 @@ pub struct InstallOutcome {
 }
 
 /// "Use an existing install": validate, persist, done - no download.
-pub fn use_existing(app: &AppHandle, bin_dir: &str) -> Result<InstallOutcome, String> {
+pub fn use_existing(app_data_dir: &Path, bin_dir: &str) -> Result<InstallOutcome, String> {
     let path = Path::new(bin_dir);
     if !config::looks_installed(path) {
         return Err(format!(
@@ -62,7 +57,7 @@ pub fn use_existing(app: &AppHandle, bin_dir: &str) -> Result<InstallOutcome, St
         ));
     }
     crate::version::check_compatible(path)?;
-    config::save(app, bin_dir)?;
+    config::save(app_data_dir, bin_dir)?;
     Ok(InstallOutcome {
         bin_dir: bin_dir.to_string(),
         log: format!("Using existing install at {bin_dir}."),
@@ -92,11 +87,8 @@ const PRUNE_DIRS: &[&str] = &[
     "Applications",
 ];
 
-pub fn find_existing_installs(app: &AppHandle) -> Vec<String> {
-    match app.path().home_dir() {
-        Ok(home) => find_existing_installs_under(&home),
-        Err(_) => Vec::new(),
-    }
+pub fn find_existing_installs(home_dir: &Path) -> Vec<String> {
+    find_existing_installs_under(home_dir)
 }
 
 // Builds, e.g. for search_root=/home/alex:
@@ -195,17 +187,13 @@ fn find_extracted_dir(extract_dir: &Path) -> Result<PathBuf, String> {
 /// Downloads the latest bmug2 release and runs its install.sh
 /// non-interactively with the four given paths.
 pub fn install_new(
-    app: &AppHandle,
+    app_data_dir: &Path,
     sync_dir: &str,
     backup_dir: &str,
     index_dir: &str,
     install_dir: &str,
 ) -> Result<InstallOutcome, String> {
-    let base_tmp = app
-        .path()
-        .temp_dir()
-        .map_err(|e| format!("cannot resolve temp directory: {e}"))?;
-    let work_dir = base_tmp.join(format!("bmug2-install-{}", std::process::id()));
+    let work_dir = std::env::temp_dir().join(format!("bmug2-install-{}", std::process::id()));
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
 
@@ -213,7 +201,7 @@ pub fn install_new(
     let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
 
     let outcome = result?;
-    config::save(app, install_dir_bin(install_dir).as_str())?;
+    config::save(app_data_dir, install_dir_bin(install_dir).as_str())?;
     Ok(outcome)
 }
 
@@ -306,14 +294,10 @@ pub fn check_for_update(bin_dir: &Path) -> Result<UpdateCheck, String> {
 /// Must only ever be invoked after the caller has already obtained an
 /// explicit, separate user confirmation - this function itself performs
 /// no confirmation of its own and is never called automatically.
-pub fn apply_update(app: &AppHandle, bin_dir: &Path) -> Result<InstallOutcome, String> {
+pub fn apply_update(app_data_dir: &Path, bin_dir: &Path) -> Result<InstallOutcome, String> {
     let dirs = read_installed_dirs(bin_dir)?;
 
-    let base_tmp = app
-        .path()
-        .temp_dir()
-        .map_err(|e| format!("cannot resolve temp directory: {e}"))?;
-    let work_dir = base_tmp.join(format!("bmug2-update-{}", std::process::id()));
+    let work_dir = std::env::temp_dir().join(format!("bmug2-update-{}", std::process::id()));
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
 
@@ -327,7 +311,7 @@ pub fn apply_update(app: &AppHandle, bin_dir: &Path) -> Result<InstallOutcome, S
     let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
 
     let outcome = result?;
-    config::save(app, install_dir_bin(&dirs.install_dir).as_str())?;
+    config::save(app_data_dir, install_dir_bin(&dirs.install_dir).as_str())?;
     Ok(outcome)
 }
 
@@ -691,15 +675,12 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
-    /// use_existing itself needs a real AppHandle (for config::save),
-    /// which nothing in this file's tests constructs - so this exercises
-    /// the exact pre-save sequence use_existing runs, in order, against
-    /// a real-shaped old install: looks_installed (true, since both
-    /// files exist) followed by version::check_compatible (must reject
-    /// it). This is the regression test for the original bug that
-    /// started this feature - picking an old install used to sail
-    /// straight through to a confusing JSON-parse failure instead of
-    /// stopping here with a clear message.
+    /// Regression test for the original bug that started this feature -
+    /// picking an old install used to sail straight through to a
+    /// confusing JSON-parse failure instead of stopping here with a
+    /// clear message. Now calls use_existing directly (it no longer
+    /// needs an AppHandle - see the config.rs decoupling) rather than
+    /// just reconstructing its pre-save sequence by hand.
     #[test]
     fn an_old_but_real_install_is_rejected_before_it_would_be_saved() {
         let dir = std::env::temp_dir().join(format!("bmug2-old-install-test-{}", std::process::id()));
@@ -711,16 +692,84 @@ mod tests {
             "BMU_DIRRSYNC=\"/tmp/x\"\nBMU_VERSION=\"2.3.0\"\n",
         )
         .unwrap();
+        let app_data_dir =
+            std::env::temp_dir().join(format!("bmug2-old-install-appdata-{}", std::process::id()));
+        std::fs::remove_dir_all(&app_data_dir).ok();
 
-        assert!(config::looks_installed(&dir), "test fixture should look installed");
-        let err = crate::version::check_compatible(&dir).unwrap_err();
+        let err = use_existing(&app_data_dir, dir.to_str().unwrap()).unwrap_err();
         assert!(err.contains("2.3.0"), "message should name the found version: {err}");
         assert!(
             err.contains(&crate::version::MIN_COMPATIBLE_VERSION.0.to_string()),
             "message should name the required major version: {err}"
         );
+        assert!(config::load(&app_data_dir).is_none(), "a rejected install must not be saved");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_real_compatible_install_is_accepted_and_saved() {
+        let dir = std::env::temp_dir().join(format!("bmug2-existing-install-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("backmeup.sh"), "").unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            format!(
+                "BMU_DIRRSYNC=\"/tmp/x\"\nBMU_VERSION=\"{}.{}.0\"\n",
+                crate::version::MIN_COMPATIBLE_VERSION.0,
+                crate::version::MIN_COMPATIBLE_VERSION.1
+            ),
+        )
+        .unwrap();
+        let app_data_dir =
+            std::env::temp_dir().join(format!("bmug2-existing-install-appdata-{}", std::process::id()));
+        std::fs::remove_dir_all(&app_data_dir).ok();
+
+        let outcome = use_existing(&app_data_dir, dir.to_str().unwrap()).unwrap();
+        assert_eq!(outcome.bin_dir, dir.to_str().unwrap());
+        let cfg = config::load(&app_data_dir).expect("use_existing should have saved a config");
+        assert_eq!(cfg.bin_dir, dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&app_data_dir).ok();
+    }
+
+    #[test]
+    fn use_existing_rejects_a_dir_that_does_not_look_installed() {
+        let dir = std::env::temp_dir().join(format!("bmug2-not-installed-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let app_data_dir =
+            std::env::temp_dir().join(format!("bmug2-not-installed-appdata-{}", std::process::id()));
+
+        let err = use_existing(&app_data_dir, dir.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("doesn't look like a bmug2 install"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_paths_derives_the_standard_layout_from_home() {
+        let home = Path::new("/home/alex");
+        let defaults = default_paths(home);
+        assert_eq!(defaults.sync_dir, "/home/alex/Backups/rsyncBackup");
+        assert_eq!(defaults.backup_dir, "/home/alex/Backups/rsyncBackup-BP");
+        assert_eq!(defaults.index_dir, "/home/alex/Backups/rsyncBackup/.locate.dir");
+        assert_eq!(defaults.install_dir, "/home/alex/usr/bmu");
+    }
+
+    #[test]
+    fn find_existing_installs_delegates_to_the_real_search() {
+        let base = std::env::temp_dir().join(format!("bmug2-suggest-delegate-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("usr/bmu/bin")).unwrap();
+        std::fs::write(base.join("usr/bmu/bin/backmeup.sh"), "").unwrap();
+        std::fs::write(base.join("usr/bmu/bin/backmeup.setup.sh"), "").unwrap();
+
+        assert_eq!(
+            find_existing_installs(&base),
+            vec![base.join("usr/bmu/bin").display().to_string()],
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

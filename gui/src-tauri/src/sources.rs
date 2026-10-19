@@ -8,7 +8,6 @@
 use crate::config::{self, BackupSource};
 use crate::schedule;
 use std::path::Path;
-use tauri::AppHandle;
 
 // Reconciles each source's schedule field against the installed
 // launchd/systemd artifact (the real source of truth - see
@@ -17,8 +16,8 @@ use tauri::AppHandle;
 // app) and persisting the correction. A raw config::load without
 // reconciliation would be cheaper but could show a schedule as "on"
 // when nothing is actually installed to run it.
-pub fn list(app: &AppHandle) -> Vec<BackupSource> {
-    let mut sources = config::load(app).map(|cfg| cfg.sources).unwrap_or_default();
+pub fn list(app_data_dir: &Path) -> Vec<BackupSource> {
+    let mut sources = config::load(app_data_dir).map(|cfg| cfg.sources).unwrap_or_default();
     let mut changed = false;
     for source in sources.iter_mut() {
         let actual = schedule::status(&schedule::source_label(&source.path), &schedule::source_file_hint(&source.path));
@@ -28,21 +27,21 @@ pub fn list(app: &AppHandle) -> Vec<BackupSource> {
         }
     }
     if changed {
-        let _ = config::save_sources(app, &sources);
+        let _ = config::save_sources(app_data_dir, &sources);
     }
     sources
 }
 
-pub fn add(app: &AppHandle, path: &str, name: Option<&str>) -> Result<BackupSource, String> {
-    let mut sources = list(app);
+pub fn add(app_data_dir: &Path, path: &str, name: Option<&str>) -> Result<BackupSource, String> {
+    let mut sources = list(app_data_dir);
     let source = build_source(&sources, path, name)?;
     sources.push(source.clone());
-    config::save_sources(app, &sources)?;
+    config::save_sources(app_data_dir, &sources)?;
     Ok(source)
 }
 
-pub fn remove(app: &AppHandle, path: &str) -> Result<(), String> {
-    let mut sources = list(app);
+pub fn remove(app_data_dir: &Path, path: &str) -> Result<(), String> {
+    let mut sources = list(app_data_dir);
     let before = sources.len();
     // Best-effort: a launchctl/systemctl hiccup shouldn't block the
     // user from removing a folder they no longer want tracked - an
@@ -54,7 +53,7 @@ pub fn remove(app: &AppHandle, path: &str) -> Result<(), String> {
     if sources.len() == before {
         return Err(format!("no backup source tracked at {path}"));
     }
-    config::save_sources(app, &sources)
+    config::save_sources(app_data_dir, &sources)
 }
 
 // AppHandle-independent by design, mirroring install.rs's
@@ -147,5 +146,69 @@ mod tests {
         let err = build_source(&existing, dir.to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("already tracked"), "{err}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn tmp_app_data_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bmug2-sources-appdata-{label}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        dir
+    }
+
+    #[test]
+    fn list_is_empty_before_anything_is_added() {
+        let app_data_dir = tmp_app_data_dir("list-empty");
+        assert_eq!(list(&app_data_dir), vec![]);
+    }
+
+    #[test]
+    fn add_then_list_shows_it() {
+        let app_data_dir = tmp_app_data_dir("add-list");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+        let source_dir = tmp_dir("add-list-source");
+
+        let added = add(&app_data_dir, source_dir.to_str().unwrap(), Some("My Project")).unwrap();
+        assert_eq!(added.name, "My Project");
+        assert_eq!(list(&app_data_dir), vec![added]);
+
+        std::fs::remove_dir_all(&app_data_dir).ok();
+        std::fs::remove_dir_all(&source_dir).ok();
+    }
+
+    #[test]
+    fn add_rejects_a_path_already_tracked() {
+        let app_data_dir = tmp_app_data_dir("add-dup");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+        let source_dir = tmp_dir("add-dup-source");
+
+        add(&app_data_dir, source_dir.to_str().unwrap(), None).unwrap();
+        let err = add(&app_data_dir, source_dir.to_str().unwrap(), None).unwrap_err();
+        assert!(err.contains("already tracked"), "{err}");
+
+        std::fs::remove_dir_all(&app_data_dir).ok();
+        std::fs::remove_dir_all(&source_dir).ok();
+    }
+
+    #[test]
+    fn remove_drops_it_from_the_list() {
+        let app_data_dir = tmp_app_data_dir("remove");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+        let source_dir = tmp_dir("remove-source");
+
+        add(&app_data_dir, source_dir.to_str().unwrap(), None).unwrap();
+        remove(&app_data_dir, source_dir.to_str().unwrap()).unwrap();
+        assert_eq!(list(&app_data_dir), vec![]);
+
+        std::fs::remove_dir_all(&app_data_dir).ok();
+        std::fs::remove_dir_all(&source_dir).ok();
+    }
+
+    #[test]
+    fn remove_of_an_untracked_path_errors_clearly() {
+        let app_data_dir = tmp_app_data_dir("remove-untracked");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+
+        let err = remove(&app_data_dir, "/no/such/source").unwrap_err();
+        assert!(err.contains("/no/such/source"));
+        std::fs::remove_dir_all(&app_data_dir).ok();
     }
 }
