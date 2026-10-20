@@ -217,6 +217,146 @@ pub fn create_folder(parent: &str, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    // detect_proton_drive() tries the bare "proton-drive" name first,
+    // which Command::new resolves via PATH - so prepending a tmp dir
+    // holding a fake, same-named executable to PATH is enough to
+    // redirect every function in this file to it, with zero changes
+    // to the real code. Mutates the process-wide PATH/env vars, same
+    // category of global-state hazard replication.rs's own
+    // fake_configure_script already documents for this same test
+    // binary (hence this crate's `cargo test -- --test-threads=1` in
+    // CI) - not a new risk, the same accepted one, just via PATH/env
+    // instead of a shared file path. Drop always restores both.
+    struct FakeProtonDrive {
+        dir: PathBuf,
+        old_path: String,
+    }
+
+    impl FakeProtonDrive {
+        fn new(script: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("bmug2-fake-proton-{}", std::process::id()));
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::create_dir_all(&dir).unwrap();
+            let bin_path = dir.join("proton-drive");
+            std::fs::write(&bin_path, script).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin_path, perms).unwrap();
+
+            let old_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{old_path}", dir.display()));
+            FakeProtonDrive { dir, old_path }
+        }
+    }
+
+    impl Drop for FakeProtonDrive {
+        fn drop(&mut self) {
+            std::env::set_var("PATH", &self.old_path);
+            std::fs::remove_dir_all(&self.dir).ok();
+            for var in ["FAKE_PROTON_INFO_OK", "FAKE_PROTON_LIST_JSON", "FAKE_PROTON_CREATE_OK"] {
+                std::env::remove_var(var);
+            }
+        }
+    }
+
+    // Responds to every call this file ever makes: --version (for
+    // detect_proton_drive), filesystem info/list/create-folder (for
+    // signed_in/list_folder/create_folder), each independently
+    // controlled by its own env var so one script covers every test.
+    const FAKE_PROTON_SCRIPT: &str = r#"#!/bin/sh
+case "$1" in
+  --version) exit 0 ;;
+esac
+if [ "$1" = "filesystem" ]; then
+  case "$2" in
+    info)
+      if [ "$FAKE_PROTON_INFO_OK" = "1" ]; then exit 0; else echo "You need to login first" >&2; exit 1; fi
+      ;;
+    list)
+      if [ -n "$FAKE_PROTON_LIST_JSON" ]; then echo "$FAKE_PROTON_LIST_JSON"; exit 0; else echo "You need to login first" >&2; exit 1; fi
+      ;;
+    create-folder)
+      if [ "$FAKE_PROTON_CREATE_OK" = "1" ]; then exit 0; else echo "You need to login first" >&2; exit 1; fi
+      ;;
+  esac
+fi
+exit 1
+"#;
+
+    #[test]
+    fn detect_and_available_are_true_when_a_working_binary_is_on_path() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        assert!(available());
+    }
+
+    // Deliberately no "available()/login() is false/errors with no
+    // binary present" test: detect_proton_drive()'s fallback candidates
+    // include hardcoded absolute paths (e.g. /usr/local/bin/proton-drive)
+    // that can genuinely exist on a real dev machine (confirmed on the
+    // one this was written on) regardless of PATH - making "not found"
+    // unreliable to assert rather than something this file's own logic
+    // controls.
+
+    #[test]
+    fn signed_in_reflects_the_fake_binarys_info_call() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        assert!(!signed_in());
+        std::env::set_var("FAKE_PROTON_INFO_OK", "1");
+        assert!(signed_in());
+    }
+
+    #[test]
+    fn login_short_circuits_when_already_signed_in() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        std::env::set_var("FAKE_PROTON_INFO_OK", "1");
+        // If login() didn't short-circuit, it would call "auth login"
+        // next, which this fake script doesn't handle (falls through
+        // to `exit 1`) - so this only passes if signed_in()'s own
+        // check was enough to return Ok without going further.
+        assert!(login().is_ok());
+    }
+
+    #[test]
+    fn list_folder_parses_the_fake_binarys_real_shaped_output() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        std::env::set_var("FAKE_PROTON_LIST_JSON", REAL_SHAPED_RESPONSE);
+        let entries = list_folder("/my-files").unwrap();
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn list_folder_surfaces_the_not_signed_in_message() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        let err = list_folder("/my-files").unwrap_err();
+        assert_eq!(err, NOT_SIGNED_IN_MESSAGE);
+    }
+
+    #[test]
+    fn create_folder_skips_the_real_call_when_it_already_exists() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        std::env::set_var("FAKE_PROTON_INFO_OK", "1");
+        // FAKE_PROTON_CREATE_OK is deliberately left unset - if
+        // create_folder didn't skip the real create-folder call after
+        // the existence check succeeds, this would fail instead.
+        assert!(create_folder("/my-files", "Taxes").is_ok());
+    }
+
+    #[test]
+    fn create_folder_creates_it_for_real_when_it_does_not_exist_yet() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        std::env::set_var("FAKE_PROTON_CREATE_OK", "1");
+        assert!(create_folder("/my-files", "Taxes").is_ok());
+    }
+
+    #[test]
+    fn create_folder_surfaces_the_not_signed_in_message() {
+        let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
+        let err = create_folder("/my-files", "Taxes").unwrap_err();
+        assert_eq!(err, NOT_SIGNED_IN_MESSAGE);
+    }
 
     // Exact shape confirmed by live probing against the real CLI
     // (v0.8.0) - see proton_browse.rs's own module doc / the plan this
