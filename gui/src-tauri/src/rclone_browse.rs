@@ -350,6 +350,144 @@ pub fn create_drive_remote(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    // Same technique as proton_browse.rs's own FakeProtonDrive -
+    // detect_rclone() tries the bare "rclone" name first (PATH
+    // lookup), so a same-named fake executable in a prepended tmp
+    // PATH entry redirects every function here with zero changes to
+    // the real code. Mutates process-wide PATH/env vars - same
+    // accepted hazard class as replication.rs's own
+    // fake_configure_script (hence this crate's
+    // `cargo test -- --test-threads=1` in CI), not a new one.
+    struct FakeRclone {
+        dir: PathBuf,
+        old_path: String,
+    }
+
+    impl FakeRclone {
+        fn new(script: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("bmug2-fake-rclone-{}", std::process::id()));
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::create_dir_all(&dir).unwrap();
+            let bin_path = dir.join("rclone");
+            std::fs::write(&bin_path, script).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin_path, perms).unwrap();
+
+            let old_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{old_path}", dir.display()));
+            FakeRclone { dir, old_path }
+        }
+    }
+
+    impl Drop for FakeRclone {
+        fn drop(&mut self) {
+            std::env::set_var("PATH", &self.old_path);
+            std::fs::remove_dir_all(&self.dir).ok();
+            for var in ["FAKE_RCLONE_REMOTES_JSON", "FAKE_RCLONE_LSJSON", "FAKE_RCLONE_MKDIR_OK"] {
+                std::env::remove_var(var);
+            }
+        }
+    }
+
+    // Responds to every call this file's non-interactive functions
+    // make: version (detect_rclone), listremotes --json
+    // (list_drive_remotes/create_drive_remote's collision check),
+    // lsjson (list_folder), mkdir (create_folder). Deliberately does
+    // NOT handle `config create`/`config update --continue` - this
+    // file's real multi-step OAuth state machine (run_create_flow)
+    // stays behind its own #[ignore]d real test, same as before; see
+    // the project memory on why that one wasn't faked.
+    const FAKE_RCLONE_SCRIPT: &str = r#"#!/bin/sh
+case "$1" in
+  version) exit 0 ;;
+  listremotes)
+    echo "$FAKE_RCLONE_REMOTES_JSON"
+    exit 0
+    ;;
+  lsjson)
+    if [ -n "$FAKE_RCLONE_LSJSON" ]; then
+      echo "$FAKE_RCLONE_LSJSON"
+      exit 0
+    else
+      echo "2026/10/20 00:00:00 NOTICE: mydrive: shared client_id notice" >&2
+      echo "2026/10/20 00:00:00 CRITICAL: couldn't fetch token: invalid_grant" >&2
+      exit 1
+    fi
+    ;;
+  mkdir)
+    if [ "$FAKE_RCLONE_MKDIR_OK" = "1" ]; then exit 0; else echo "mkdir failed" >&2; exit 1; fi
+    ;;
+esac
+exit 1
+"#;
+
+    const FAKE_REMOTES_JSON: &str = r#"[
+{"name":"mydrive","type":"drive","source":"file","description":""},
+{"name":"mys3","type":"s3","source":"file","description":""}
+]"#;
+
+    #[test]
+    fn detect_and_available_are_true_when_a_working_binary_is_on_path() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        assert!(available());
+    }
+
+    #[test]
+    fn list_drive_remotes_filters_to_drive_type_via_the_real_function() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_REMOTES_JSON", FAKE_REMOTES_JSON);
+        assert_eq!(list_drive_remotes().unwrap(), vec!["mydrive".to_string()]);
+    }
+
+    #[test]
+    fn list_folder_parses_the_fake_binarys_real_shaped_output() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_LSJSON", LSJSON_RESPONSE);
+        let entries = list_folder("mydrive:").unwrap();
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn list_folder_strips_the_notice_but_keeps_the_real_error() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        // FAKE_RCLONE_LSJSON deliberately left unset - the fake script
+        // then fails with a NOTICE-prefixed stderr, exercising the
+        // real clean_stderr integration end to end, not just the
+        // pure function in isolation.
+        let err = list_folder("mydrive:").unwrap_err();
+        assert!(!err.contains("shared client_id"), "{err}");
+        assert!(err.contains("couldn't fetch token"), "{err}");
+    }
+
+    #[test]
+    fn create_folder_succeeds_when_the_fake_binary_reports_success() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_MKDIR_OK", "1");
+        assert!(create_folder("mydrive:Taxes").is_ok());
+    }
+
+    #[test]
+    fn create_folder_surfaces_a_real_failure() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        let err = create_folder("mydrive:Taxes").unwrap_err();
+        assert!(err.contains("mkdir failed"), "{err}");
+    }
+
+    #[test]
+    fn create_drive_remote_rejects_a_name_already_in_use_before_touching_the_real_setup_flow() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_REMOTES_JSON", FAKE_REMOTES_JSON);
+        // The fake script has no "config create"/"config update" case
+        // at all - if this didn't reject the collision before ever
+        // reaching run_create_flow, the test would fail with a script
+        // error instead of this specific message.
+        let err = create_drive_remote("mydrive").unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+    }
 
     // Exact shape confirmed by probing `rclone listremotes --json`
     // against a throwaway config file with two placeholder remotes
