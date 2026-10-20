@@ -20,9 +20,23 @@ use run::RunOutput;
 use serde::Deserialize;
 use tauri::{AppHandle, LogicalSize, Manager};
 
+// config.rs/sources.rs/install.rs no longer touch AppHandle at all -
+// they take a plain app_data_dir/home_dir path instead, so their
+// logic is testable with an ordinary tmp dir rather than needing
+// Tauri's test machinery (which has no safe way to sandbox
+// app_data_dir() - see the project notes on why MockRuntime was
+// ruled out for this). This is the one place that resolution happens
+// for real, mirroring config_path's former error message exactly.
+fn resolve_app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("cannot resolve app data directory: {e}"))
+}
+
 #[tauri::command]
 fn check_existing_install(app: AppHandle) -> Option<String> {
-    let cfg = config::load(&app)?;
+    let app_data_dir = resolve_app_data_dir(&app).ok()?;
+    let cfg = config::load(&app_data_dir)?;
     let path = std::path::Path::new(&cfg.bin_dir);
     // An incompatible saved install is treated the same as a missing
     // one (falls through to the setup screen) rather than proceeding
@@ -37,12 +51,16 @@ fn check_existing_install(app: AppHandle) -> Option<String> {
 
 #[tauri::command]
 fn get_default_paths(app: AppHandle) -> Result<DefaultPaths, String> {
-    install::default_paths(&app)
+    let home = app.path().home_dir().map_err(|e| format!("cannot resolve home directory: {e}"))?;
+    Ok(install::default_paths(&home))
 }
 
 #[tauri::command]
 fn find_existing_installs(app: AppHandle) -> Vec<String> {
-    install::find_existing_installs(&app)
+    match app.path().home_dir() {
+        Ok(home) => install::find_existing_installs(&home),
+        Err(_) => Vec::new(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,14 +79,15 @@ enum InstallRequest {
 
 #[tauri::command]
 fn install_bmug2(app: AppHandle, request: InstallRequest) -> Result<InstallOutcome, String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
     match request {
         InstallRequest::New {
             sync_dir,
             backup_dir,
             index_dir,
             install_dir,
-        } => install::install_new(&app, &sync_dir, &backup_dir, &index_dir, &install_dir),
-        InstallRequest::Existing { bin_dir } => install::use_existing(&app, &bin_dir),
+        } => install::install_new(&app_data_dir, &sync_dir, &backup_dir, &index_dir, &install_dir),
+        InstallRequest::Existing { bin_dir } => install::use_existing(&app_data_dir, &bin_dir),
     }
 }
 
@@ -79,7 +98,8 @@ fn check_for_update(bin_dir: String) -> Result<UpdateCheck, String> {
 
 #[tauri::command]
 fn apply_update(app: AppHandle, bin_dir: String) -> Result<InstallOutcome, String> {
-    install::apply_update(&app, std::path::Path::new(&bin_dir))
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    install::apply_update(&app_data_dir, std::path::Path::new(&bin_dir))
 }
 
 #[tauri::command]
@@ -103,17 +123,22 @@ async fn search(bin_dir: String, patterns: Vec<String>) -> Result<LocateResult, 
 
 #[tauri::command]
 fn list_sources(app: AppHandle) -> Vec<BackupSource> {
-    sources::list(&app)
+    match resolve_app_data_dir(&app) {
+        Ok(dir) => sources::list(&dir),
+        Err(_) => Vec::new(),
+    }
 }
 
 #[tauri::command]
 fn add_source(app: AppHandle, path: String, name: Option<String>) -> Result<BackupSource, String> {
-    sources::add(&app, &path, name.as_deref())
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    sources::add(&app_data_dir, &path, name.as_deref())
 }
 
 #[tauri::command]
 fn remove_source(app: AppHandle, path: String) -> Result<(), String> {
-    sources::remove(&app, &path)
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    sources::remove(&app_data_dir, &path)
 }
 
 // A plain (non-async) #[tauri::command] runs on Tauri's main thread - run_step's
@@ -155,17 +180,19 @@ fn set_source_schedule(
     source_path: String,
     schedule: Schedule,
 ) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
     let label = schedule::source_label(&source_path);
     let hint = schedule::source_file_hint(&source_path);
     let wrapper = schedule::build_source_wrapper(&bin_dir, &source_path);
     schedule::install(&label, &wrapper, &schedule, &format!("bmug2 backup ({source_path})"), &hint)?;
-    config::set_source_schedule(&app, &source_path, Some(schedule))
+    config::set_source_schedule(&app_data_dir, &source_path, Some(schedule))
 }
 
 #[tauri::command]
 fn clear_source_schedule(app: AppHandle, source_path: String) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
     schedule::uninstall(&schedule::source_label(&source_path), &schedule::source_file_hint(&source_path))?;
-    config::set_source_schedule(&app, &source_path, None)
+    config::set_source_schedule(&app_data_dir, &source_path, None)
 }
 
 #[tauri::command]
@@ -175,6 +202,7 @@ fn get_housekeeping_schedule() -> Option<Schedule> {
 
 #[tauri::command]
 fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, schedule: Schedule) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
     let wrapper = schedule::build_housekeeping_wrapper(&bin_dir);
     schedule::install(
         schedule::HOUSEKEEPING_LABEL,
@@ -183,7 +211,7 @@ fn set_housekeeping_schedule(app: AppHandle, bin_dir: String, schedule: Schedule
         "bmug2 housekeeping (updatedb/replicate)",
         "",
     )?;
-    config::set_housekeeping_schedule(&app, Some(schedule))
+    config::set_housekeeping_schedule(&app_data_dir, Some(schedule))
 }
 
 #[tauri::command]
@@ -193,8 +221,9 @@ fn has_full_disk_access() -> bool {
 
 #[tauri::command]
 fn clear_housekeeping_schedule(app: AppHandle) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
     schedule::uninstall(schedule::HOUSEKEEPING_LABEL, "")?;
-    config::set_housekeeping_schedule(&app, None)
+    config::set_housekeeping_schedule(&app_data_dir, None)
 }
 
 #[tauri::command]

@@ -4,7 +4,6 @@
 // stance already established for the install flow itself.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
 
 // Untagged so an already-persisted {"hour":N,"minute":N} value (from
 // before Interval existed) keeps parsing as Daily without a "kind"
@@ -42,35 +41,33 @@ pub struct Config {
     pub housekeeping_schedule: Option<Schedule>,
 }
 
-fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("cannot resolve app data directory: {e}"))?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("cannot create app data directory {}: {e}", dir.display()))?;
-    Ok(dir.join("config.json"))
+fn config_path(app_data_dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(app_data_dir)
+        .map_err(|e| format!("cannot create app data directory {}: {e}", app_data_dir.display()))?;
+    Ok(app_data_dir.join("config.json"))
 }
 
-// Collapses three different causes (no config file yet, app data dir
-// unresolvable, or a corrupt/unparseable config.json) into one None -
-// deliberately: every caller's response to "no usable saved config" is
-// identical (fall back to the setup screen), so there's nothing a
-// caller could do differently by distinguishing them.
-pub fn load(app: &AppHandle) -> Option<Config> {
-    let path = config_path(app).ok()?;
+// Collapses two different causes (no config file yet, or a corrupt/
+// unparseable config.json) into one None - deliberately: every
+// caller's response to "no usable saved config" is identical (fall
+// back to the setup screen), so there's nothing a caller could do
+// differently by distinguishing them. (A third cause - app_data_dir
+// itself unresolvable - is now handled by the caller, since resolving
+// it is no longer this file's job at all.)
+pub fn load(app_data_dir: &Path) -> Option<Config> {
+    let path = config_path(app_data_dir).ok()?;
     let data = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&data).ok()
 }
 
-pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
+pub fn save(app_data_dir: &Path, bin_dir: &str) -> Result<(), String> {
     // Preserves any already-saved sources/schedules rather than wiping
     // them - this runs on both first install and "use an existing
     // install", and a user re-pointing at the same bin_dir shouldn't
     // lose their tracked backup sources or schedules.
-    let existing = load(app);
+    let existing = load(app_data_dir);
     write(
-        app,
+        app_data_dir,
         &Config {
             bin_dir: bin_dir.to_string(),
             sources: existing.as_ref().map(|c| c.sources.clone()).unwrap_or_default(),
@@ -85,10 +82,10 @@ pub fn save(app: &AppHandle, bin_dir: &str) -> Result<(), String> {
 // already run (the frontend has no UI path to it before that), so a
 // missing config here means something upstream is broken, not a
 // state this needs to paper over.
-pub fn save_sources(app: &AppHandle, sources: &[BackupSource]) -> Result<(), String> {
-    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+pub fn save_sources(app_data_dir: &Path, sources: &[BackupSource]) -> Result<(), String> {
+    let mut cfg = load(app_data_dir).ok_or("no bmug2 install configured yet")?;
     cfg.sources = sources.to_vec();
-    write(app, &cfg)
+    write(app_data_dir, &cfg)
 }
 
 // Mirrors save_sources's shape: load, mutate one slice, write back.
@@ -97,28 +94,28 @@ pub fn save_sources(app: &AppHandle, sources: &[BackupSource]) -> Result<(), Str
 // before calling this - this function only updates the UI-convenience
 // mirror.
 pub fn set_source_schedule(
-    app: &AppHandle,
+    app_data_dir: &Path,
     source_path: &str,
     schedule: Option<Schedule>,
 ) -> Result<(), String> {
-    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+    let mut cfg = load(app_data_dir).ok_or("no bmug2 install configured yet")?;
     let source = cfg
         .sources
         .iter_mut()
         .find(|s| s.path == source_path)
         .ok_or_else(|| format!("no backup source tracked at {source_path}"))?;
     source.schedule = schedule;
-    write(app, &cfg)
+    write(app_data_dir, &cfg)
 }
 
-pub fn set_housekeeping_schedule(app: &AppHandle, schedule: Option<Schedule>) -> Result<(), String> {
-    let mut cfg = load(app).ok_or("no bmug2 install configured yet")?;
+pub fn set_housekeeping_schedule(app_data_dir: &Path, schedule: Option<Schedule>) -> Result<(), String> {
+    let mut cfg = load(app_data_dir).ok_or("no bmug2 install configured yet")?;
     cfg.housekeeping_schedule = schedule;
-    write(app, &cfg)
+    write(app_data_dir, &cfg)
 }
 
-fn write(app: &AppHandle, cfg: &Config) -> Result<(), String> {
-    let path = config_path(app)?;
+fn write(app_data_dir: &Path, cfg: &Config) -> Result<(), String> {
+    let path = config_path(app_data_dir)?;
     let data = serde_json::to_string_pretty(cfg)
         .map_err(|e| format!("cannot serialize config: {e}"))?;
     std::fs::write(&path, data)
@@ -136,6 +133,100 @@ pub fn looks_installed(bin_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // One fresh tmp dir per test, named with the test's own label plus
+    // the process id - same convention schedule.rs/install.rs already
+    // use everywhere, so parallel test threads never collide.
+    fn tmp_app_data_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bmug2-config-test-{label}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        dir
+    }
+
+    #[test]
+    fn load_returns_none_when_nothing_was_ever_saved() {
+        let dir = tmp_app_data_dir("load-none");
+        assert!(load(&dir).is_none());
+    }
+
+    #[test]
+    fn save_then_load_round_trips_the_bin_dir() {
+        let dir = tmp_app_data_dir("save-load");
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.bin_dir, "/usr/bmu/bin");
+        assert_eq!(cfg.sources, vec![]);
+        assert_eq!(cfg.housekeeping_schedule, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_preserves_already_saved_sources_and_schedule() {
+        let dir = tmp_app_data_dir("save-preserves");
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None };
+        save_sources(&dir, std::slice::from_ref(&source)).unwrap();
+        set_housekeeping_schedule(&dir, Some(Schedule::Daily { hour: 3, minute: 0 })).unwrap();
+
+        // Re-pointing at the same bin_dir (e.g. re-running "use existing
+        // install") must not wipe what was already tracked.
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.sources, vec![source]);
+        assert_eq!(cfg.housekeeping_schedule, Some(Schedule::Daily { hour: 3, minute: 0 }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_sources_without_a_prior_save_errors_clearly() {
+        let dir = tmp_app_data_dir("sources-no-install");
+        let err = save_sources(&dir, &[]).unwrap_err();
+        assert!(err.contains("no bmug2 install configured yet"));
+    }
+
+    #[test]
+    fn set_source_schedule_updates_only_the_matching_source() {
+        let dir = tmp_app_data_dir("set-source-schedule");
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let a = BackupSource { name: "a".into(), path: "/home/a".into(), schedule: None };
+        let b = BackupSource { name: "b".into(), path: "/home/b".into(), schedule: None };
+        save_sources(&dir, &[a, b]).unwrap();
+
+        set_source_schedule(&dir, "/home/b", Some(Schedule::Interval { minutes: 30 })).unwrap();
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.sources[0].schedule, None);
+        assert_eq!(cfg.sources[1].schedule, Some(Schedule::Interval { minutes: 30 }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_source_schedule_for_an_untracked_path_errors_clearly() {
+        let dir = tmp_app_data_dir("set-source-schedule-untracked");
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let err = set_source_schedule(&dir, "/no/such/source", None).unwrap_err();
+        assert!(err.contains("/no/such/source"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_real_multi_step_journey_through_this_files_whole_surface() {
+        let dir = tmp_app_data_dir("journey");
+        save(&dir, "/usr/bmu/bin").unwrap();
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None };
+        save_sources(&dir, &[source]).unwrap();
+        set_source_schedule(&dir, "/home/proj", Some(Schedule::Daily { hour: 4, minute: 30 })).unwrap();
+        set_housekeeping_schedule(&dir, Some(Schedule::Interval { minutes: 60 })).unwrap();
+
+        let cfg = load(&dir).unwrap();
+        assert_eq!(cfg.bin_dir, "/usr/bmu/bin");
+        assert_eq!(cfg.sources[0].path, "/home/proj");
+        assert_eq!(cfg.sources[0].schedule, Some(Schedule::Daily { hour: 4, minute: 30 }));
+        assert_eq!(cfg.housekeeping_schedule, Some(Schedule::Interval { minutes: 60 }));
+
+        set_housekeeping_schedule(&dir, None).unwrap();
+        assert_eq!(load(&dir).unwrap().housekeeping_schedule, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn looks_installed_requires_both_files() {
