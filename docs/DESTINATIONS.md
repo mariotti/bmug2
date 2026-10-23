@@ -193,6 +193,33 @@ object storage bills and performs by request/object count, and
 per old snapshot — fewer, larger objects for the replication step to
 push, and cheaper to keep out there long-term.
 
+### A note on credentials at rest
+
+`rclone config` (whether run by hand or via the GUI's own "Connect
+Google Drive…" flow) stores whatever OAuth token or secret key a
+remote needs — e.g. the Google Drive refresh token — in `rclone.conf`
+in **plaintext** by default. Confirmed for real: rclone already
+writes that file `0600` (owner-only), but the contents themselves
+aren't encrypted.
+
+`rclone config` can password-protect the whole file — run it and pick
+"Set configuration password" from its menu. Once you do, every later
+`rclone` call — including the cron lines above — needs that password
+supplied non-interactively: either `RCLONE_CONFIG_PASS` set in the
+same environment the job runs in (the PATH pitfall
+[SCHEDULING.md](SCHEDULING.md) documents for cron applies equally
+here — a crontab's environment isn't your shell's), or
+`--password-command`, which can pull the password from your OS's own
+keychain instead of hardcoding it (e.g. `security find-generic-password
+-w` on macOS, `secret-tool lookup` on Linux).
+
+bmug2 doesn't set this up for you today — it's a real feature (making
+it work for the GUI's own unattended scheduled runs needs the password
+threaded into the generated wrapper script, not just a shell env var),
+tracked for a later pass. If credential-at-rest encryption matters more
+to you than which service you use, Proton Drive's own CLI already
+defaults to keychain-backed storage with no setup — see below.
+
 ### Proton Drive as a replication target
 
 Proton Drive is end-to-end encrypted client-side, which is a genuine fit
