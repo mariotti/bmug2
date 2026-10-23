@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   isDaily,
   el,
@@ -1290,6 +1291,58 @@ describe("user journeys (install setup wizard)", () => {
     expect(inputs[3].value).toBe(defaults.install_dir);
   });
 
+  it("wires a non-empty help tooltip onto every directory field, each naming its own CLI flag", async () => {
+    mockInstallFlow();
+    await renderSetup();
+
+    const icons = document.querySelectorAll<HTMLElement>(".help-icon");
+    expect(icons).toHaveLength(4);
+    icons.forEach((icon) => {
+      expect(icon.textContent).toBe("?");
+      expect(icon.getAttribute("title")).toBeTruthy();
+    });
+    const titles = Array.from(icons).map((icon) => icon.getAttribute("title"));
+    expect(titles.some((t) => t!.includes("--sync-dir="))).toBe(true);
+    expect(titles.some((t) => t!.includes("--backup-dir="))).toBe(true);
+    expect(titles.some((t) => t!.includes("--index-dir="))).toBe(true);
+    expect(titles.some((t) => t!.includes("--install-dir="))).toBe(true);
+  });
+
+  it("IndexDB follows SYNC automatically until edited directly", async () => {
+    mockInstallFlow();
+    await renderSetup();
+    const syncInput = document.querySelector<HTMLInputElement>("#sync-dir")!;
+    const indexInput = document.querySelector<HTMLInputElement>("#index-dir")!;
+
+    syncInput.value = "/custom/sync";
+    syncInput.dispatchEvent(new Event("input"));
+    expect(indexInput.value).toBe("/custom/sync/.locate.dir");
+
+    // Typing into IndexDB directly detaches it - further SYNC edits
+    // must not override what the user just chose.
+    indexInput.value = "/elsewhere/fast-local-index";
+    indexInput.dispatchEvent(new Event("input"));
+    syncInput.value = "/another/sync";
+    syncInput.dispatchEvent(new Event("input"));
+    expect(indexInput.value).toBe("/elsewhere/fast-local-index");
+  });
+
+  it("picking IndexDB via Browse also detaches it from SYNC, not just typing", async () => {
+    mockInstallFlow();
+    await renderSetup();
+    const syncInput = document.querySelector<HTMLInputElement>("#sync-dir")!;
+    const indexInput = document.querySelector<HTMLInputElement>("#index-dir")!;
+    const indexField = indexInput.closest(".field")!;
+
+    vi.mocked(open).mockResolvedValueOnce("/picked/via-browse");
+    indexField.querySelector<HTMLButtonElement>(".browse-btn")!.dispatchEvent(new Event("click"));
+    await waitFor(() => indexInput.value === "/picked/via-browse");
+
+    syncInput.value = "/another/sync";
+    syncInput.dispatchEvent(new Event("input"));
+    expect(indexInput.value).toBe("/picked/via-browse");
+  });
+
   it("switching to the existing-install tab shows its own form instead", async () => {
     mockInstallFlow({ find_existing_installs: [] });
     await renderSetup();
@@ -1302,6 +1355,12 @@ describe("user journeys (install setup wizard)", () => {
     expect(existingTab.classList.contains("active")).toBe(true);
     expect(document.querySelector("form input#bin-dir")).not.toBeNull();
     expect(document.querySelector("form input#sync-dir")).toBeNull();
+
+    // Only one field here, and no CLI flag exists for "use an existing
+    // install" (it's a GUI-only concept) - just a description, same as
+    // helpIcon's own no-cliExample mode already supports.
+    const icon = document.querySelector<HTMLElement>(".help-icon")!;
+    expect(icon.getAttribute("title")).toContain("backmeup.setup.sh");
   });
 
   it("submitting the new-install form calls install_bmug2 with the typed paths and renders the dashboard on success", async () => {
