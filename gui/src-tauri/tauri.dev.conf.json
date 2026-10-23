@@ -1,0 +1,12 @@
+{
+  "identifier": "io.github.mariotti.bmug2.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "bmug2 (isolated dev)",
+        "width": 800,
+        "height": 600
+      }
+    ]
+  }
+}

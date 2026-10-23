@@ -201,6 +201,21 @@ npm install
 npm run tauri dev
 ```
 
+`npm run tauri dev` uses your real, already-installed app's own config
+(same `~/Library/Application Support/io.github.mariotti.bmug2/` the
+packaged app uses) - handy for testing against real sources/schedules,
+but it means `check_existing_install` always finds your real install
+and skips straight to the dashboard.
+
+To see the first-run/setup-wizard experience (an "empty system," no
+saved install) without touching that real state at all, use
+`npm run tauri:dev:isolated` instead - identical app, just running
+under a separate identifier (`io.github.mariotti.bmug2.dev`, verified
+for real: resolves to its own empty app-data directory, confirmed via
+`tauri dev --config`'s documented merge behavior), so it always starts
+from a clean slate. The window title says "bmug2 (isolated dev)" so
+it's never confused with the real one.
+
 ## Test
 
 ```
