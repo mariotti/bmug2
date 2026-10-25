@@ -1301,12 +1301,16 @@ testBmuDispatcherRoutesSubcommandsViaPath() {
     grep -q "^Documents " "${SHUNIT_TMPDIR}/bmu-status.log"
     assertTrue "bmu status does not list Documents" $?
 
-    grep -q "^updatedb_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
-    assertTrue "bmu updatedb failed" $?
-    grep -q "^locate_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
-    assertTrue "bmu locate failed" $?
-    grep -q "sub/file2.txt" "${SHUNIT_TMPDIR}/bmu-locate.log"
-    assertTrue "bmu locate did not find the deleted file" $?
+    # updatedb/locate only work when a supported updatedb binary was
+    # detected at configure time - same conditional as the journey test.
+    if [ -n "${BMU_CMDUPDATEDB}" ]; then
+        grep -q "^updatedb_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+        assertTrue "bmu updatedb failed" $?
+        grep -q "^locate_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
+        assertTrue "bmu locate failed" $?
+        grep -q "sub/file2.txt" "${SHUNIT_TMPDIR}/bmu-locate.log"
+        assertTrue "bmu locate did not find the deleted file" $?
+    fi
 
     grep -q "^archive_exit:0$" "${SHUNIT_TMPDIR}/bmu-results.log"
     assertTrue "bmu archive failed" $?
