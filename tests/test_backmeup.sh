@@ -558,7 +558,15 @@ testInstallOffersRcIntegrationAndAppendsOnce() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\ny\nn\ny\n' | \
+    # configure.sh only shows the replication prompt when rclone or
+    # proton-drive is present - without either, it prints "skipping"
+    # and emits no prompt, so the `n` must be omitted or it lands on
+    # the rc-append question and the y is never read.
+    l_replicate_prompt=""
+    if command -v rclone > /dev/null 2>&1 || command -v proton-drive > /dev/null 2>&1; then
+        l_replicate_prompt="n\n"
+    fi
+    printf "\ny\n\ny\n\ny\n\ny\n${l_replicate_prompt}y\n" | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcappend-install.log" 2>&1
     assertEquals "install failed, see rcappend-install.log" 0 $?
@@ -598,11 +606,15 @@ testInstallRcIntegrationIdempotentOnRerun() {
 
     SHELL=/bin/zsh
     export SHELL
-    printf '\ny\n\ny\n\ny\n\ny\nn\ny\n' | \
+    l_replicate_prompt=""
+    if command -v rclone > /dev/null 2>&1 || command -v proton-drive > /dev/null 2>&1; then
+        l_replicate_prompt="n\n"
+    fi
+    printf "\ny\n\ny\n\ny\n\ny\n${l_replicate_prompt}y\n" | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" > /dev/null 2>&1
     # second run: all directories already exist (blank accepts default),
-    # decline replication again, answer y again to the rc prompt too
-    printf '\n\n\n\nn\ny\n' | \
+    # decline replication again if available, answer y to the rc prompt
+    printf "\n\n\n\n${l_replicate_prompt}y\n" | \
         HOME="${l_home}" "${l_checkout}/backmeup.install.sh" \
         > "${SHUNIT_TMPDIR}/rcrerun-install.log" 2>&1
     assertEquals "second install run failed" 0 $?
@@ -2019,6 +2031,7 @@ testReplicateFailsCleanlyWhenNotConfigured() {
 }
 
 testReplicateSyncsSyncAndHistoryToLocalStandInRemote() {
+    command -v rclone > /dev/null 2>&1 || startSkipping
     l_dir="${SHUNIT_TMPDIR}/bmu-replicate-real"
     l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-real-remote-sync"
     l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-real-remote-bp"
@@ -2043,6 +2056,7 @@ testReplicateSyncsSyncAndHistoryToLocalStandInRemote() {
 }
 
 testReplicateDryRunChangesNothing() {
+    command -v rclone > /dev/null 2>&1 || startSkipping
     l_dir="${SHUNIT_TMPDIR}/bmu-replicate-dry"
     l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-dry-remote-sync"
     l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-dry-remote-bp"
