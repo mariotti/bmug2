@@ -2001,6 +2001,7 @@ function buildExistingForm(): HTMLFormElement {
   );
   const suggestions = buildSuggestionsBox((path) => {
     binInput.value = path;
+    binInput.dispatchEvent(new Event("input", { bubbles: true }));
   });
   const submit = el("button", { type: "submit" }, ["Use this install"]);
   const form = el("form", {}, [
