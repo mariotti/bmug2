@@ -78,6 +78,37 @@ exact bug each one closed in [docs/MANUAL.md](docs/MANUAL.md) and
  - `backmeup.retrieve.sh` can only ever add files to a destination you
    name; it can't touch `SYNC`/`HISTORY` or overwrite anything.
 
+## Disclaimer
+
+bmug2 is personal-use software, provided as-is with no warranty of any
+kind — see [LICENSE](LICENSE). Using it as your only safeguard against
+data loss is a risk you take entirely on yourself.
+
+**Specific risks worth understanding before you rely on this:**
+
+- **SYNC is a destructive mirror.** `backmeup.sh` runs `rsync
+  --delete`, so any file you delete from the source *will be deleted
+  from SYNC on the next run*. HISTORY snapshots preserve earlier
+  versions, but only up to the last run before the deletion — a backup
+  that hasn't run recently won't have them. Run `--dry-run` first on a
+  new project and review the output before running for real.
+- **Restores are never verified automatically.** The tool writes the
+  backup; it does not read it back to confirm the destination is
+  intact. Periodically restore a sample of files and check they open
+  correctly — do this before you need to.
+- **Off-site replication is opt-in and unmonitored.** Configuring
+  `backmeup.replicate.sh` (or the GUI's replication panel) does not
+  guarantee the off-site copy is current or complete. Check it
+  independently.
+- **This is not a substitute for a 3-2-1 backup strategy.** bmug2
+  covers one copy (local SYNC+HISTORY) plus an optional off-site
+  second. A third independent copy on a different medium — one that
+  bmug2 itself cannot accidentally overwrite — is your responsibility.
+- **Misconfigured paths can cause data loss.** Pointing `backmeup.sh`
+  at the wrong source or destination, or running it after a disk
+  remounts at a different path, can silently delete files from the
+  mirror. Double-check your configured paths after any hardware change.
+
 ## Why another backup tool?
 
 Sharing one backup system between a Mac and a Linux box, and wanting
@@ -92,13 +123,25 @@ example (backing up a thesis): **[docs/USECASES.md](docs/USECASES.md)**.
 
 ## Requirements
 
-A real rsync (>= 3.x) — `backmeup.sh` detects and refuses to run with
-only Apple's openrsync. `updatedb`/`locate` (findutils) for fast
-indexing is optional; without it, backups stay searchable via plain
-`grep`. See [docs/MANUAL.md](docs/MANUAL.md) for exactly what's
-detected and how, and what bmug2's rsync options do and don't preserve
-(ACLs, extended attributes, ownership) — worth a read before pointing
-this at real data.
+**Required:**
+- A real `rsync` (>= 3.x) — `backmeup.sh` detects and refuses to run
+  with only Apple's `openrsync`. On macOS: `brew install rsync`.
+
+**Optional — install what you need:**
+- `updatedb`/`locate` (GNU findutils) for fast indexed search; without
+  it, backups stay searchable via plain `grep` but are slower. On
+  macOS: `brew install findutils` (installs as `gupdatedb`/`glocate`).
+- `rclone` for off-site replication to Google Drive or any other rclone
+  remote (`backmeup.replicate.sh --rclone`). On macOS:
+  `brew install rclone`.
+- `proton-drive` CLI for end-to-end-encrypted off-site replication to
+  Proton Drive (`backmeup.replicate.sh --proton`). See
+  [docs/DESTINATIONS.md](docs/DESTINATIONS.md) for setup.
+
+See [docs/MANUAL.md](docs/MANUAL.md) for exactly what's detected and
+how, and what bmug2's rsync options do and don't preserve (ACLs,
+extended attributes, ownership) — worth a read before pointing this at
+real data.
 
 ## Quick start
 

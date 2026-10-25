@@ -174,6 +174,20 @@ Still missing:
   flags/panel, the latter refreshing the installed scripts in place
   (same directories, same settings) rather than reconfiguring anything.
 
+## Disclaimer
+
+See [../README.md's Disclaimer section](../README.md#disclaimer) for
+the full risk notice. Two points are especially relevant to the GUI:
+
+- **Run Now and scheduled runs are real, destructive rsync operations.**
+  Every backup run (whether triggered by the Run Now button or a
+  launchd/systemd schedule this app installs) calls `backmeup.sh`
+  with `rsync --delete` — deletions in the source propagate to SYNC.
+  There is no preview or dry-run step in the GUI before the run starts.
+- **Installing a schedule means the backup runs automatically, without
+  further confirmation.** Check the configured source paths and
+  destination carefully before enabling a schedule.
+
 ## Why native Rust, not the `mcp/` Python server
 
 Two backend options were considered: spawn `mcp/`'s existing MCP server
@@ -192,6 +206,9 @@ now provide natively. Native Rust keeps this app to one toolchain and
   and Node/npm.
 - bmug2 itself installed somewhere (`../install.sh`) — this app has no
   logic of its own yet for backup/search, only for reaching bmug2's.
+  See [../README.md#requirements](../README.md#requirements) for the
+  full list of optional CLI tools (`rclone`, `proton-drive`,
+  `findutils`) that unlock the corresponding panels in this app.
 
 ## Develop
 
