@@ -359,7 +359,10 @@ mod tests {
     // the real code. Mutates process-wide PATH/env vars - same
     // accepted hazard class as replication.rs's own
     // fake_configure_script (hence this crate's
-    // `cargo test -- --test-threads=1` in CI), not a new one.
+    // `cargo test -- --test-threads=1` in CI, enforced in
+    // .github/workflows/tests.yml), not a new one. The counter below
+    // makes each call's temp dir unique within a process so back-to-
+    // back `new()` calls in the same test don't collide.
     struct FakeRclone {
         dir: PathBuf,
         old_path: String,
@@ -367,7 +370,10 @@ mod tests {
 
     impl FakeRclone {
         fn new(script: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("bmug2-fake-rclone-{}", std::process::id()));
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("bmug2-fake-rclone-{}-{n}", std::process::id()));
             std::fs::remove_dir_all(&dir).ok();
             std::fs::create_dir_all(&dir).unwrap();
             let bin_path = dir.join("rclone");
@@ -405,7 +411,7 @@ mod tests {
 case "$1" in
   version) exit 0 ;;
   listremotes)
-    echo "$FAKE_RCLONE_REMOTES_JSON"
+    if [ -n "$FAKE_RCLONE_REMOTES_JSON" ]; then echo "$FAKE_RCLONE_REMOTES_JSON"; else echo "[]"; fi
     exit 0
     ;;
   lsjson)
