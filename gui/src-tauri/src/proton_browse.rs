@@ -229,6 +229,9 @@ mod tests {
     // binary (hence this crate's `cargo test -- --test-threads=1` in
     // CI) - not a new risk, the same accepted one, just via PATH/env
     // instead of a shared file path. Drop always restores both.
+    // The counter makes each call's temp dir unique within a process
+    // so back-to-back `new()` calls in the same test don't collide
+    // (enforced serialisation is in .github/workflows/tests.yml).
     struct FakeProtonDrive {
         dir: PathBuf,
         old_path: String,
@@ -236,7 +239,10 @@ mod tests {
 
     impl FakeProtonDrive {
         fn new(script: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("bmug2-fake-proton-{}", std::process::id()));
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("bmug2-fake-proton-{}-{n}", std::process::id()));
             std::fs::remove_dir_all(&dir).ok();
             std::fs::create_dir_all(&dir).unwrap();
             let bin_path = dir.join("proton-drive");
@@ -345,7 +351,14 @@ exit 1
     }
 
     #[test]
-    fn create_folder_creates_it_for_real_when_it_does_not_exist_yet() {
+    fn create_folder_calls_create_when_existence_check_finds_nothing() {
+        // FAKE_PROTON_INFO_OK is left unset - the existence check (which
+        // calls `filesystem info`) fails, so create_folder proceeds to the
+        // real create call. FAKE_PROTON_CREATE_OK=1 makes that succeed.
+        // Note: the fake script uses exit 1 for both "not found" and "not
+        // signed in" on the info call - we're testing that create_folder
+        // proceeds to create when the check returns false, not the specific
+        // reason it returned false.
         let _fake = FakeProtonDrive::new(FAKE_PROTON_SCRIPT);
         std::env::set_var("FAKE_PROTON_CREATE_OK", "1");
         assert!(create_folder("/my-files", "Taxes").is_ok());

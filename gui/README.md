@@ -216,6 +216,13 @@ for real: resolves to its own empty app-data directory, confirmed via
 from a clean slate. The window title says "bmug2 (isolated dev)" so
 it's never confused with the real one.
 
+`tauri:dev:isolated` merges `tauri.dev.conf.json` on top of the base
+`tauri.conf.json`. Tauri's merge follows RFC 7396: **arrays are replaced
+wholesale, not merged element-by-element**. The dev config's `app.windows`
+array therefore replaces the base one entirely — any per-window key added
+to the base config in the future must also be repeated in `tauri.dev.conf.json`
+or the isolated session will silently drop it.
+
 ## Test
 
 ```
