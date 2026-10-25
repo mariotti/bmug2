@@ -921,12 +921,13 @@ describe("renderDashboard shows each source's own status inline", () => {
 
     await renderDashboard("/bin");
 
-    // 8 of the 9 planned icons live on this screen - one source (the
-    // fixed "proj1" from mockStatus's list_sources mock) each gets a
-    // Respect .gitignore + Use .bmuignore icon, plus one each for the
-    // Backup sources/Schedule-column/Housekeeping/Off-site
-    // replication/Search/Last-change-column headers. The 9th (Update
-    // now) lives on the separate Settings screen, not rendered here.
+    // 8 of the 9 planned icons live on this screen. mockStatus's own
+    // list_sources stub always returns one source ("proj1") regardless
+    // of the projects argument - that source contributes 2 icons
+    // (Respect .gitignore + Use .bmuignore), and the remaining 6 come
+    // from header tooltips (Backup sources, Schedule column,
+    // Housekeeping, Off-site replication, Search, Last-change column).
+    // The 9th icon (Update now) lives on the Settings screen.
     const icons = document.querySelectorAll<HTMLElement>(".help-icon");
     expect(icons).toHaveLength(8);
     icons.forEach((icon) => {
@@ -1159,6 +1160,8 @@ describe("dashboard mutators (schedule/ignore/replication/remove)", () => {
           return undefined;
         case "has_full_disk_access":
           return true;
+        case "get_ignore_settings":
+          return { gitignore: true, bmuignore: false, bmuignore_content: "" };
         default:
           throw new Error(`unmocked invoke command in test: ${cmd}`);
       }
@@ -1341,6 +1344,20 @@ describe("user journeys (install setup wizard)", () => {
     syncInput.value = "/another/sync";
     syncInput.dispatchEvent(new Event("input"));
     expect(indexInput.value).toBe("/picked/via-browse");
+  });
+
+  it("picking SYNC via Browse updates IndexDB while it is still attached", async () => {
+    mockInstallFlow();
+    await renderSetup();
+    const syncInput = document.querySelector<HTMLInputElement>("#sync-dir")!;
+    const indexInput = document.querySelector<HTMLInputElement>("#index-dir")!;
+    const syncField = syncInput.closest(".field")!;
+
+    vi.mocked(open).mockResolvedValueOnce("/browsed/sync");
+    syncField.querySelector<HTMLButtonElement>(".browse-btn")!.dispatchEvent(new Event("click"));
+    await waitFor(() => syncInput.value === "/browsed/sync");
+
+    expect(indexInput.value).toBe("/browsed/sync/.locate.dir");
   });
 
   it("switching to the existing-install tab shows its own form instead", async () => {
