@@ -6,13 +6,14 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell has no flag (kcov turned out too fragile for
-     this suite - see the project memory on this, deferred for now).
-     Using shields.io's Codecov badge rather than Codecov's own: its
-     own badge always prints the generic word "codecov" regardless of
-     flag, so all 3 looked visually identical with no way to tell
-     which was which at a glance - shields.io bakes the flag name
-     itself into the badge as the visible label. -->
+     repo-wide %. Shell coverage runs on Linux only (kcov uses ptrace,
+     which macOS SIP blocks). Using shields.io's Codecov badge rather
+     than Codecov's own: its own badge always prints the generic word
+     "codecov" regardless of flag, so all badges looked visually
+     identical with no way to tell which was which at a glance -
+     shields.io bakes the flag name itself into the badge as the
+     visible label. -->
+[![shell coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=shell&label=shell)](https://codecov.io/gh/mariotti/bmug2)
 [![python coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=python&label=python)](https://codecov.io/gh/mariotti/bmug2)
 [![rust coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=rust&label=rust)](https://codecov.io/gh/mariotti/bmug2)
 [![typescript coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=typescript&label=typescript)](https://codecov.io/gh/mariotti/bmug2)

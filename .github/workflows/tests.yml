@@ -14,10 +14,24 @@ jobs:
         # exercising the non-GNU branch of the capability detection;
         # zsh is needed for the _bmu completion file's syntax check
         # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
-        # backmeup.replicate.sh for real
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
-      - name: Run test suite
-        run: sh tests/test_backmeup.sh
+        # backmeup.replicate.sh for real; kcov instruments the shell
+        # scripts for line coverage (Linux-only — macOS SIP blocks ptrace)
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone kcov
+      - name: Run test suite with coverage
+        # kcov wraps sh via ptrace and follows forks, so child processes
+        # (the actual bin/*.sh scripts) are instrumented too.
+        # --include-path restricts measurement to bin/ only — test
+        # infrastructure and shunit2 internals are excluded.
+        # kcov exits with the same code as the wrapped program, so a test
+        # failure still fails CI normally.
+        run: kcov --include-path="${GITHUB_WORKSPACE}/bin" "${GITHUB_WORKSPACE}/coverage" sh tests/test_backmeup.sh
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/sh/cobertura.xml
+          flags: shell
+          fail_ci_if_error: false
 
   macos:
     runs-on: macos-latest
