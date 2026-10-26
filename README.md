@@ -6,8 +6,9 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell has no flag (kcov turned out too fragile for
-     this suite - see the project memory on this, deferred for now).
+     repo-wide %. Shell has no coverage badge: kcov (the only practical
+     ptrace-based instrumenter for sh) is not in Ubuntu 24.04's repos and
+     building it from source in CI proved too fragile. Deferred.
      Using shields.io's Codecov badge rather than Codecov's own: its
      own badge always prints the generic word "codecov" regardless of
      flag, so all 3 looked visually identical with no way to tell
