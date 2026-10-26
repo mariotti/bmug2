@@ -46,6 +46,49 @@ Practical notes:
    errors, non-zero exit — see the exit-code fix in the CI history) —
    it doesn't silently write somewhere else.
 
+## Replicating to a mounted cloud folder (the fast path)
+
+If you already use Google Drive for Desktop, Dropbox, iCloud Drive, or
+any other cloud sync client that presents as a local folder, you can
+point `backmeup.replicate.sh` directly at that folder — no rclone
+configuration, no OAuth setup, no third-party account in the middle.
+
+**How it works.** The desktop client creates a real local directory
+(`~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive` on macOS,
+`~/Dropbox`, `~/iCloud Drive`, etc.). `backmeup.replicate.sh` runs
+`rsync -a --delete` against it directly, the same as copying to any
+local path. The sync client notices the new/changed files and handles
+the upload to the cloud on its own schedule — you never interact with
+the cloud API directly.
+
+**In the GUI.** The Off-site replication panel has a "Mounted folder"
+option. The GUI auto-detects a Google Drive for Desktop mount
+(macOS: `~/Library/CloudStorage/GoogleDrive-*/My Drive`) and pre-fills
+the SYNC and BackUp paths with `<mount>/bmug2/SYNC` and
+`<mount>/bmug2/BackUp` if both inputs are empty. A native folder-picker
+Browse button lets you choose a different path. No OAuth involved — the
+only credential is the one your cloud client already holds.
+
+**Google Drive for Desktop on macOS.** Install from
+<https://drive.google.com>, sign in, and wait for the local folder to
+appear under `~/Library/CloudStorage/`. The default streaming mode
+leaves files as online-only placeholders — set the `bmug2/` destination
+folder to "Available offline" in Drive's own settings so rsync can read
+it back for comparison on subsequent runs.
+
+**CLI usage.**
+
+```
+backmeup.configure.sh \
+  --replicate-backend=local \
+  --replicate-remote-sync="/Users/alex/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/bmug2/SYNC" \
+  --replicate-remote-backups="/Users/alex/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/bmug2/BackUp"
+```
+
+Then `backmeup.replicate.sh` (or the Housekeeping schedule in the GUI)
+handles the copy on demand. No rclone or proton-drive installed, no
+OAuth flow — the cloud client you already use handles the upload.
+
 ## Tier 2: cloud-sync desktop folders (Dropbox, Google Drive, iCloud Drive, Proton Drive)
 
 Once the desktop client is installed, Dropbox/Google Drive/iCloud

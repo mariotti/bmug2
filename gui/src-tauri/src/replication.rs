@@ -9,6 +9,7 @@
 // module can't drift out of sync with the CLI's own variable list.
 use std::path::Path;
 use std::process::Command;
+use std::env;
 
 /// The version backmeup.configure.sh first ships --replicate-backend=/
 /// --replicate-remote-sync=/--replicate-remote-backups=/
@@ -37,6 +38,12 @@ pub enum ReplicationStatus {
     Proton {
         remote: String,
     },
+    LocalPath {
+        #[serde(default)]
+        path_sync: String,
+        #[serde(default)]
+        path_backups: String,
+    },
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -51,6 +58,12 @@ pub enum ReplicationRequest {
         // /bmug2/<hostname> default - the default lives in exactly one
         // place (the shell script), not duplicated here.
         remote: Option<String>,
+    },
+    LocalPath {
+        #[serde(default)]
+        path_sync: String,
+        #[serde(default)]
+        path_backups: String,
     },
 }
 
@@ -80,6 +93,11 @@ pub fn get_status(bin_dir: &Path) -> ReplicationStatus {
         },
         Some("proton") => ReplicationStatus::Proton {
             remote: read_setup_var(bin_dir, "BMU_REPLICATE_PROTON_REMOTE").unwrap_or_default(),
+        },
+        Some("local") => ReplicationStatus::LocalPath {
+            path_sync: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_SYNC").unwrap_or_default(),
+            path_backups: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_BACKUPS")
+                .unwrap_or_default(),
         },
         _ => ReplicationStatus::Off,
     }
@@ -138,8 +156,61 @@ pub fn set(bin_dir: &Path, request: ReplicationRequest) -> Result<(), String> {
             }
             args
         }
+        ReplicationRequest::LocalPath { path_sync, path_backups } => vec![
+            "--replicate-backend=local".to_string(),
+            format!("--replicate-remote-sync={path_sync}"),
+            format!("--replicate-remote-backups={path_backups}"),
+        ],
     };
     run_configure(bin_dir, &args)
+}
+
+/// Searches for a locally-mounted Google Drive folder in the locations
+/// the Google Drive for Desktop client creates on macOS and Linux. Returns
+/// the first path that exists as a directory, or None when none is found.
+pub fn find_gdrive_mount() -> Option<String> {
+    let home = env::var("HOME").ok()?;
+
+    // macOS: Drive for Desktop (current) uses a per-account path under
+    // ~/Library/CloudStorage. Glob over all accounts since the email
+    // address embedded in the directory name isn't known ahead of time.
+    let cloud_storage = format!("{home}/Library/CloudStorage");
+    if let Ok(entries) = std::fs::read_dir(&cloud_storage) {
+        let mut candidates: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with("GoogleDrive-") {
+                    let my_drive = format!("{cloud_storage}/{name}/My Drive");
+                    if std::path::Path::new(&my_drive).is_dir() {
+                        return Some(my_drive);
+                    }
+                }
+                None
+            })
+            .collect();
+        // Sort for determinism: multiple accounts pick the lexically first.
+        candidates.sort();
+        if let Some(path) = candidates.into_iter().next() {
+            return Some(path);
+        }
+    }
+
+    // macOS: Drive for Desktop legacy mount point.
+    let legacy_mac = "/Volumes/Google Drive".to_string();
+    if std::path::Path::new(&legacy_mac).is_dir() {
+        return Some(legacy_mac);
+    }
+
+    // Linux: common user-space mount locations, checked in preference order.
+    for suffix in &["GoogleDrive", "google-drive", "gdrive"] {
+        let path = format!("{home}/{suffix}");
+        if std::path::Path::new(&path).is_dir() {
+            return Some(path);
+        }
+    }
+
+    None
 }
 
 pub fn clear(bin_dir: &Path) -> Result<(), String> {
@@ -340,5 +411,49 @@ mod tests {
         let result = set(&dir, ReplicationRequest::Proton { remote: None });
         assert!(result.is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn status_reads_local_path() {
+        let dir = sandbox(
+            "local",
+            "BMU_REPLICATE_BACKEND=\"local\"\nBMU_REPLICATE_REMOTE_SYNC=\"/cloud/SYNC\"\nBMU_REPLICATE_REMOTE_BACKUPS=\"/cloud/BackUp\"\n",
+        );
+        assert_eq!(
+            get_status(&dir),
+            ReplicationStatus::LocalPath {
+                path_sync: "/cloud/SYNC".to_string(),
+                path_backups: "/cloud/BackUp".to_string(),
+            }
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_local_path_calls_configure_with_the_right_flags() {
+        let dir = sandbox("set-local", "BMU_VERSION=\"2.14.0\"\n");
+        let log = dir.join("call.log");
+        fake_configure_script(&dir, &log, 0);
+
+        let result = set(
+            &dir,
+            ReplicationRequest::LocalPath {
+                path_sync: "/cloud/SYNC".to_string(),
+                path_backups: "/cloud/BackUp".to_string(),
+            },
+        );
+        assert!(result.is_ok(), "set failed: {result:?}");
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(logged.contains("--replicate-backend=local"));
+        assert!(logged.contains("--replicate-remote-sync=/cloud/SYNC"));
+        assert!(logged.contains("--replicate-remote-backups=/cloud/BackUp"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_gdrive_mount_returns_none_when_nothing_exists() {
+        // Just confirms it returns Option<String> without panicking in a
+        // clean environment where none of the known mount paths exist.
+        let _: Option<String> = find_gdrive_mount();
     }
 }

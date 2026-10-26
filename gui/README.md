@@ -88,11 +88,14 @@ well-known install location" stance):
   CLI-only; this only ever writes each platform's native, preferred
   mechanism.
 - **Off-site replication** (`gui/src-tauri/src/replication.rs`):
-  configure or clear either backend - `rclone` (mirrors SYNC+HISTORY to
-  any remote) or native Proton Drive (HISTORY only, end-to-end
-  encrypted) - by shelling out to `backmeup.configure.sh`'s
-  `--replicate-*` flags, the same non-reimplementing-the-CLI's-own-logic
-  approach as install/scheduling. Requires an install running bmug2
+  configure or clear any of three backends - `rclone` (mirrors
+  SYNC+HISTORY to any remote), native Proton Drive (HISTORY only,
+  end-to-end encrypted), or **Mounted folder** (Google Drive for
+  Desktop, Dropbox, iCloud Drive, or any other cloud sync client that
+  presents as a local directory — no OAuth, no rclone, just rsync into
+  the mount; see docs/DESTINATIONS.md) - by shelling out to
+  `backmeup.configure.sh`'s `--replicate-*` flags, the same
+  non-reimplementing-the-CLI's-own-logic approach as install/scheduling. Requires an install running bmug2
   v2.14.0+ (whichever version first ships these flags); an older
   install shows a disabled panel with an upgrade message instead of
   being locked out of the whole app, since the CLI itself already fails
