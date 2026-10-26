@@ -27,6 +27,12 @@ use std::env;
 /// message pre-emptively is enough.
 pub const MIN_VERSION_FOR_FLAGS: (u32, u32, u32) = (2, 14, 0);
 
+/// The version that added `local` as a valid --replicate-backend value.
+/// Earlier configure.sh exits with "must be rclone, proton, or none" on
+/// seeing `local`, so we gate specifically on this version rather than
+/// letting configure.sh surface the confusing shell-script error.
+pub const MIN_VERSION_FOR_LOCAL: (u32, u32, u32) = (2, 18, 7);
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum ReplicationStatus {
@@ -121,6 +127,17 @@ pub fn check_flags_supported(bin_dir: &Path) -> Result<(), String> {
     }
 }
 
+/// Returns true when the installed CLI supports `--replicate-backend=local`.
+/// Used by the TypeScript side to disable the "Mounted folder" option when
+/// the CLI is too old, mirroring how rclone_available/proton_drive_available
+/// disable their Browse buttons.
+pub fn local_supported(bin_dir: &Path) -> bool {
+    matches!(
+        crate::version::read_installed_version(bin_dir),
+        Some(found) if found >= MIN_VERSION_FOR_LOCAL
+    )
+}
+
 fn run_configure(bin_dir: &Path, args: &[String]) -> Result<(), String> {
     let mut cmd = Command::new(bin_dir.join("backmeup.configure.sh"));
     cmd.args(args);
@@ -156,11 +173,19 @@ pub fn set(bin_dir: &Path, request: ReplicationRequest) -> Result<(), String> {
             }
             args
         }
-        ReplicationRequest::LocalPath { path_sync, path_backups } => vec![
-            "--replicate-backend=local".to_string(),
-            format!("--replicate-remote-sync={path_sync}"),
-            format!("--replicate-remote-backups={path_backups}"),
-        ],
+        ReplicationRequest::LocalPath { path_sync, path_backups } => {
+            if !local_supported(bin_dir) {
+                return Err(format!(
+                    "Local path replication requires CLI v{}.{}.{}+. Upgrade via Settings.",
+                    MIN_VERSION_FOR_LOCAL.0, MIN_VERSION_FOR_LOCAL.1, MIN_VERSION_FOR_LOCAL.2
+                ));
+            }
+            vec![
+                "--replicate-backend=local".to_string(),
+                format!("--replicate-remote-sync={path_sync}"),
+                format!("--replicate-remote-backups={path_backups}"),
+            ]
+        }
     };
     run_configure(bin_dir, &args)
 }
@@ -431,7 +456,7 @@ mod tests {
 
     #[test]
     fn set_local_path_calls_configure_with_the_right_flags() {
-        let dir = sandbox("set-local", "BMU_VERSION=\"2.14.0\"\n");
+        let dir = sandbox("set-local", "BMU_VERSION=\"2.18.7\"\n");
         let log = dir.join("call.log");
         fake_configure_script(&dir, &log, 0);
 
@@ -455,5 +480,40 @@ mod tests {
         // Just confirms it returns Option<String> without panicking in a
         // clean environment where none of the known mount paths exist.
         let _: Option<String> = find_gdrive_mount();
+    }
+
+    #[test]
+    fn set_local_path_rejects_old_cli_with_clear_message() {
+        let dir = sandbox("set-local-old", "BMU_VERSION=\"2.18.0\"\n");
+        let log = dir.join("call.log");
+        fake_configure_script(&dir, &log, 0);
+
+        let result = set(
+            &dir,
+            ReplicationRequest::LocalPath {
+                path_sync: "/cloud/SYNC".to_string(),
+                path_backups: "/cloud/BackUp".to_string(),
+            },
+        );
+        assert!(result.is_err(), "should have rejected old CLI for local backend");
+        let err = result.unwrap_err();
+        assert!(err.contains("2.18.7"), "error should name the required version: {err}");
+        assert!(err.contains("Settings"), "error should mention upgrading via Settings: {err}");
+        assert!(!log.exists(), "should not have shelled out to configure.sh at all");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn get_replication_local_supported_returns_false_for_old_cli() {
+        let dir = sandbox("local-supported-old", "BMU_VERSION=\"2.18.0\"\n");
+        assert!(!local_supported(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn get_replication_local_supported_returns_true_for_new_cli() {
+        let dir = sandbox("local-supported-new", "BMU_VERSION=\"2.18.7\"\n");
+        assert!(local_supported(&dir));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
