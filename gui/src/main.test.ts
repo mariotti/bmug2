@@ -52,7 +52,7 @@ import {
   type ReplicationRequest,
   type RunOutput,
   type RunBanner,
-  type UpdateCheck,
+  type UpdateInfo,
   type LocateResult,
   type LocateHit,
   type DefaultPaths,
@@ -557,6 +557,60 @@ describe("buildReplicationEditor", () => {
     buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
     expect(onSave).not.toHaveBeenCalled();
   });
+
+  it("Save blocks and shows inline error when SYNC and BackUp paths are identical", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+
+    const allInputs = Array.from(editor.querySelectorAll<HTMLInputElement>("input[type=text]"));
+    const visibleInputs = allInputs.filter((i) => {
+      let ancestor: HTMLElement | null = i;
+      while (ancestor) {
+        if (ancestor.style.display === "none") return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    });
+    visibleInputs[0].value = "/cloud/bmug2/SYNC";
+    visibleInputs[1].value = "/cloud/bmug2/SYNC";
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(editor.textContent).toContain("SYNC and BackUp must be different");
+  });
+
+  it("local_path SYNC input has a visible label", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+    expect(editor.textContent).toContain("SYNC destination");
+  });
+
+  it("local_path BackUp input has a visible label", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+    expect(editor.textContent).toContain("BackUp destination");
+  });
+
+  it("Mounted folder option is disabled with tooltip when get_replication_local_supported returns false", async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "get_replication_local_supported") return Promise.resolve(false);
+      return new Promise(() => {});
+    });
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn(), "/the-bin-dir");
+    // Flush microtasks so the async invoke resolves
+    await Promise.resolve();
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const localOption = Array.from(select.options).find((o) => o.value === "local_path");
+    expect(localOption?.disabled).toBe(true);
+    expect(localOption?.title).toContain("2.18.7");
+    vi.mocked(invoke).mockReset();
+  });
 });
 
 describe("buildIgnoreToggles", () => {
@@ -1016,16 +1070,23 @@ describe("formatVersion", () => {
 });
 
 describe("buildUpdateAvailableNotice", () => {
-  it("returns null when no update is available", () => {
-    const check: UpdateCheck = { current: [2, 16, 2], latest: [2, 16, 2], update_available: false };
-    expect(buildUpdateAvailableNotice(check, "/bin")).toBeNull();
+  it("returns null when neither stable nor experimental update is available", () => {
+    const info: UpdateInfo = { current: [2, 16, 2], latest_stable: null, latest_experimental: null };
+    expect(buildUpdateAvailableNotice(info, "/bin")).toBeNull();
   });
 
-  it("names both versions and offers a way to Settings when an update is available", () => {
-    const check: UpdateCheck = { current: [2, 16, 2], latest: [2, 16, 3], update_available: true };
-    const notice = buildUpdateAvailableNotice(check, "/bin");
-    expect(notice?.textContent).toContain("2.16.3");
+  it("names both versions and offers a way to Settings when a stable update is available", () => {
+    const info: UpdateInfo = { current: [2, 16, 2], latest_stable: "v2.16.3", latest_experimental: null };
+    const notice = buildUpdateAvailableNotice(info, "/bin");
+    expect(notice?.textContent).toContain("v2.16.3");
     expect(notice?.textContent).toContain("2.16.2");
+    expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
+  });
+
+  it("shows the experimental tag when only an experimental update is available", () => {
+    const info: UpdateInfo = { current: [2, 16, 7], latest_stable: null, latest_experimental: "v2.16.9-experimental" };
+    const notice = buildUpdateAvailableNotice(info, "/bin");
+    expect(notice?.textContent).toContain("v2.16.9-experimental");
     expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
   });
 });
@@ -1556,22 +1617,47 @@ describe("user journeys (Settings/update)", () => {
     expect(predicate()).toBe(true);
   }
 
-  const upToDate: UpdateCheck = { current: [2, 15, 0], latest: [2, 15, 0], update_available: false };
-  const behind: UpdateCheck = { current: [2, 15, 0], latest: [2, 16, 0], update_available: true };
+  const upToDate: UpdateInfo = { current: [2, 15, 0], latest_stable: null, latest_experimental: null };
+  const behindStable: UpdateInfo = { current: [2, 15, 0], latest_stable: "v2.16.0", latest_experimental: null };
+  const behindExperimental: UpdateInfo = { current: [2, 15, 7], latest_stable: null, latest_experimental: "v2.15.9-experimental" };
+  const behindBoth: UpdateInfo = { current: [2, 15, 7], latest_stable: "v2.16.0", latest_experimental: "v2.15.9-experimental" };
 
-  it("shows up-to-date with no Update button when already current", async () => {
+  it("shows up-to-date with no Install button when already current", async () => {
     mockSettingsFlow({ check_for_update: upToDate });
     await renderSettings("/bin");
     expect(document.querySelector(".settings-uptodate")).not.toBeNull();
-    expect(Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Update now…")).toBe(
+    expect(Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Install")).toBe(
       false,
     );
   });
 
-  it("offers Update now when behind, and shows an inline error (not a full error screen) when the check itself fails", async () => {
-    mockSettingsFlow({ check_for_update: behind });
+  it("shows only the stable row when only a stable update is available", async () => {
+    mockSettingsFlow({ check_for_update: behindStable });
     await renderSettings("/bin");
-    expect(buttonLabeled(document.body, "Update now…")).toBeTruthy();
+    expect(document.querySelector(".settings-version")!.textContent).toContain("Latest stable");
+    expect(document.querySelector(".settings-version")!.textContent).not.toContain("Latest experimental");
+    expect(buttonLabeled(document.body, "Install")).toBeTruthy();
+  });
+
+  it("shows only the experimental row when only an experimental update is available", async () => {
+    mockSettingsFlow({ check_for_update: behindExperimental });
+    await renderSettings("/bin");
+    expect(document.querySelector(".settings-version")!.textContent).toContain("Latest experimental");
+    expect(document.querySelector(".settings-version")!.textContent).not.toContain("Latest stable");
+  });
+
+  it("shows both rows when both stable and experimental updates are available", async () => {
+    mockSettingsFlow({ check_for_update: behindBoth });
+    await renderSettings("/bin");
+    const box = document.querySelector(".settings-version")!.textContent!;
+    expect(box).toContain("Latest stable");
+    expect(box).toContain("Latest experimental");
+  });
+
+  it("offers Install when behind, and shows an inline error (not a full error screen) when the check itself fails", async () => {
+    mockSettingsFlow({ check_for_update: behindStable });
+    await renderSettings("/bin");
+    expect(buttonLabeled(document.body, "Install")).toBeTruthy();
 
     document.querySelector("#app")!.innerHTML = "";
     mockSettingsFlow({ check_for_update: new Error("offline") });
@@ -1580,13 +1666,13 @@ describe("user journeys (Settings/update)", () => {
     expect(document.querySelector(".error-heading")).toBeNull();
   });
 
-  it("Update now -> confirm -> apply_update success renders the dashboard with a success banner", async () => {
+  it("Install -> confirm -> apply_update success renders the dashboard with a success banner", async () => {
     mockSettingsFlow({
-      check_for_update: behind,
+      check_for_update: behindStable,
       apply_update: { bin_dir: "/bin", log: "re-ran install.sh" } satisfies InstallOutcome,
     });
     await renderSettings("/bin");
-    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    buttonLabeled(document.body, "Install").dispatchEvent(new Event("click"));
     expect(document.querySelector(".settings-confirm")).not.toBeNull();
 
     buttonLabeled(document.body, "Yes, install the update").dispatchEvent(new Event("click"));
@@ -1596,10 +1682,10 @@ describe("user journeys (Settings/update)", () => {
     expect(banner?.textContent).toContain("Updated successfully.");
   });
 
-  it("Update now -> confirm -> apply_update failure renders the error screen", async () => {
-    mockSettingsFlow({ check_for_update: behind, apply_update: new Error("network down") });
+  it("Install -> confirm -> apply_update failure renders the error screen", async () => {
+    mockSettingsFlow({ check_for_update: behindStable, apply_update: new Error("network down") });
     await renderSettings("/bin");
-    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    buttonLabeled(document.body, "Install").dispatchEvent(new Event("click"));
     buttonLabeled(document.body, "Yes, install the update").dispatchEvent(new Event("click"));
 
     await waitFor(() => document.querySelector(".error-heading") !== null);
@@ -1607,9 +1693,9 @@ describe("user journeys (Settings/update)", () => {
   });
 
   it("Cancel on the confirm screen returns to Settings without updating", async () => {
-    mockSettingsFlow({ check_for_update: behind });
+    mockSettingsFlow({ check_for_update: behindStable });
     await renderSettings("/bin");
-    buttonLabeled(document.body, "Update now…").dispatchEvent(new Event("click"));
+    buttonLabeled(document.body, "Install").dispatchEvent(new Event("click"));
     buttonLabeled(document.body, "Cancel").dispatchEvent(new Event("click"));
 
     await waitFor(() => document.querySelector(".settings-version") !== null);

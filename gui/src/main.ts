@@ -20,13 +20,14 @@ export interface InstallOutcome {
   log: string;
 }
 
-// Mirrors install.rs's UpdateCheck exactly - a plain struct (not a
+// Mirrors install.rs's UpdateInfo exactly - a plain struct (not a
 // tagged enum like ReplicationStatus/Request), so the tuple fields
-// serialize as plain 3-element arrays.
-export interface UpdateCheck {
+// serialize as plain 3-element arrays. latest_stable/latest_experimental
+// are only present (non-null) when newer than current.
+export interface UpdateInfo {
   current: [number, number, number];
-  latest: [number, number, number];
-  update_available: boolean;
+  latest_stable: string | null;
+  latest_experimental: string | null;
 }
 
 export interface StatusProject {
@@ -411,13 +412,14 @@ export function formatVersion([major, minor, patch]: [number, number, number]): 
 // state, shown unconditionally when relevant, inline action button) -
 // not buildRunBanner's shape, since this must appear on a normal page
 // load with no preceding action.
-export function buildUpdateAvailableNotice(check: UpdateCheck, binDir: string): HTMLElement | null {
-  if (!check.update_available) return null;
+export function buildUpdateAvailableNotice(info: UpdateInfo, binDir: string): HTMLElement | null {
+  if (!info.latest_stable && !info.latest_experimental) return null;
   const goBtn = el("button", { type: "button" }, ["Go to Settings"]);
   goBtn.addEventListener("click", () => void renderSettings(binDir));
+  const available = info.latest_stable ?? info.latest_experimental!;
   return el("div", { class: "untracked-notice update-notice" }, [
     el("p", {}, [
-      `bmug2 ${formatVersion(check.latest)} is available (you have ${formatVersion(check.current)}). `,
+      `bmug2 ${available} is available (you have ${formatVersion(info.current)}). `,
       goBtn,
     ]),
   ]);
@@ -1084,15 +1086,35 @@ export function buildReplicationEditor(
   current: ReplicationStatus,
   onSave: (request: ReplicationRequest) => void,
   onCancel: () => void,
+  binDir?: string,
 ): HTMLElement {
   const startBackend = current.backend === "off" ? "rclone" : current.backend;
 
+  const localOption = new Option(
+    "Mounted folder (Google Drive, Dropbox, …)",
+    "local_path",
+    startBackend === "local_path",
+    startBackend === "local_path",
+  );
   const backendSelect = el("select", {}) as HTMLSelectElement;
   backendSelect.append(
     new Option("rclone (SYNC + HISTORY)", "rclone", startBackend === "rclone", startBackend === "rclone"),
     new Option("Proton Drive (HISTORY only)", "proton", startBackend === "proton", startBackend === "proton"),
-    new Option("Mounted folder (Google Drive, Dropbox, …)", "local_path", startBackend === "local_path", startBackend === "local_path"),
+    localOption,
   );
+
+  if (binDir !== undefined) {
+    void invoke<boolean>("get_replication_local_supported", { binDir })
+      .then((supported) => {
+        if (!supported) {
+          localOption.disabled = true;
+          localOption.title = "Requires CLI v2.18.7+ — upgrade via Settings";
+        }
+      })
+      .catch(() => {
+        // No Tauri bridge (under test) or command failed - leave enabled.
+      });
+  }
 
   const remoteSyncInput = el("input", {
     type: "text",
@@ -1225,8 +1247,18 @@ export function buildReplicationEditor(
     });
     return btn;
   };
+  const localSyncLabel = el("div", { class: "local-path-label" }, [
+    el("strong", {}, ["SYNC destination"]),
+    el("span", { class: "local-path-desc" }, ["Live mirror of your source folders"]),
+  ]);
+  const localBackupsLabel = el("div", { class: "local-path-label" }, [
+    el("strong", {}, ["BackUp destination"]),
+    el("span", { class: "local-path-desc" }, ["Versioned history of changes and deletions"]),
+  ]);
   const localSyncRow = el("div", { class: "field-row" }, [pathSyncInput, makeLocalBrowseBtn(pathSyncInput)]);
   const localBackupsRow = el("div", { class: "field-row" }, [pathBackupsInput, makeLocalBrowseBtn(pathBackupsInput)]);
+  const localPathErrorEl = el("p", { class: "settings-check-error" }, []) as HTMLParagraphElement;
+  localPathErrorEl.style.display = "none";
 
   // Auto-detect: if both path inputs are empty when the editor opens,
   // ask the backend for the first Google Drive mount it can find and
@@ -1253,8 +1285,11 @@ export function buildReplicationEditor(
     gdriveSync.row.style.display = rclone ? "" : "none";
     gdriveBackups.row.style.display = rclone ? "" : "none";
     protonRemoteRow.style.display = proton ? "" : "none";
+    localSyncLabel.style.display = local ? "" : "none";
     localSyncRow.style.display = local ? "" : "none";
+    localBackupsLabel.style.display = local ? "" : "none";
     localBackupsRow.style.display = local ? "" : "none";
+    localPathErrorEl.style.display = "none";
     if (!rclone) {
       gdriveSync.panel.style.display = "none";
       gdriveBackups.panel.style.display = "none";
@@ -1279,6 +1314,13 @@ export function buildReplicationEditor(
       });
     } else if (backend === "local_path") {
       if (!pathSyncInput.value || !pathBackupsInput.value) return;
+      if (pathSyncInput.value === pathBackupsInput.value) {
+        localPathErrorEl.textContent =
+          "SYNC and BackUp must be different directories — BackUp should be a sibling, e.g. append '-BP'.";
+        localPathErrorEl.style.display = "";
+        return;
+      }
+      localPathErrorEl.style.display = "none";
       onSave({
         backend: "local_path",
         path_sync: pathSyncInput.value,
@@ -1298,8 +1340,11 @@ export function buildReplicationEditor(
     gdriveBackups.panel,
     protonRemoteRow,
     browserPanel,
+    localSyncLabel,
     localSyncRow,
+    localBackupsLabel,
     localBackupsRow,
+    localPathErrorEl,
     el("div", { class: "field-row" }, [saveBtn, cancelBtn]),
   ]);
 }
@@ -1635,6 +1680,7 @@ export function buildReplicationSection(
       () => {
         editRow.style.display = "none";
       },
+      binDir,
     );
     editRow.replaceChildren(editor);
     editRow.style.display = "";
@@ -1758,11 +1804,11 @@ function renderInstalling(message: string) {
 export async function renderSettings(binDir: string) {
   app.replaceChildren(el("h1", {}, ["Settings"]), el("p", {}, ["Checking for updates…"]));
 
-  let check: UpdateCheck | null = null;
+  let info: UpdateInfo | null = null;
   let checkError: string | null = null;
   try {
-    check = await invoke<UpdateCheck>("check_for_update", { binDir });
-    cachedUpdateCheck = check;
+    info = await invoke<UpdateInfo>("check_for_update", { binDir });
+    cachedUpdateCheck = info;
   } catch (err) {
     checkError = String(err);
   }
@@ -1771,24 +1817,40 @@ export async function renderSettings(binDir: string) {
   backBtn.addEventListener("click", () => void renderDashboard(binDir));
 
   const versionBox = el("div", { class: "settings-version" }, []);
-  if (check) {
+  if (info) {
     versionBox.append(
-      el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(check.current)]),
-      el("p", {}, [el("strong", {}, ["Latest available: "]), formatVersion(check.latest)]),
+      el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(info.current)]),
     );
-    if (check.update_available) {
-      const updateBtn = el("button", { type: "button" }, ["Update now…"]);
-      updateBtn.addEventListener("click", () => showUpdateConfirm(binDir, check!));
-      versionBox.append(
-        el("p", {}, [
-          updateBtn,
-          " ",
-          helpIcon(
-            "Re-downloads the latest release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
-            "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
-          ),
-        ]),
+    const hasAny = info.latest_stable || info.latest_experimental;
+    if (hasAny) {
+      const installHelp = helpIcon(
+        "Re-downloads the latest release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
+        "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
       );
+      if (info.latest_stable) {
+        const stableBtn = el("button", { type: "button" }, ["Install"]);
+        stableBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_stable!));
+        versionBox.append(
+          el("p", {}, [
+            el("strong", {}, ["Latest stable: "]),
+            `${info.latest_stable} — `,
+            stableBtn,
+            " ",
+            installHelp,
+          ]),
+        );
+      }
+      if (info.latest_experimental) {
+        const expBtn = el("button", { type: "button" }, ["Install"]);
+        expBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_experimental!));
+        versionBox.append(
+          el("p", {}, [
+            el("strong", {}, ["Latest experimental: "]),
+            `${info.latest_experimental} — `,
+            expBtn,
+          ]),
+        );
+      }
     } else {
       versionBox.append(el("p", { class: "settings-uptodate" }, ["You're up to date."]));
     }
@@ -1802,8 +1864,8 @@ export async function renderSettings(binDir: string) {
 }
 
 // Explicit, separate confirmation step before any apply_update call -
-// clicking "Update now" never installs by itself.
-function showUpdateConfirm(binDir: string, check: UpdateCheck) {
+// clicking "Install" never installs by itself.
+function showUpdateConfirm(binDir: string, version: string) {
   const confirmBtn = el("button", { type: "button" }, ["Yes, install the update"]);
   const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
   cancelBtn.addEventListener("click", () => void renderSettings(binDir));
@@ -1813,7 +1875,7 @@ function showUpdateConfirm(binDir: string, check: UpdateCheck) {
     el("h1", {}, ["Settings"]),
     el("div", { class: "settings-confirm" }, [
       el("p", {}, [
-        `This will download bmug2 ${formatVersion(check.latest)} and re-run install.sh ` +
+        `This will download bmug2 ${version} and re-run install.sh ` +
           "in place over your existing install. Your SYNC/HISTORY data and settings are not touched.",
       ]),
       confirmBtn,
@@ -2117,7 +2179,7 @@ async function runInstall(request: InstallRequest) {
 // needlessly close to its unauthenticated rate limit). Settings'
 // own screen always does its own fresh check instead of reading this,
 // and updates it too, so a return to the dashboard reflects that.
-let cachedUpdateCheck: UpdateCheck | null = null;
+let cachedUpdateCheck: UpdateInfo | null = null;
 
 export async function init() {
   renderLoading();
@@ -2125,7 +2187,7 @@ export async function init() {
     const existing = await invoke<string | null>("check_existing_install");
     if (existing) {
       try {
-        cachedUpdateCheck = await invoke<UpdateCheck>("check_for_update", { binDir: existing });
+        cachedUpdateCheck = await invoke<UpdateInfo>("check_for_update", { binDir: existing });
       } catch {
         // offline, rate-limited, etc. - never blocks reaching the dashboard
       }

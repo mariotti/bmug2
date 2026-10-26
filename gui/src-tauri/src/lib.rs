@@ -261,6 +261,11 @@ fn clear_replication(bin_dir: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_replication_local_supported(bin_dir: String) -> bool {
+    replication::local_supported(std::path::Path::new(&bin_dir))
+}
+
+#[tauri::command]
 fn proton_drive_available() -> bool {
     proton_browse::available()
 }
@@ -363,6 +368,7 @@ pub fn run() {
             get_replication_capability,
             set_replication,
             clear_replication,
+            get_replication_local_supported,
             check_for_update,
             apply_update,
             proton_drive_available,
