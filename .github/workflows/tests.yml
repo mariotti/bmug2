@@ -14,9 +14,19 @@ jobs:
         # exercising the non-GNU branch of the capability detection;
         # zsh is needed for the _bmu completion file's syntax check
         # (macOS ships zsh by default, Ubuntu doesn't); rclone exercises
-        # backmeup.replicate.sh for real; kcov instruments the shell
-        # scripts for line coverage (Linux-only — macOS SIP blocks ptrace)
-        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone kcov
+        # backmeup.replicate.sh for real
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
+      - name: Install kcov
+        # kcov instruments shell scripts via ptrace for line coverage
+        # (Linux-only — macOS SIP blocks ptrace). Not in Ubuntu 24.04's
+        # repos, so build from source. cmake deps are only needed for the
+        # build step and are already on the GitHub-hosted runner image.
+        run: |
+          sudo apt-get install -y cmake libssl-dev libdw-dev binutils-dev
+          git clone --depth 1 https://github.com/SimonKagstrom/kcov.git /tmp/kcov-src
+          cmake -B /tmp/kcov-build -S /tmp/kcov-src
+          cmake --build /tmp/kcov-build --parallel $(nproc)
+          sudo cmake --install /tmp/kcov-build
       - name: Run test suite with coverage
         # kcov wraps sh via ptrace and follows forks, so child processes
         # (the actual bin/*.sh scripts) are instrumented too.
