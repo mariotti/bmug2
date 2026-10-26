@@ -141,6 +141,12 @@ struct LatestRelease {
     tarball_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ReleaseItem {
+    tag_name: Option<String>,
+    prerelease: bool,
+}
+
 #[derive(Debug)]
 struct RunOutput {
     log: String,
@@ -247,40 +253,116 @@ fn read_installed_dirs(bin_dir: &Path) -> Result<InstalledDirs, String> {
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct UpdateCheck {
-    pub current: (u32, u32, u32),
-    pub latest: (u32, u32, u32),
-    pub update_available: bool,
+/// Odd minor or odd patch means an experimental build per this
+/// project's versioning policy (see README.md's "Versioning" section).
+pub fn is_experimental(version: (u32, u32, u32)) -> bool {
+    let (_major, minor, patch) = version;
+    minor % 2 != 0 || patch % 2 != 0
 }
 
-/// Compares the installed CLI's version against the latest GitHub
-/// release's tag. Read-only - never downloads or installs anything;
-/// apply_update is the only function that mutates the install, and is
-/// never called implicitly from here.
-pub fn check_for_update(bin_dir: &Path) -> Result<UpdateCheck, String> {
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UpdateInfo {
+    pub current: (u32, u32, u32),
+    /// Newer stable release than installed, if one exists.
+    pub latest_stable: Option<String>,
+    /// Newer experimental release than installed, if one exists and the
+    /// installed version is itself experimental - never surfaced to a
+    /// stable-track user.
+    pub latest_experimental: Option<String>,
+}
+
+/// Compares the installed CLI's version against GitHub releases.
+/// Always fetches /releases/latest (stable). When the installed version
+/// is experimental (odd minor or odd patch), also fetches
+/// /releases?per_page=10 to find the newest pre-release tag.
+/// Read-only - never downloads or installs anything; apply_update is
+/// the only function that mutates the install, and is never called
+/// implicitly from here.
+pub fn check_for_update(bin_dir: &Path) -> Result<UpdateInfo, String> {
     let current = crate::version::read_installed_version(bin_dir)
         .ok_or_else(|| format!("{} has no BMU_VERSION marker", bin_dir.display()))?;
 
-    let api = run(Command::new("curl").args([
+    let stable_api = run(Command::new("curl").args([
         "-sL",
         "https://api.github.com/repos/mariotti/bmug2/releases/latest",
     ]))?;
-    if !api.ok {
-        return Err(format!("Failed to query GitHub releases API.\n{}", api.log));
+    if !stable_api.ok {
+        return Err(format!(
+            "Failed to query GitHub releases API.\n{}",
+            stable_api.log
+        ));
     }
-    let latest = parse_latest_version(&api.log).ok_or_else(|| {
+    let latest_stable_ver = parse_latest_version(&stable_api.log).ok_or_else(|| {
         format!(
             "Could not find a tag_name in the releases API response.\n{}",
-            api.log
+            stable_api.log
         )
     })?;
 
-    Ok(UpdateCheck {
+    let latest_stable = if latest_stable_ver > current {
+        Some(format!(
+            "v{}.{}.{}",
+            latest_stable_ver.0, latest_stable_ver.1, latest_stable_ver.2
+        ))
+    } else {
+        None
+    };
+
+    let latest_experimental = if is_experimental(current) {
+        fetch_latest_experimental(current)
+    } else {
+        None
+    };
+
+    Ok(UpdateInfo {
         current,
-        latest,
-        update_available: latest > current,
+        latest_stable,
+        latest_experimental,
     })
+}
+
+/// Fetches /releases?per_page=10 and returns the tag of the newest
+/// pre-release that is newer than `current`, or None. Best-effort:
+/// any network or parse failure silently returns None rather than
+/// surfacing an error to the user.
+fn fetch_latest_experimental(current: (u32, u32, u32)) -> Option<String> {
+    let api = run(Command::new("curl").args([
+        "-sL",
+        "https://api.github.com/repos/mariotti/bmug2/releases?per_page=10",
+    ]))
+    .ok()?;
+    if !api.ok {
+        return None;
+    }
+    find_newest_experimental_tag(&api.log, current)
+}
+
+/// Parses a GitHub releases list JSON response and returns the tag name
+/// of the newest pre-release entry that is also newer than `current`.
+/// Strips the leading "v" before comparing versions, same as
+/// parse_latest_version. The "-experimental" suffix is stripped before
+/// numeric comparison since parse_version only handles X.Y.Z.
+pub fn find_newest_experimental_tag(
+    api_response: &str,
+    current: (u32, u32, u32),
+) -> Option<String> {
+    let items: Vec<ReleaseItem> = serde_json::from_str(api_response).ok()?;
+    items
+        .into_iter()
+        .filter(|r| r.prerelease)
+        .filter_map(|r| {
+            let tag = r.tag_name?;
+            let stripped = tag.strip_prefix('v').unwrap_or(&tag);
+            let bare = stripped.split('-').next().unwrap_or(stripped);
+            let ver = crate::version::parse_version(bare)?;
+            if ver > current {
+                Some((ver, tag))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(ver, _)| *ver)
+        .map(|(_, tag)| tag)
 }
 
 /// Re-downloads the latest release and re-runs install.sh IN PLACE
@@ -639,10 +721,10 @@ mod tests {
         .unwrap();
         let result = check_for_update(&dir);
         assert!(result.is_ok(), "check_for_update failed: {:?}", result.err());
-        let check = result.unwrap();
+        let info = result.unwrap();
         assert!(
-            check.update_available,
-            "0.0.1 should always be behind the real latest release"
+            info.latest_stable.is_some(),
+            "0.0.1 should always be behind the real latest stable release"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -778,5 +860,107 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         assert!(find_existing_installs_under(&base).is_empty());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    // --- is_experimental ---
+
+    #[test]
+    fn stable_version_is_not_experimental() {
+        assert!(!is_experimental((2, 18, 0)));
+        assert!(!is_experimental((2, 16, 4)));
+        assert!(!is_experimental((3, 0, 0)));
+    }
+
+    #[test]
+    fn odd_minor_is_experimental() {
+        assert!(is_experimental((2, 17, 0)));
+        assert!(is_experimental((2, 19, 2)));
+    }
+
+    #[test]
+    fn odd_patch_is_experimental() {
+        assert!(is_experimental((2, 18, 1)));
+        assert!(is_experimental((2, 18, 7)));
+    }
+
+    #[test]
+    fn odd_minor_and_odd_patch_is_experimental() {
+        assert!(is_experimental((2, 17, 3)));
+    }
+
+    // --- find_newest_experimental_tag ---
+
+    fn releases_json(items: &[(&str, bool)]) -> String {
+        let entries: Vec<String> = items
+            .iter()
+            .map(|(tag, prerelease)| {
+                format!(r#"{{"tag_name":"{tag}","prerelease":{prerelease}}}"#)
+            })
+            .collect();
+        format!("[{}]", entries.join(","))
+    }
+
+    #[test]
+    fn finds_newest_prerelease_newer_than_current() {
+        // Both pre-releases are newer; v2.18.7 wins.
+        let json = releases_json(&[
+            ("v2.18.7-experimental", true),
+            ("v2.18.5-experimental", true),
+            ("v2.18.0", false),
+        ]);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 0)),
+            Some("v2.18.7-experimental".to_string()),
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_prerelease_is_newer_than_current() {
+        // Installed is already at v2.18.7-experimental.
+        let json = releases_json(&[
+            ("v2.18.7-experimental", true),
+            ("v2.18.5-experimental", true),
+        ]);
+        assert_eq!(find_newest_experimental_tag(&json, (2, 18, 7)), None);
+    }
+
+    #[test]
+    fn returns_none_when_list_has_only_stable_releases() {
+        let json = releases_json(&[("v2.18.0", false), ("v2.16.0", false)]);
+        assert_eq!(find_newest_experimental_tag(&json, (2, 18, 0)), None);
+    }
+
+    #[test]
+    fn returns_none_for_invalid_json() {
+        assert_eq!(find_newest_experimental_tag("not json", (2, 18, 0)), None);
+    }
+
+    // --- check_for_update: error when bin_dir lacks version marker ---
+
+    fn sandbox_with_bmu_version(version: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bmug2-update-info-{}-{}",
+            std::process::id(),
+            {
+                static C: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                C.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            }
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("backmeup.setup.sh"),
+            format!("BMU_DIRRSYNC=\"/tmp/x\"\nBMU_VERSION=\"{version}\"\n"),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn check_for_update_errors_clearly_when_bin_dir_has_no_version_marker() {
+        let dir = sandbox_with_bmu_version("");
+        // A missing/blank version marker means read_installed_version returns None.
+        let err = check_for_update(&dir).unwrap_err();
+        assert!(err.contains("BMU_VERSION"), "error should mention missing marker: {err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

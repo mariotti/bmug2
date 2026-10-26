@@ -1666,6 +1666,8 @@ describe("user journeys (Settings/update)", () => {
     expect(document.querySelector(".error-heading")).toBeNull();
   });
 
+
+
   it("Install -> confirm -> apply_update success renders the dashboard with a success banner", async () => {
     mockSettingsFlow({
       check_for_update: behindStable,
