@@ -12,7 +12,7 @@ mod version;
 
 use config::{BackupSource, Schedule};
 use dashboard::{LocateResult, StatusResult};
-use install::{DefaultPaths, InstallOutcome, UpdateCheck};
+use install::{DefaultPaths, InstallOutcome, UpdateInfo};
 use proton_browse::RemoteEntry;
 use rclone_browse::RemoteEntry as RcloneRemoteEntry;
 use replication::{ReplicationRequest, ReplicationStatus};
@@ -92,7 +92,7 @@ fn install_bmug2(app: AppHandle, request: InstallRequest) -> Result<InstallOutco
 }
 
 #[tauri::command]
-fn check_for_update(bin_dir: String) -> Result<UpdateCheck, String> {
+fn check_for_update(bin_dir: String) -> Result<UpdateInfo, String> {
     install::check_for_update(std::path::Path::new(&bin_dir))
 }
 

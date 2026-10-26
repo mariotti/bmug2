@@ -20,13 +20,14 @@ export interface InstallOutcome {
   log: string;
 }
 
-// Mirrors install.rs's UpdateCheck exactly - a plain struct (not a
+// Mirrors install.rs's UpdateInfo exactly - a plain struct (not a
 // tagged enum like ReplicationStatus/Request), so the tuple fields
-// serialize as plain 3-element arrays.
-export interface UpdateCheck {
+// serialize as plain 3-element arrays. latest_stable/latest_experimental
+// are only present (non-null) when newer than current.
+export interface UpdateInfo {
   current: [number, number, number];
-  latest: [number, number, number];
-  update_available: boolean;
+  latest_stable: string | null;
+  latest_experimental: string | null;
 }
 
 export interface StatusProject {
@@ -411,13 +412,14 @@ export function formatVersion([major, minor, patch]: [number, number, number]): 
 // state, shown unconditionally when relevant, inline action button) -
 // not buildRunBanner's shape, since this must appear on a normal page
 // load with no preceding action.
-export function buildUpdateAvailableNotice(check: UpdateCheck, binDir: string): HTMLElement | null {
-  if (!check.update_available) return null;
+export function buildUpdateAvailableNotice(info: UpdateInfo, binDir: string): HTMLElement | null {
+  if (!info.latest_stable && !info.latest_experimental) return null;
   const goBtn = el("button", { type: "button" }, ["Go to Settings"]);
   goBtn.addEventListener("click", () => void renderSettings(binDir));
+  const available = info.latest_stable ?? info.latest_experimental!;
   return el("div", { class: "untracked-notice update-notice" }, [
     el("p", {}, [
-      `bmug2 ${formatVersion(check.latest)} is available (you have ${formatVersion(check.current)}). `,
+      `bmug2 ${available} is available (you have ${formatVersion(info.current)}). `,
       goBtn,
     ]),
   ]);
@@ -1758,11 +1760,11 @@ function renderInstalling(message: string) {
 export async function renderSettings(binDir: string) {
   app.replaceChildren(el("h1", {}, ["Settings"]), el("p", {}, ["Checking for updates…"]));
 
-  let check: UpdateCheck | null = null;
+  let info: UpdateInfo | null = null;
   let checkError: string | null = null;
   try {
-    check = await invoke<UpdateCheck>("check_for_update", { binDir });
-    cachedUpdateCheck = check;
+    info = await invoke<UpdateInfo>("check_for_update", { binDir });
+    cachedUpdateCheck = info;
   } catch (err) {
     checkError = String(err);
   }
@@ -1771,25 +1773,41 @@ export async function renderSettings(binDir: string) {
   backBtn.addEventListener("click", () => void renderDashboard(binDir));
 
   const versionBox = el("div", { class: "settings-version" }, []);
-  if (check) {
+  if (info) {
     versionBox.append(
-      el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(check.current)]),
-      el("p", {}, [el("strong", {}, ["Latest available: "]), formatVersion(check.latest)]),
+      el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(info.current)]),
     );
-    if (check.update_available) {
-      const updateBtn = el("button", { type: "button" }, ["Update now…"]);
-      updateBtn.addEventListener("click", () => showUpdateConfirm(binDir, check!));
+    const installHelpIcon = helpIcon(
+      "Re-downloads the release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
+      "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
+    );
+    if (info.latest_stable) {
+      const installBtn = el("button", { type: "button" }, ["Install"]);
+      installBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_stable!));
       versionBox.append(
         el("p", {}, [
-          updateBtn,
+          el("strong", {}, ["Latest stable: "]),
+          `${info.latest_stable} `,
+          installBtn,
           " ",
-          helpIcon(
-            "Re-downloads the latest release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
-            "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
-          ),
+          installHelpIcon,
         ]),
       );
-    } else {
+    }
+    if (info.latest_experimental) {
+      const installBtn = el("button", { type: "button" }, ["Install"]);
+      installBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_experimental!));
+      versionBox.append(
+        el("p", {}, [
+          el("strong", {}, ["Latest experimental: "]),
+          `${info.latest_experimental} `,
+          installBtn,
+          " ",
+          installHelpIcon,
+        ]),
+      );
+    }
+    if (!info.latest_stable && !info.latest_experimental) {
       versionBox.append(el("p", { class: "settings-uptodate" }, ["You're up to date."]));
     }
   } else {
@@ -1802,8 +1820,8 @@ export async function renderSettings(binDir: string) {
 }
 
 // Explicit, separate confirmation step before any apply_update call -
-// clicking "Update now" never installs by itself.
-function showUpdateConfirm(binDir: string, check: UpdateCheck) {
+// clicking "Install" never installs by itself.
+function showUpdateConfirm(binDir: string, version: string) {
   const confirmBtn = el("button", { type: "button" }, ["Yes, install the update"]);
   const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
   cancelBtn.addEventListener("click", () => void renderSettings(binDir));
@@ -1813,7 +1831,7 @@ function showUpdateConfirm(binDir: string, check: UpdateCheck) {
     el("h1", {}, ["Settings"]),
     el("div", { class: "settings-confirm" }, [
       el("p", {}, [
-        `This will download bmug2 ${formatVersion(check.latest)} and re-run install.sh ` +
+        `This will download bmug2 ${version} and re-run install.sh ` +
           "in place over your existing install. Your SYNC/HISTORY data and settings are not touched.",
       ]),
       confirmBtn,
@@ -2117,7 +2135,7 @@ async function runInstall(request: InstallRequest) {
 // needlessly close to its unauthenticated rate limit). Settings'
 // own screen always does its own fresh check instead of reading this,
 // and updates it too, so a return to the dashboard reflects that.
-let cachedUpdateCheck: UpdateCheck | null = null;
+let cachedUpdateCheck: UpdateInfo | null = null;
 
 export async function init() {
   renderLoading();
@@ -2125,7 +2143,7 @@ export async function init() {
     const existing = await invoke<string | null>("check_existing_install");
     if (existing) {
       try {
-        cachedUpdateCheck = await invoke<UpdateCheck>("check_for_update", { binDir: existing });
+        cachedUpdateCheck = await invoke<UpdateInfo>("check_for_update", { binDir: existing });
       } catch {
         // offline, rate-limited, etc. - never blocks reaching the dashboard
       }
