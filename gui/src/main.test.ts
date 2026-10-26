@@ -557,6 +557,60 @@ describe("buildReplicationEditor", () => {
     buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
     expect(onSave).not.toHaveBeenCalled();
   });
+
+  it("Save blocks and shows inline error when SYNC and BackUp paths are identical", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+
+    const allInputs = Array.from(editor.querySelectorAll<HTMLInputElement>("input[type=text]"));
+    const visibleInputs = allInputs.filter((i) => {
+      let ancestor: HTMLElement | null = i;
+      while (ancestor) {
+        if (ancestor.style.display === "none") return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    });
+    visibleInputs[0].value = "/cloud/bmug2/SYNC";
+    visibleInputs[1].value = "/cloud/bmug2/SYNC";
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(editor.textContent).toContain("SYNC and BackUp must be different");
+  });
+
+  it("local_path SYNC input has a visible label", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+    expect(editor.textContent).toContain("SYNC destination");
+  });
+
+  it("local_path BackUp input has a visible label", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+    expect(editor.textContent).toContain("BackUp destination");
+  });
+
+  it("Mounted folder option is disabled with tooltip when get_replication_local_supported returns false", async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "get_replication_local_supported") return Promise.resolve(false);
+      return new Promise(() => {});
+    });
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn(), "/the-bin-dir");
+    // Flush microtasks so the async invoke resolves
+    await Promise.resolve();
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const localOption = Array.from(select.options).find((o) => o.value === "local_path");
+    expect(localOption?.disabled).toBe(true);
+    expect(localOption?.title).toContain("2.18.7");
+    vi.mocked(invoke).mockReset();
+  });
 });
 
 describe("buildIgnoreToggles", () => {
@@ -1021,25 +1075,18 @@ describe("buildUpdateAvailableNotice", () => {
     expect(buildUpdateAvailableNotice(info, "/bin")).toBeNull();
   });
 
-  it("names the stable version and offers Go to Settings when only a stable update exists", () => {
-    const info: UpdateInfo = { current: [2, 16, 2], latest_stable: "v2.16.4", latest_experimental: null };
+  it("names both versions and offers a way to Settings when a stable update is available", () => {
+    const info: UpdateInfo = { current: [2, 16, 2], latest_stable: "v2.16.3", latest_experimental: null };
     const notice = buildUpdateAvailableNotice(info, "/bin");
-    expect(notice?.textContent).toContain("v2.16.4");
+    expect(notice?.textContent).toContain("v2.16.3");
     expect(notice?.textContent).toContain("2.16.2");
     expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
   });
 
-  it("names the experimental tag and offers Go to Settings when only an experimental update exists", () => {
-    const info: UpdateInfo = { current: [2, 16, 3], latest_stable: null, latest_experimental: "v2.16.5-experimental" };
+  it("shows the experimental tag when only an experimental update is available", () => {
+    const info: UpdateInfo = { current: [2, 16, 7], latest_stable: null, latest_experimental: "v2.16.9-experimental" };
     const notice = buildUpdateAvailableNotice(info, "/bin");
-    expect(notice?.textContent).toContain("v2.16.5-experimental");
-    expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
-  });
-
-  it("names the stable version (not experimental) when both are available", () => {
-    const info: UpdateInfo = { current: [2, 16, 3], latest_stable: "v2.18.0", latest_experimental: "v2.16.5-experimental" };
-    const notice = buildUpdateAvailableNotice(info, "/bin");
-    expect(notice?.textContent).toContain("v2.18.0");
+    expect(notice?.textContent).toContain("v2.16.9-experimental");
     expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
   });
 });
@@ -1584,11 +1631,33 @@ describe("user journeys (Settings/update)", () => {
     );
   });
 
-  it("offers Install for stable when only a stable update exists, and shows an inline error when the check fails", async () => {
+  it("shows only the stable row when only a stable update is available", async () => {
+    mockSettingsFlow({ check_for_update: behindStable });
+    await renderSettings("/bin");
+    expect(document.querySelector(".settings-version")!.textContent).toContain("Latest stable");
+    expect(document.querySelector(".settings-version")!.textContent).not.toContain("Latest experimental");
+    expect(buttonLabeled(document.body, "Install")).toBeTruthy();
+  });
+
+  it("shows only the experimental row when only an experimental update is available", async () => {
+    mockSettingsFlow({ check_for_update: behindExperimental });
+    await renderSettings("/bin");
+    expect(document.querySelector(".settings-version")!.textContent).toContain("Latest experimental");
+    expect(document.querySelector(".settings-version")!.textContent).not.toContain("Latest stable");
+  });
+
+  it("shows both rows when both stable and experimental updates are available", async () => {
+    mockSettingsFlow({ check_for_update: behindBoth });
+    await renderSettings("/bin");
+    const box = document.querySelector(".settings-version")!.textContent!;
+    expect(box).toContain("Latest stable");
+    expect(box).toContain("Latest experimental");
+  });
+
+  it("offers Install when behind, and shows an inline error (not a full error screen) when the check itself fails", async () => {
     mockSettingsFlow({ check_for_update: behindStable });
     await renderSettings("/bin");
     expect(buttonLabeled(document.body, "Install")).toBeTruthy();
-    expect(document.body.textContent).toContain("v2.16.0");
 
     document.querySelector("#app")!.innerHTML = "";
     mockSettingsFlow({ check_for_update: new Error("offline") });
@@ -1597,22 +1666,7 @@ describe("user journeys (Settings/update)", () => {
     expect(document.querySelector(".error-heading")).toBeNull();
   });
 
-  it("offers Install for experimental when only an experimental update exists", async () => {
-    mockSettingsFlow({ check_for_update: behindExperimental });
-    await renderSettings("/bin");
-    expect(buttonLabeled(document.body, "Install")).toBeTruthy();
-    expect(document.body.textContent).toContain("v2.15.9-experimental");
-    expect(document.body.textContent).not.toContain("Latest stable");
-  });
 
-  it("shows both stable and experimental Install rows when both are available", async () => {
-    mockSettingsFlow({ check_for_update: behindBoth });
-    await renderSettings("/bin");
-    const installBtns = Array.from(document.querySelectorAll("button")).filter((b) => b.textContent === "Install");
-    expect(installBtns.length).toBe(2);
-    expect(document.body.textContent).toContain("v2.16.0");
-    expect(document.body.textContent).toContain("v2.15.9-experimental");
-  });
 
   it("Install -> confirm -> apply_update success renders the dashboard with a success banner", async () => {
     mockSettingsFlow({

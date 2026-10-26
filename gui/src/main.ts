@@ -1086,15 +1086,35 @@ export function buildReplicationEditor(
   current: ReplicationStatus,
   onSave: (request: ReplicationRequest) => void,
   onCancel: () => void,
+  binDir?: string,
 ): HTMLElement {
   const startBackend = current.backend === "off" ? "rclone" : current.backend;
 
+  const localOption = new Option(
+    "Mounted folder (Google Drive, Dropbox, …)",
+    "local_path",
+    startBackend === "local_path",
+    startBackend === "local_path",
+  );
   const backendSelect = el("select", {}) as HTMLSelectElement;
   backendSelect.append(
     new Option("rclone (SYNC + HISTORY)", "rclone", startBackend === "rclone", startBackend === "rclone"),
     new Option("Proton Drive (HISTORY only)", "proton", startBackend === "proton", startBackend === "proton"),
-    new Option("Mounted folder (Google Drive, Dropbox, …)", "local_path", startBackend === "local_path", startBackend === "local_path"),
+    localOption,
   );
+
+  if (binDir !== undefined) {
+    void invoke<boolean>("get_replication_local_supported", { binDir })
+      .then((supported) => {
+        if (!supported) {
+          localOption.disabled = true;
+          localOption.title = "Requires CLI v2.18.7+ — upgrade via Settings";
+        }
+      })
+      .catch(() => {
+        // No Tauri bridge (under test) or command failed - leave enabled.
+      });
+  }
 
   const remoteSyncInput = el("input", {
     type: "text",
@@ -1227,8 +1247,18 @@ export function buildReplicationEditor(
     });
     return btn;
   };
+  const localSyncLabel = el("div", { class: "local-path-label" }, [
+    el("strong", {}, ["SYNC destination"]),
+    el("span", { class: "local-path-desc" }, ["Live mirror of your source folders"]),
+  ]);
+  const localBackupsLabel = el("div", { class: "local-path-label" }, [
+    el("strong", {}, ["BackUp destination"]),
+    el("span", { class: "local-path-desc" }, ["Versioned history of changes and deletions"]),
+  ]);
   const localSyncRow = el("div", { class: "field-row" }, [pathSyncInput, makeLocalBrowseBtn(pathSyncInput)]);
   const localBackupsRow = el("div", { class: "field-row" }, [pathBackupsInput, makeLocalBrowseBtn(pathBackupsInput)]);
+  const localPathErrorEl = el("p", { class: "settings-check-error" }, []) as HTMLParagraphElement;
+  localPathErrorEl.style.display = "none";
 
   // Auto-detect: if both path inputs are empty when the editor opens,
   // ask the backend for the first Google Drive mount it can find and
@@ -1255,8 +1285,11 @@ export function buildReplicationEditor(
     gdriveSync.row.style.display = rclone ? "" : "none";
     gdriveBackups.row.style.display = rclone ? "" : "none";
     protonRemoteRow.style.display = proton ? "" : "none";
+    localSyncLabel.style.display = local ? "" : "none";
     localSyncRow.style.display = local ? "" : "none";
+    localBackupsLabel.style.display = local ? "" : "none";
     localBackupsRow.style.display = local ? "" : "none";
+    localPathErrorEl.style.display = "none";
     if (!rclone) {
       gdriveSync.panel.style.display = "none";
       gdriveBackups.panel.style.display = "none";
@@ -1281,6 +1314,13 @@ export function buildReplicationEditor(
       });
     } else if (backend === "local_path") {
       if (!pathSyncInput.value || !pathBackupsInput.value) return;
+      if (pathSyncInput.value === pathBackupsInput.value) {
+        localPathErrorEl.textContent =
+          "SYNC and BackUp must be different directories — BackUp should be a sibling, e.g. append '-BP'.";
+        localPathErrorEl.style.display = "";
+        return;
+      }
+      localPathErrorEl.style.display = "none";
       onSave({
         backend: "local_path",
         path_sync: pathSyncInput.value,
@@ -1300,8 +1340,11 @@ export function buildReplicationEditor(
     gdriveBackups.panel,
     protonRemoteRow,
     browserPanel,
+    localSyncLabel,
     localSyncRow,
+    localBackupsLabel,
     localBackupsRow,
+    localPathErrorEl,
     el("div", { class: "field-row" }, [saveBtn, cancelBtn]),
   ]);
 }
@@ -1637,6 +1680,7 @@ export function buildReplicationSection(
       () => {
         editRow.style.display = "none";
       },
+      binDir,
     );
     editRow.replaceChildren(editor);
     editRow.style.display = "";
@@ -1777,37 +1821,37 @@ export async function renderSettings(binDir: string) {
     versionBox.append(
       el("p", {}, [el("strong", {}, ["Installed: "]), formatVersion(info.current)]),
     );
-    const installHelpIcon = helpIcon(
-      "Re-downloads the release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
-      "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
-    );
-    if (info.latest_stable) {
-      const installBtn = el("button", { type: "button" }, ["Install"]);
-      installBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_stable!));
-      versionBox.append(
-        el("p", {}, [
-          el("strong", {}, ["Latest stable: "]),
-          `${info.latest_stable} `,
-          installBtn,
-          " ",
-          installHelpIcon,
-        ]),
+    const hasAny = info.latest_stable || info.latest_experimental;
+    if (hasAny) {
+      const installHelp = helpIcon(
+        "Re-downloads the latest release and re-runs install.sh over your existing SYNC/HISTORY - nothing is relocated or re-transferred.",
+        "./install.sh --sync-dir=... --backup-dir=... --index-dir=... --install-dir=...",
       );
-    }
-    if (info.latest_experimental) {
-      const installBtn = el("button", { type: "button" }, ["Install"]);
-      installBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_experimental!));
-      versionBox.append(
-        el("p", {}, [
-          el("strong", {}, ["Latest experimental: "]),
-          `${info.latest_experimental} `,
-          installBtn,
-          " ",
-          installHelpIcon,
-        ]),
-      );
-    }
-    if (!info.latest_stable && !info.latest_experimental) {
+      if (info.latest_stable) {
+        const stableBtn = el("button", { type: "button" }, ["Install"]);
+        stableBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_stable!));
+        versionBox.append(
+          el("p", {}, [
+            el("strong", {}, ["Latest stable: "]),
+            `${info.latest_stable} — `,
+            stableBtn,
+            " ",
+            installHelp,
+          ]),
+        );
+      }
+      if (info.latest_experimental) {
+        const expBtn = el("button", { type: "button" }, ["Install"]);
+        expBtn.addEventListener("click", () => showUpdateConfirm(binDir, info!.latest_experimental!));
+        versionBox.append(
+          el("p", {}, [
+            el("strong", {}, ["Latest experimental: "]),
+            `${info.latest_experimental} — `,
+            expBtn,
+          ]),
+        );
+      }
+    } else {
       versionBox.append(el("p", { class: "settings-uptodate" }, ["You're up to date."]));
     }
   } else {
