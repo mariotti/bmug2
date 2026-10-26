@@ -112,7 +112,7 @@ data loss is a risk you take entirely on yourself.
 ## Why another backup tool?
 
 Sharing one backup system between a Mac and a Linux box, and wanting
-something between a plain backup, a Time Machine, and version control
+something between a plain backup with versioned history and version control
 if you "control" it: `rsync` already does the heavy lifting, and
 `updatedb`/`locate` (available on nearly every Unix by default) index
 it for searching. No proprietary format: the backup depends only on
