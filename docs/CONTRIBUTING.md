@@ -95,3 +95,12 @@ tar-verification *count-mismatch* path (as opposed to `tar` outright
 failing) is not, since faking a tarball with a plausible-but-wrong
 entry count adds real complexity for the same code path already
 covered by the failure case.
+
+### Shell coverage
+
+Line-level coverage for `bin/*.sh` is measured on the Linux CI job via
+`kcov` (using ptrace to follow forks into child processes). macOS SIP
+blocks ptrace, so coverage runs Linux-only. The `shell` flag on Codecov
+carries these results; a badge on the repository README reflects the
+current number. There is no local shell coverage command — running `kcov`
+locally is possible but not part of the routine workflow.
