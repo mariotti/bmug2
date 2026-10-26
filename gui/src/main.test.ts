@@ -496,6 +496,67 @@ describe("buildReplicationEditor", () => {
     cancelBtn.dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  it("has a Mounted folder option in the backend select", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => o.value);
+    expect(options).toContain("local_path");
+  });
+
+  it("starts on local_path pre-filled when currently configured as local_path", () => {
+    const current: ReplicationStatus = {
+      backend: "local_path",
+      path_sync: "/cloud/bmug2/SYNC",
+      path_backups: "/cloud/bmug2/BackUp",
+    };
+    const editor = buildReplicationEditor(current, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("local_path");
+    const inputs = Array.from(editor.querySelectorAll<HTMLInputElement>("input[type=text]"));
+    const pathSyncInput = inputs.find((i) => i.value === "/cloud/bmug2/SYNC");
+    const pathBackupsInput = inputs.find((i) => i.value === "/cloud/bmug2/BackUp");
+    expect(pathSyncInput).not.toBeUndefined();
+    expect(pathBackupsInput).not.toBeUndefined();
+  });
+
+  it("Save emits local_path request with both paths when local_path is selected and both filled", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+
+    // Find visible inputs after switching to local_path (rclone inputs are hidden)
+    const allInputs = Array.from(editor.querySelectorAll<HTMLInputElement>("input[type=text]"));
+    const visibleInputs = allInputs.filter((i) => {
+      let ancestor: HTMLElement | null = i;
+      while (ancestor) {
+        if (ancestor.style.display === "none") return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    });
+    visibleInputs[0].value = "/cloud/bmug2/SYNC";
+    visibleInputs[1].value = "/cloud/bmug2/BackUp";
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).toHaveBeenCalledWith({
+      backend: "local_path",
+      path_sync: "/cloud/bmug2/SYNC",
+      path_backups: "/cloud/bmug2/BackUp",
+    });
+  });
+
+  it("Save does not call onSave for local_path when a path is missing", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "local_path";
+    select.dispatchEvent(new Event("change"));
+    // leave both path inputs empty
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).not.toHaveBeenCalled();
+  });
 });
 
 describe("buildIgnoreToggles", () => {
@@ -1668,6 +1729,19 @@ describe("buildReplicationSection", () => {
     );
     expect(section.textContent).toContain("rclone/proton-drive not found on PATH");
     expect(section.querySelector("button")).toBeNull();
+  });
+
+  it("configured for local_path: shows both paths and Edit/Turn off", () => {
+    const status: ReplicationStatus = {
+      backend: "local_path",
+      path_sync: "/cloud/SYNC",
+      path_backups: "/cloud/BackUp",
+    };
+    const section = buildReplicationSection(status, { ok: true }, "/bin");
+    expect(section.textContent).toContain("/cloud/SYNC");
+    expect(section.textContent).toContain("/cloud/BackUp");
+    expect(() => buttonLabeled(section, "Edit")).not.toThrow();
+    expect(() => buttonLabeled(section, "Turn off")).not.toThrow();
   });
 });
 

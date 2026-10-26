@@ -981,7 +981,7 @@ testConfigureNonInteractiveReplicateBackendInvalidValueErrors() {
         --replicate-backend=bogus \
         < /dev/null > "${SHUNIT_TMPDIR}/badbackend.log" 2>&1
     assertEquals "must reject an unrecognized --replicate-backend= value" 1 $?
-    grep -q "must be rclone, proton, or none" "${SHUNIT_TMPDIR}/badbackend.log"
+    grep -q "must be rclone, proton" "${SHUNIT_TMPDIR}/badbackend.log"
     assertTrue "no clear message rejecting the invalid backend value" $?
 }
 
@@ -1169,6 +1169,123 @@ testConfigureReplicateFlagSwitchClearsPreviousBackend() {
     assertTrue "switching to proton left a stale rclone remote-sync value" $?
     grep -q 'BMU_REPLICATE_REMOTE_BACKUPS=""' "${l_setup}"
     assertTrue "switching to proton left a stale rclone remote-backups value" $?
+}
+
+testConfigureNonInteractiveLocalReplicationSucceeds() {
+    l_home="${SHUNIT_TMPDIR}/localflaghome"
+    l_checkout="${SHUNIT_TMPDIR}/localflagcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=local \
+        --replicate-remote-sync="${l_home}/cloud/SYNC" \
+        --replicate-remote-backups="${l_home}/cloud/BackUp" \
+        < /dev/null > "${SHUNIT_TMPDIR}/localflag-install.log" 2>&1
+    assertEquals "install failed, see localflag-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="local"' "${l_setup}"
+    assertTrue "backend not persisted as local" $?
+    grep -q "BMU_REPLICATE_REMOTE_SYNC=\"${l_home}/cloud/SYNC\"" "${l_setup}"
+    assertTrue "local sync path not persisted" $?
+    grep -q "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_home}/cloud/BackUp\"" "${l_setup}"
+    assertTrue "local backups path not persisted" $?
+    grep -q 'BMU_REPLICATE_PROTON_BIN=""' "${l_setup}"
+    assertTrue "local flag run leaked a proton bin value" $?
+    grep -q 'BMU_REPLICATE_PROTON_REMOTE=""' "${l_setup}"
+    assertTrue "local flag run leaked a proton remote value" $?
+    # rsync -a --delete is the command for the local backend (no rclone)
+    grep -q 'BMU_CMDREPLICATE=' "${l_setup}"
+    assertTrue "BMU_CMDREPLICATE not persisted" $?
+    # must contain rsync and -a
+    l_cmdreplicate=`grep '^BMU_CMDREPLICATE=' "${l_setup}" | sed 's/^BMU_CMDREPLICATE="//' | sed 's/"$//'`
+    echo "${l_cmdreplicate}" | grep -q ' -a'
+    assertTrue "local backend command should use rsync -a flags" $?
+}
+
+testConfigureNonInteractiveLocalReplicationMissingCompanionFlagErrors() {
+    l_home="${SHUNIT_TMPDIR}/localmissingcompanionhome"
+    l_checkout="${SHUNIT_TMPDIR}/localmissingcompanioncheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.configure.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=local \
+        --replicate-remote-sync="${l_home}/cloud/SYNC" \
+        < /dev/null > "${SHUNIT_TMPDIR}/localmissingcompanion.log" 2>&1
+    assertEquals "must reject local backend missing --replicate-remote-backups=" 1 $?
+    grep -q "requires both" "${SHUNIT_TMPDIR}/localmissingcompanion.log"
+    assertTrue "no clear message about the missing companion flag" $?
+}
+
+testConfigureNonInteractiveReplicateBackendInvalidValueIncludesLocal() {
+    # Regression guard: the updated error message now lists "local" as a
+    # valid option alongside rclone, proton, and none.
+    l_home="${SHUNIT_TMPDIR}/badbackendlocalhome"
+    l_checkout="${SHUNIT_TMPDIR}/badbackendlocalcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.configure.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=bogus2 \
+        < /dev/null > "${SHUNIT_TMPDIR}/badbackendlocal.log" 2>&1
+    assertEquals "must reject an unrecognized --replicate-backend= value" 1 $?
+    grep -q "local" "${SHUNIT_TMPDIR}/badbackendlocal.log"
+    assertTrue "error message does not mention 'local' as a valid option" $?
+}
+
+testReplicateShUsesPlainRsyncForLocalBackend() {
+    # The local backend uses rsync -a --delete as BMU_CMDREPLICATE and
+    # must not pass rclone-specific flags (--stats, --fast-list) to it.
+    l_home="${SHUNIT_TMPDIR}/localreplicatehome"
+    l_checkout="${SHUNIT_TMPDIR}/localreplicatecheckout"
+    l_fakersync="${SHUNIT_TMPDIR}/localreplicate-fakersync"
+    mkdir -p "${l_checkout}" "${l_fakersync}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    # a fake rsync that logs its args so we can check them
+    l_rsync_log="${SHUNIT_TMPDIR}/localreplicate-rsync.log"
+    printf '#!/bin/sh\necho "$@" >> "%s"\n' "${l_rsync_log}" > "${l_fakersync}/rsync"
+    chmod +x "${l_fakersync}/rsync"
+
+    l_sync_dst="${l_home}/cloud/SYNC"
+    l_bkup_dst="${l_home}/cloud/BackUp"
+    mkdir -p "${l_home}/sync/testproj" "${l_home}/sync-BP/testproj" \
+             "${l_sync_dst}" "${l_bkup_dst}"
+    echo "data" > "${l_home}/sync/testproj/file.txt"
+
+    # configure with local backend, injecting the fake rsync so it gets
+    # detected and written into the generated setup file
+    PATH="${l_fakersync}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=local \
+        --replicate-remote-sync="${l_sync_dst}" \
+        --replicate-remote-backups="${l_bkup_dst}" \
+        < /dev/null > "${SHUNIT_TMPDIR}/localreplicate-install.log" 2>&1
+    assertEquals "install failed, see localreplicate-install.log" 0 $?
+
+    PATH="${l_fakersync}:${PATH}" "${l_home}/usr/bmu/bin/backmeup.replicate.sh" \
+        > "${SHUNIT_TMPDIR}/localreplicate-run.log" 2>&1
+    assertEquals "replicate.sh must succeed with local backend, see localreplicate-run.log" 0 $?
+
+    # rclone-specific flags must NOT appear in the rsync invocations
+    assertFalse "--stats flag must not be passed to rsync for local backend" \
+        "grep -q -- '--stats' '${l_rsync_log}'"
+    assertFalse "--fast-list flag must not be passed to rsync for local backend" \
+        "grep -q -- '--fast-list' '${l_rsync_log}'"
+    # trailing slash on source: rsync mirrors contents rather than nesting
+    grep -q "${l_home}/sync/" "${l_rsync_log}"
+    assertTrue "sync source should have a trailing slash for rsync content mirroring" $?
+    grep -q "${l_home}/sync-BP/" "${l_rsync_log}"
+    assertTrue "backups source should have a trailing slash for rsync content mirroring" $?
 }
 
 testConfigureDecliningInteractivelyPreservesExistingReplication() {

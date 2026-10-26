@@ -259,8 +259,21 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_REPLICATE_PROTON_REMOTE="${BMU_CLI_REPLICATE_PROTON_REMOTE:-/bmug2/`hostname -s 2>/dev/null`}"
             echo "Off-site replication configured (proton, HISTORY only, non-interactive)."
             ;;
+        local)
+            if [ -z "${BMU_CLI_REPLICATE_REMOTE_SYNC}" ] || [ -z "${BMU_CLI_REPLICATE_REMOTE_BACKUPS}" ]; then
+                echo "ERROR: --replicate-backend=local requires both --replicate-remote-sync= and --replicate-remote-backups=." >&2
+                exit 1
+            fi
+            BMU_REPLICATE_PROTON_BIN=""
+            BMU_REPLICATE_PROTON_REMOTE=""
+            BMU_REPLICATE_BACKEND="local"
+            BMU_CMDREPLICATE="${BMU_CMDRSYNC} -a --delete"
+            BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
+            BMU_REPLICATE_REMOTE_BACKUPS="${BMU_CLI_REPLICATE_REMOTE_BACKUPS}"
+            echo "Off-site replication configured (local path, non-interactive)."
+            ;;
         *)
-            echo "ERROR: --replicate-backend= must be rclone, proton, or none (got: ${BMU_CLI_REPLICATE_BACKEND})" >&2
+            echo "ERROR: --replicate-backend= must be rclone, proton, local, or none (got: ${BMU_CLI_REPLICATE_BACKEND})" >&2
             exit 1
             ;;
     esac

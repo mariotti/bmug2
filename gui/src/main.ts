@@ -103,11 +103,13 @@ export interface IgnoreSettingsInput {
 export type ReplicationStatus =
   | { backend: "off" }
   | { backend: "rclone"; remote_sync: string; remote_backups: string }
-  | { backend: "proton"; remote: string };
+  | { backend: "proton"; remote: string }
+  | { backend: "local_path"; path_sync: string; path_backups: string };
 
 export type ReplicationRequest =
   | { backend: "rclone"; remote_sync: string; remote_backups: string }
-  | { backend: "proton"; remote: string | null };
+  | { backend: "proton"; remote: string | null }
+  | { backend: "local_path"; path_sync: string; path_backups: string };
 
 export type ReplicationCapability = { ok: true } | { ok: false; message: string };
 
@@ -1089,6 +1091,7 @@ export function buildReplicationEditor(
   backendSelect.append(
     new Option("rclone (SYNC + HISTORY)", "rclone", startBackend === "rclone", startBackend === "rclone"),
     new Option("Proton Drive (HISTORY only)", "proton", startBackend === "proton", startBackend === "proton"),
+    new Option("Mounted folder (Google Drive, Dropbox, …)", "local_path", startBackend === "local_path", startBackend === "local_path"),
   );
 
   const remoteSyncInput = el("input", {
@@ -1193,16 +1196,71 @@ export function buildReplicationEditor(
     });
   const protonRemoteRow = el("div", { class: "field-row" }, [protonRemoteInput, browseBtn]);
 
+  // Local/mounted-folder path inputs - each with a native OS folder
+  // picker (same directoryField pattern used in the install form; the
+  // local mount is a real directory so the native dialog is the right
+  // UX, not an in-app tree picker over a remote). Pre-populated from
+  // current status if available, and auto-detected from find_gdrive_mount
+  // if both are still empty after the editor opens.
+  const pathSyncInput = el("input", {
+    type: "text",
+    placeholder: "/Volumes/GoogleDrive/My Drive/bmug2/SYNC",
+  }) as HTMLInputElement;
+  pathSyncInput.value = current.backend === "local_path" ? current.path_sync : "";
+
+  const pathBackupsInput = el("input", {
+    type: "text",
+    placeholder: "/Volumes/GoogleDrive/My Drive/bmug2/BackUp",
+  }) as HTMLInputElement;
+  pathBackupsInput.value = current.backend === "local_path" ? current.path_backups : "";
+
+  const makeLocalBrowseBtn = (input: HTMLInputElement): HTMLButtonElement => {
+    const btn = el("button", { type: "button", class: "browse-btn" }, ["Browse…"]) as HTMLButtonElement;
+    btn.addEventListener("click", () => {
+      void open({ directory: true, defaultPath: input.value || undefined }).then((selected) => {
+        if (typeof selected === "string") {
+          input.value = selected;
+        }
+      });
+    });
+    return btn;
+  };
+  const localSyncRow = el("div", { class: "field-row" }, [pathSyncInput, makeLocalBrowseBtn(pathSyncInput)]);
+  const localBackupsRow = el("div", { class: "field-row" }, [pathBackupsInput, makeLocalBrowseBtn(pathBackupsInput)]);
+
+  // Auto-detect: if both path inputs are empty when the editor opens,
+  // ask the backend for the first Google Drive mount it can find and
+  // pre-fill both paths with the conventional bmug2 subdirectory layout.
+  // Only fires when the backend reports a path - silently a no-op if
+  // nothing is found (avoids a confusing "detecting…" state for users
+  // who don't have Google Drive installed).
+  void invoke<string | null>("find_gdrive_mount")
+    .then((mountPath) => {
+      if (mountPath && !pathSyncInput.value && !pathBackupsInput.value) {
+        pathSyncInput.value = `${mountPath}/bmug2/SYNC`;
+        pathBackupsInput.value = `${mountPath}/bmug2/BackUp`;
+      }
+    })
+    .catch(() => {
+      // No Tauri bridge (under test) or command failed - leave blank.
+    });
+
   const updateVisibility = () => {
-    const rclone = backendSelect.value === "rclone";
+    const backend = backendSelect.value;
+    const rclone = backend === "rclone";
+    const proton = backend === "proton";
+    const local = backend === "local_path";
     gdriveSync.row.style.display = rclone ? "" : "none";
     gdriveBackups.row.style.display = rclone ? "" : "none";
-    protonRemoteRow.style.display = rclone ? "none" : "";
-    if (rclone) {
-      browserPanel.style.display = "none";
-    } else {
+    protonRemoteRow.style.display = proton ? "" : "none";
+    localSyncRow.style.display = local ? "" : "none";
+    localBackupsRow.style.display = local ? "" : "none";
+    if (!rclone) {
       gdriveSync.panel.style.display = "none";
       gdriveBackups.panel.style.display = "none";
+    }
+    if (!proton) {
+      browserPanel.style.display = "none";
     }
   };
   updateVisibility();
@@ -1211,12 +1269,20 @@ export function buildReplicationEditor(
   const saveBtn = el("button", { type: "button" }, ["Save"]);
   const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
   saveBtn.addEventListener("click", () => {
-    if (backendSelect.value === "rclone") {
+    const backend = backendSelect.value;
+    if (backend === "rclone") {
       if (!remoteSyncInput.value || !remoteBackupsInput.value) return;
       onSave({
         backend: "rclone",
         remote_sync: remoteSyncInput.value,
         remote_backups: remoteBackupsInput.value,
+      });
+    } else if (backend === "local_path") {
+      if (!pathSyncInput.value || !pathBackupsInput.value) return;
+      onSave({
+        backend: "local_path",
+        path_sync: pathSyncInput.value,
+        path_backups: pathBackupsInput.value,
       });
     } else {
       onSave({ backend: "proton", remote: protonRemoteInput.value || null });
@@ -1232,6 +1298,8 @@ export function buildReplicationEditor(
     gdriveBackups.panel,
     protonRemoteRow,
     browserPanel,
+    localSyncRow,
+    localBackupsRow,
     el("div", { class: "field-row" }, [saveBtn, cancelBtn]),
   ]);
 }
@@ -1577,10 +1645,14 @@ export function buildReplicationSection(
     setBtn.addEventListener("click", showEdit);
     container.replaceChildren("Off ", setBtn);
   } else {
-    const label =
-      status.backend === "rclone"
-        ? `rclone -> ${status.remote_sync} / ${status.remote_backups}`
-        : `Proton Drive (HISTORY only) -> ${status.remote}`;
+    let label: string;
+    if (status.backend === "rclone") {
+      label = `rclone -> ${status.remote_sync} / ${status.remote_backups}`;
+    } else if (status.backend === "proton") {
+      label = `Proton Drive (HISTORY only) -> ${status.remote}`;
+    } else {
+      label = `Mounted folder -> ${status.path_sync} / ${status.path_backups}`;
+    }
     const editBtn = el("button", { type: "button" }, ["Edit"]);
     editBtn.addEventListener("click", showEdit);
     const offBtn = el("button", { type: "button", class: "remove-btn" }, ["Turn off"]);
