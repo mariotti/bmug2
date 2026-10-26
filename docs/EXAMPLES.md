@@ -47,7 +47,7 @@ lives on — see
 and [DESTINATIONS.md](DESTINATIONS.md) — so a dead laptop disk doesn't
 take both copies with it.
 
-**Time Machine, without the lock-in.** Plain files, on a disk you
+**Time Machine-style history, without the lock-in.** Plain files, on a disk you
 choose, in a format you don't need bmug2 (or any tool) installed to
 read. Every past version already lives at
 `HISTORY/<project>/B-<date>/` as an ordinary directory tree — no
