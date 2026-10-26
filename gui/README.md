@@ -95,12 +95,22 @@ well-known install location" stance):
   presents as a local directory — no OAuth, no rclone, just rsync into
   the mount; see docs/DESTINATIONS.md) - by shelling out to
   `backmeup.configure.sh`'s `--replicate-*` flags, the same
-  non-reimplementing-the-CLI's-own-logic approach as install/scheduling. Requires an install running bmug2
-  v2.14.0+ (whichever version first ships these flags); an older
-  install shows a disabled panel with an upgrade message instead of
-  being locked out of the whole app, since the CLI itself already fails
-  loudly on an unrecognized flag - no need to bump the GUI's blanket
-  `MIN_COMPATIBLE_VERSION` just for this one optional feature. The
+  non-reimplementing-the-CLI's-own-logic approach as install/scheduling.
+  Requires bmug2 v2.14.0+ for the rclone and Proton backends; the
+  Mounted folder backend additionally requires v2.18.7+ (it uses
+  `--replicate-backend=local`, added in that release) and shows as
+  disabled with an explanatory tooltip on older installs rather than
+  locking out the whole panel. The Mounted folder fields are labelled
+  "SYNC destination" and "BackUp destination"; on macOS, the panel
+  auto-detects a Google Drive for Desktop mount at
+  `~/Library/CloudStorage/GoogleDrive-*/My Drive` and pre-fills both
+  paths (`<mount>/bmug2/SYNC` and `<mount>/bmug2/BackUp`) when both
+  inputs are empty. An inline error fires if both paths are set to the
+  same value before saving. Older installs (before v2.14.0) still show
+  a disabled panel with an upgrade message rather than being locked out
+  of the whole app — the CLI itself already fails loudly on an
+  unrecognized flag, so no need to bump the GUI's blanket
+  `MIN_COMPATIBLE_VERSION` for this optional feature. The
   Proton remote field has a "Browse…" button that opens an in-app
   folder picker (`gui/src-tauri/src/proton_browse.rs`), listing and
   creating folders via direct `proton-drive` CLI calls rather than a
@@ -151,10 +161,14 @@ well-known install location" stance):
   `check_for_update`/`apply_update`): the dashboard does a best-effort
   check against GitHub's latest release once per app session (never
   blocks the dashboard or surfaces an error if offline) and shows a
-  notice if a newer version exists. A dedicated Settings screen
-  (reachable via a button next to the dashboard's title) shows
-  installed vs. latest version and lets you trigger the same check
-  manually, or install the update - always behind an explicit
+  notice if a newer version exists. When the installed version is
+  experimental (odd MINOR or odd PATCH — the project's own convention),
+  the check also fetches pre-releases so you can see if a newer
+  experimental exists, not just the latest stable. A dedicated Settings
+  screen (reachable via a button next to the dashboard's title) shows
+  installed vs. latest version — two rows when both a stable and an
+  experimental update are available — and lets you trigger the same
+  check manually, or install either update, always behind an explicit
   confirmation step, never automatic. Updating re-runs `install.sh`
   against the install's own existing sync/backup/index/install
   directories (never new ones, which would relocate rather than
