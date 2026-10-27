@@ -98,26 +98,18 @@ covered by the failure case.
 
 ### Shell coverage badge
 
-The `linux-coverage` CI job measures line coverage of `bin/*.sh` and
-updates the badge in the `badges` branch. It uses bashcov (a Ruby gem;
-Ruby is pre-installed on the GitHub runner). Because the scripts use
-`#!/bin/sh` — which on Ubuntu 24.04 is `dash`, not traceable by
-bashcov's DEBUG-trap mechanism — the coverage job temporarily redirects
-`/bin/sh → bash` before running. The correctness test (`linux` job) still
-runs under real sh/dash; this job only measures which lines execute.
+The `linux-coverage` CI job measures line coverage of `bin/*.sh` using
+bash's built-in xtrace (`set -x`) — no external tool needed.
+
+`bin/*.sh` scripts use `#!/bin/sh` (dash on Ubuntu 24.04). A direct
+symlink `/bin/sh → bash` fails: bash detects `argv[0]=="sh"` and enters
+POSIX mode, where `BASH_XTRACEFD` is ignored. The fix is a tiny wrapper
+at `/bin/sh` that re-execs bash with its own path as `argv[0]`, putting
+bash in normal mode. Xtrace flows to fd 9 (not stderr), tagged with a
+recognisable `XTRACE:file:line:` prefix. After the run, the job counts
+unique covered lines in paths containing `/bin/backmeup`, divides by
+non-blank non-comment lines in the source `bin/*.sh`, and writes the
+percentage to the `badges` branch as a shields.io endpoint JSON.
 
 The badge is **not** a required check and only updates on pushes to
-`main`. Coverage is scoped to `bin/` via a `.simplecov` filter created
-in the runner at runtime (not checked in). To run locally:
-
-```sh
-gem install bashcov --no-document
-sudo ln -sf /usr/bin/bash /bin/sh   # Linux only
-cat > .simplecov << 'EOF'
-SimpleCov.configure do
-  add_filter { |f| !f.filename.include?('/bin/') }
-end
-EOF
-bashcov -- bash tests/test_backmeup.sh
-# result: coverage/.last_run.json
-```
+`main`. Cannot be reproduced on macOS (SIP blocks modifying `/bin/sh`).

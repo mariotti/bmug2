@@ -27,42 +27,56 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
-      - name: Install bashcov
-        # Ruby is pre-installed on ubuntu-latest; no apt step needed.
-        # sudo required — the system gem dir (/var/lib/gems) is root-owned.
-        # Pinned to < 4: bashcov 4.x is incompatible with the /bin/sh→bash
-        # redirect used below (it tries to exec the bash binary as a script,
-        # producing exit 126). bashcov 3.x uses a simpler PS4/xtrace mechanism
-        # that works correctly with the redirect.
-        run: sudo gem install bashcov --version "< 4" --no-document
       - name: Run test suite with coverage
-        # bashcov instruments bash scripts via the DEBUG trap. The bin/*.sh
-        # scripts use #!/bin/sh, which on Ubuntu 24.04 is dash — not
-        # traceable by bashcov. Redirecting /bin/sh → bash for this job
-        # makes all #!/bin/sh subprocesses run under bash so they are
-        # instrumented. The correctness test (linux job above) still runs
-        # under real sh/dash; this job measures coverage only.
-        # .simplecov filters to bin/ so shunit2 and the test harness are
-        # excluded from the percentage.
+        # No external tool needed — uses bash's own xtrace (set -x) with a
+        # recognisable PS4 prefix, directed to fd 9 via BASH_XTRACEFD.
+        #
+        # The bin/*.sh scripts use #!/bin/sh.  On Ubuntu 24.04 that's dash,
+        # which doesn't support BASH_XTRACEFD.  A direct symlink /bin/sh→bash
+        # doesn't work either: bash detects argv[0]=="sh" and enters POSIX
+        # mode, where BASH_XTRACEFD is also ignored.
+        #
+        # Fix: replace /bin/sh with a tiny wrapper that re-execs bash with the
+        # wrapper's own path as argv[0].  The kernel then invokes bash with
+        # argv[0] == /usr/bin/bash (from the wrapper's shebang), so bash starts
+        # in normal mode — BASH_XTRACEFD works, and xtrace flows to fd 9 for
+        # the wrapper, the original #!/bin/sh script, and every subprocess.
         run: |
-          sudo ln -sf /usr/bin/bash /bin/sh
-          cat > .simplecov << 'EOF'
-          SimpleCov.configure do
-            add_filter { |f| !f.filename.include?('/bin/') }
-          end
-          EOF
-          bashcov -- bash tests/test_backmeup.sh
+          cat > /tmp/sh_wrapper << 'WRAPPER'
+          #!/usr/bin/bash
+          exec /usr/bin/bash "$@"
+          WRAPPER
+          chmod +x /tmp/sh_wrapper
+          sudo ln -sf /tmp/sh_wrapper /bin/sh
+
+          exec 9>/tmp/sh_trace.log
+          export BASH_XTRACEFD=9
+          export SHELLOPTS=xtrace
+          export PS4='XTRACE:${BASH_SOURCE}:${LINENO}: '
+
+          bash tests/test_backmeup.sh
+          TEST_EXIT=$?
+
+          # Scripts are installed to a temp dir; paths contain /bin/backmeup.
+          COVERED=$(grep 'XTRACE:.*/bin/backmeup' /tmp/sh_trace.log \
+            | sed 's|^XTRACE:||' | cut -d: -f1,2 | sort -u | wc -l | tr -d ' ')
+          # Non-blank, non-comment source lines (the denominator).
+          TOTAL=$(grep -rh '' "${GITHUB_WORKSPACE}"/bin/*.sh \
+            | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' \
+            | wc -l | tr -d ' ')
+          [ "${TOTAL:-0}" -eq 0 ] && TOTAL=1
+          PCT=$((COVERED * 100 / TOTAL))
+          echo "Shell coverage: ${COVERED}/${TOTAL} lines = ${PCT}%"
+          echo "SHELL_PCT=${PCT}" >> "$GITHUB_ENV"
+          exit "$TEST_EXIT"
       - name: Update shell coverage badge
-        # Only update the badge on pushes to main — GITHUB_TOKEN is
-        # read-only on fork PRs, and we only want the badge to reflect
-        # the latest merged state.
+        # Only update on pushes to main — GITHUB_TOKEN is read-only on fork PRs.
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # .covered_percent = SimpleCov 0.x (bashcov 3.x); .line = SimpleCov 1.x
-          PCT=$(jq -r '(.result.covered_percent // .result.line) | floor' coverage/.last_run.json)
+          PCT="${SHELL_PCT:-0}"
           if [ "$PCT" -ge 90 ]; then COLOR="brightgreen"
           elif [ "$PCT" -ge 70 ]; then COLOR="green"
           elif [ "$PCT" -ge 50 ]; then COLOR="yellow"
