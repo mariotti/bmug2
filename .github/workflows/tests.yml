@@ -7,6 +7,12 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    # Exposed for the update-test-count-badge aggregator below. Only
+    # the linux variant exports a count (not macos) - the two suites
+    # should run the same tests, so sampling one is enough; and the
+    # aggregator just needs one number per language, not two.
+    outputs:
+      count: ${{ steps.test-suite.outputs.count }}
     steps:
       - uses: actions/checkout@v5
       - name: Install dependencies
@@ -17,7 +23,15 @@ jobs:
         # backmeup.replicate.sh for real
         run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
       - name: Run test suite
-        run: sh tests/test_backmeup.sh
+        id: test-suite
+        # tee for the badge-count parse below; pipefail is on by default
+        # in bash-shell steps, so the suite's exit code still gates the
+        # job (tee's own exit code doesn't shadow it).
+        run: |
+          sh tests/test_backmeup.sh | tee /tmp/shell-output.log
+          count=$(grep -oE "^Ran [0-9]+ tests" /tmp/shell-output.log | awk '{print $2}')
+          [ -n "$count" ] || { echo "Failed to parse shell test count"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
 
   macos:
     runs-on: macos-latest
@@ -32,6 +46,8 @@ jobs:
 
   mcp-linux:
     runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.test-suite.outputs.count }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v7
@@ -42,7 +58,13 @@ jobs:
       - name: Install bmug2-mcp
         run: pip install -e "./mcp[dev]"
       - name: Run test suite
-        run: pytest mcp/tests --cov=bmug2_mcp --cov-report=xml
+        id: test-suite
+        run: |
+          pytest mcp/tests --cov=bmug2_mcp --cov-report=xml | tee /tmp/pytest-output.log
+          # pytest prints "N passed in X.XXs" on the final summary line.
+          count=$(grep -oE "[0-9]+ passed in" /tmp/pytest-output.log | tail -1 | awk '{print $1}')
+          [ -n "$count" ] || { echo "Failed to parse pytest count"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
         # Codecov's own upload hiccups shouldn't fail this job - pytest's
         # exit code above is what actually gates CI.
@@ -76,6 +98,9 @@ jobs:
 
   gui-linux:
     runs-on: ubuntu-latest
+    outputs:
+      ts_count: ${{ steps.ts-tests.outputs.count }}
+      rust_count: ${{ steps.rust-tests.outputs.count }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -105,8 +130,14 @@ jobs:
         working-directory: gui
         run: npm run build
       - name: Run frontend unit tests with coverage
+        id: ts-tests
         working-directory: gui
-        run: npm test -- --coverage --coverage.reporter=lcov
+        run: |
+          npm test -- --coverage --coverage.reporter=lcov | tee /tmp/vitest-output.log
+          # vitest prints "Tests  N passed (N)" on its summary line.
+          count=$(grep -oE "Tests[[:space:]]+[0-9]+ passed" /tmp/vitest-output.log | awk '{print $2}')
+          [ -n "$count" ] || { echo "Failed to parse vitest count"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -115,6 +146,7 @@ jobs:
           flags: typescript
           fail_ci_if_error: false
       - name: Run Rust test suite with coverage
+        id: rust-tests
         working-directory: gui/src-tauri
         # cargo-llvm-cov wraps cargo test itself - this replaces the
         # plain `cargo test` run, not a second pass over the suite.
@@ -128,7 +160,13 @@ jobs:
         # whole suite is the simple fix; this binary's tests are fast enough
         # (well under a minute total) that losing parallelism here is cheap
         # compared to chasing a non-deterministic failure.
-        run: cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=1
+        run: |
+          cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=1 | tee /tmp/cargo-output.log
+          # cargo prints "test result: ok. N passed; ..." once per test
+          # binary (lib, main, doc-tests) - sum them for the real total.
+          count=$(grep -oE "test result: ok\. [0-9]+ passed" /tmp/cargo-output.log | awk '{sum+=$4} END{print sum}')
+          [ -n "$count" ] && [ "$count" != "0" ] || { echo "Failed to parse cargo test count"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -188,3 +226,46 @@ jobs:
           files: gui/src-tauri/lcov.info
           flags: rust
           fail_ci_if_error: false
+
+  # Sums the four CI suites' real test counts and force-pushes a single
+  # orphan commit to the `badges` branch with a shields.io endpoint-badge
+  # JSON. Runs only on push-to-main so PR branches don't flap the badge;
+  # README.md's `tests` badge reads directly from this branch's raw URL.
+  # Force-push keeps the branch at one commit forever (shields.io reads
+  # the tip; past counts aren't meaningful on their own).
+  update-test-count-badge:
+    needs: [linux, mcp-linux, gui-linux]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Compute total and push badge JSON
+        env:
+          SHELL_COUNT: ${{ needs.linux.outputs.count }}
+          PYTHON_COUNT: ${{ needs.mcp-linux.outputs.count }}
+          TS_COUNT: ${{ needs.gui-linux.outputs.ts_count }}
+          RUST_COUNT: ${{ needs.gui-linux.outputs.rust_count }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eo pipefail
+          for v in SHELL_COUNT PYTHON_COUNT TS_COUNT RUST_COUNT; do
+            if [ -z "${!v}" ]; then
+              echo "$v is empty - aborting rather than publishing a wrong total" >&2
+              exit 1
+            fi
+          done
+          TOTAL=$((SHELL_COUNT + PYTHON_COUNT + TS_COUNT + RUST_COUNT))
+          BADGE_JSON="{\"schemaVersion\":1,\"label\":\"tests\",\"message\":\"${TOTAL} passing\",\"color\":\"brightgreen\"}"
+          echo "Publishing: $BADGE_JSON"
+
+          work=$(mktemp -d)
+          cd "$work"
+          echo "$BADGE_JSON" > test-count.json
+          git init -q -b badges
+          git -c user.email="noreply@github.com" -c user.name="bmug2 badge updater" add test-count.json
+          git -c user.email="noreply@github.com" -c user.name="bmug2 badge updater" \
+            commit -q -m "update test count: ${TOTAL} (shell:${SHELL_COUNT}, python:${PYTHON_COUNT}, rust:${RUST_COUNT}, ts:${TS_COUNT})"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git push -f origin badges
