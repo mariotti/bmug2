@@ -111,7 +111,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: llvm-tools-preview
+          # clippy here so the warnings-as-errors step below can run on
+          # the CI toolchain (not on whatever each dev happens to have
+          # locally); CLAUDE.md's safety-boundaries section calls out
+          # that any warning is in-scope for the current PR, and this
+          # is how CI actually enforces that for the Rust side.
+          components: llvm-tools-preview, clippy
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: actions/setup-node@v7
         with:
@@ -129,6 +134,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf build-essential curl wget file libssl-dev libgtk-3-dev
+      - name: Rust lint (clippy, warnings-as-errors)
+        # `-D warnings` promotes every clippy lint AND every rustc
+        # warning (clippy wraps rustc) to a hard failure, so a new
+        # unused import, deprecated-API call, or clippy nit all fail
+        # CI instead of just showing in the log. `--all-targets`
+        # covers lib + tests + examples - a warning in a test file
+        # counts just as much as one in src/.
+        working-directory: gui/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci

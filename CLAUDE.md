@@ -14,7 +14,10 @@ those here, just the exact commands.
    `fix/`, `gui/`, `docs/`, `chore/version-X.Y.Z`.
 3. Run the full verification suite **before** committing:
    - `bash tests/test_backmeup.sh`
-   - `cd gui/src-tauri && cargo test && cargo clippy --all-targets`
+   - `cd gui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings`
+     (the `-- -D warnings` promotes any clippy or rustc warning to a
+     hard error, matching what CI enforces now - without it, a locally-
+     passing branch can still fail the clippy step in CI)
    - `cd gui && npx tsc --noEmit && npm run test`
    - For a GUI change, also a real sanity check:
      `cd gui && npm run tauri dev` (confirm it compiles and launches;
