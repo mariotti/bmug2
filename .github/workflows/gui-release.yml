@@ -155,15 +155,27 @@ jobs:
             echo "Signing $rpm"
             rpm --addsign "$rpm"
           done
-          # rpm --checksig has its own trust db separate from gpg's -
-          # even a correctly-attached signature prints "SIGNATURES NOT OK"
-          # unless the signer's public key is imported into rpm's keyring
-          # too. Doing this from the committed docs/bmug2-releases.asc
-          # file (rather than re-exporting from the just-imported gpg
-          # keyring) doubles as a drift check: if someone ever rotates
-          # the GPG_PRIVATE_KEY secret without updating the committed
-          # public key, --checksig below fails and the build does too.
+          # rpm --checksig has its own trust db separate from gpg's,
+          # so the signer's public key must also be imported there.
+          # Importing from the committed docs/bmug2-releases.asc file
+          # (rather than re-exporting from the gpg keyring) doubles as
+          # a drift check: if GPG_PRIVATE_KEY is ever rotated without
+          # updating the committed public key, --checksig below fails
+          # and so does the build.
           sudo rpm --import docs/bmug2-releases.asc
+          echo "=== Keys in rpm trust db (sudo view) ==="
+          sudo rpm -qa 'gpg-pubkey*' || true
+          echo "=== Keys in rpm trust db (user view) ==="
+          rpm -qa 'gpg-pubkey*' || true
+          echo "=== GPG signing-keyring fingerprint ==="
+          gpg --list-keys --with-colons | awk -F: '/^fpr/{print $10}'
+          echo "=== docs/bmug2-releases.asc fingerprint ==="
+          gpg --show-keys --with-colons docs/bmug2-releases.asc | awk -F: '/^fpr/{print $10}'
+          for rpm in "${rpms[@]}"; do
+            echo "=== rpm --checksig --verbose for $rpm ==="
+            rpm --checksig --verbose "$rpm" || echo "(checksig exit $?)"
+          done
+          # Final gate (unchanged): fail the job if ANY rpm fails checksig.
           for rpm in "${rpms[@]}"; do
             rpm --checksig "$rpm"
           done
