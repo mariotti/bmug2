@@ -26,10 +26,14 @@ jobs:
         id: test-suite
         # tee for the badge-count parse below; pipefail is on by default
         # in bash-shell steps, so the suite's exit code still gates the
-        # job (tee's own exit code doesn't shadow it).
+        # job (tee's own exit code doesn't shadow it). sed strips ANSI
+        # color codes before parsing - CI tools emit them even when piped
+        # (GitHub Actions forces color via FORCE_COLOR/CARGO_TERM_COLOR),
+        # which broke the first version of this parser (confirmed in run
+        # 40590411460's gui-linux failure).
         run: |
           sh tests/test_backmeup.sh | tee /tmp/shell-output.log
-          count=$(grep -oE "^Ran [0-9]+ tests" /tmp/shell-output.log | awk '{print $2}')
+          count=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/shell-output.log | grep -oE "^Ran [0-9]+ tests" | awk '{print $2}')
           [ -n "$count" ] || { echo "Failed to parse shell test count"; exit 1; }
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
@@ -62,7 +66,9 @@ jobs:
         run: |
           pytest mcp/tests --cov=bmug2_mcp --cov-report=xml | tee /tmp/pytest-output.log
           # pytest prints "N passed in X.XXs" on the final summary line.
-          count=$(grep -oE "[0-9]+ passed in" /tmp/pytest-output.log | tail -1 | awk '{print $1}')
+          # sed strips ANSI codes - see the shell test suite's own comment
+          # above on why that's needed in CI.
+          count=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/pytest-output.log | grep -oE "[0-9]+ passed in" | tail -1 | awk '{print $1}')
           [ -n "$count" ] || { echo "Failed to parse pytest count"; exit 1; }
           echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
@@ -134,8 +140,11 @@ jobs:
         working-directory: gui
         run: |
           npm test -- --coverage --coverage.reporter=lcov | tee /tmp/vitest-output.log
-          # vitest prints "Tests  N passed (N)" on its summary line.
-          count=$(grep -oE "Tests[[:space:]]+[0-9]+ passed" /tmp/vitest-output.log | awk '{print $2}')
+          # vitest prints "Tests  N passed (N)" on its summary line, but
+          # emits ANSI color codes BETWEEN "Tests" and the digit in CI
+          # (GitHub Actions forces color output even when piped) which
+          # broke the first parser - strip them first.
+          count=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/vitest-output.log | grep -oE "Tests[[:space:]]+[0-9]+ passed" | awk '{print $2}')
           [ -n "$count" ] || { echo "Failed to parse vitest count"; exit 1; }
           echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
@@ -164,7 +173,10 @@ jobs:
           cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=1 | tee /tmp/cargo-output.log
           # cargo prints "test result: ok. N passed; ..." once per test
           # binary (lib, main, doc-tests) - sum them for the real total.
-          count=$(grep -oE "test result: ok\. [0-9]+ passed" /tmp/cargo-output.log | awk '{sum+=$4} END{print sum}')
+          # sed strips ANSI codes (CARGO_TERM_COLOR=always in CI emits
+          # them even when piped) - see vitest step above for the same
+          # issue that bit the first version of this.
+          count=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/cargo-output.log | grep -oE "test result: ok\. [0-9]+ passed" | awk '{sum+=$4} END{print sum}')
           [ -n "$count" ] && [ "$count" != "0" ] || { echo "Failed to parse cargo test count"; exit 1; }
           echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
