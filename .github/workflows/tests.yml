@@ -19,6 +19,65 @@ jobs:
       - name: Run test suite
         run: sh tests/test_backmeup.sh
 
+  linux-coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
+      - name: Install bashcov
+        # Ruby is pre-installed on ubuntu-latest; no apt step needed.
+        run: gem install bashcov --no-document
+      - name: Run test suite with coverage
+        # bashcov instruments bash scripts via the DEBUG trap. The bin/*.sh
+        # scripts use #!/bin/sh, which on Ubuntu 24.04 is dash — not
+        # traceable by bashcov. Redirecting /bin/sh → bash for this job
+        # makes all #!/bin/sh subprocesses run under bash so they are
+        # instrumented. The correctness test (linux job above) still runs
+        # under real sh/dash; this job measures coverage only.
+        # .simplecov filters to bin/ so shunit2 and the test harness are
+        # excluded from the percentage.
+        run: |
+          sudo ln -sf /usr/bin/bash /bin/sh
+          cat > .simplecov << 'EOF'
+          SimpleCov.configure do
+            add_filter { |f| !f.filename.include?('/bin/') }
+          end
+          EOF
+          bashcov -- bash tests/test_backmeup.sh
+      - name: Update shell coverage badge
+        # Only update the badge on pushes to main — GITHUB_TOKEN is
+        # read-only on fork PRs, and we only want the badge to reflect
+        # the latest merged state.
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PCT=$(jq -r '.result.line | floor' coverage/.last_run.json)
+          if [ "$PCT" -ge 90 ]; then COLOR="brightgreen"
+          elif [ "$PCT" -ge 70 ]; then COLOR="green"
+          elif [ "$PCT" -ge 50 ]; then COLOR="yellow"
+          else COLOR="red"; fi
+          JSON=$(printf '{"schemaVersion":1,"label":"shell","message":"%s%%","color":"%s"}' "$PCT" "$COLOR")
+          CONTENT=$(printf '%s\n' "$JSON" | base64 -w0)
+          SHA=$(gh api "/repos/${GITHUB_REPOSITORY}/contents/shell-coverage.json?ref=badges" \
+            --jq .sha 2>/dev/null || echo "")
+          if [ -n "$SHA" ]; then
+            gh api --method PUT "/repos/${GITHUB_REPOSITORY}/contents/shell-coverage.json" \
+              --field message="ci: update shell coverage [skip ci]" \
+              --field branch=badges \
+              --field content="$CONTENT" \
+              --field sha="$SHA"
+          else
+            gh api --method PUT "/repos/${GITHUB_REPOSITORY}/contents/shell-coverage.json" \
+              --field message="ci: update shell coverage [skip ci]" \
+              --field branch=badges \
+              --field content="$CONTENT"
+          fi
+
   macos:
     runs-on: macos-latest
     steps:

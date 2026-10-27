@@ -6,14 +6,13 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell has no coverage badge: kcov (the only practical
-     ptrace-based instrumenter for sh) is not in Ubuntu 24.04's repos and
-     building it from source in CI proved too fragile. Deferred.
-     Using shields.io's Codecov badge rather than Codecov's own: its
-     own badge always prints the generic word "codecov" regardless of
-     flag, so all 3 looked visually identical with no way to tell
-     which was which at a glance - shields.io bakes the flag name
-     itself into the badge as the visible label. -->
+     repo-wide %. Shell badge uses bashcov (bin/*.sh only, measured under
+     bash since the scripts are POSIX-compatible) stored in the badges
+     branch and served via shields.io endpoint. Rust/TS/Python go through
+     Codecov; using shields.io's Codecov badge rather than Codecov's own
+     because Codecov's own badge always prints the generic word "codecov"
+     regardless of flag — shields.io bakes the flag name into the label. -->
+[![shell coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/mariotti/bmug2/badges/shell-coverage.json)](https://github.com/mariotti/bmug2/actions/workflows/tests.yml)
 [![python coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=python&label=python)](https://codecov.io/gh/mariotti/bmug2)
 [![rust coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=rust&label=rust)](https://codecov.io/gh/mariotti/bmug2)
 [![typescript coverage](https://img.shields.io/codecov/c/github/mariotti/bmug2?flag=typescript&label=typescript)](https://codecov.io/gh/mariotti/bmug2)

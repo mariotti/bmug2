@@ -95,3 +95,29 @@ tar-verification *count-mismatch* path (as opposed to `tar` outright
 failing) is not, since faking a tarball with a plausible-but-wrong
 entry count adds real complexity for the same code path already
 covered by the failure case.
+
+### Shell coverage badge
+
+The `linux-coverage` CI job measures line coverage of `bin/*.sh` and
+updates the badge in the `badges` branch. It uses bashcov (a Ruby gem;
+Ruby is pre-installed on the GitHub runner). Because the scripts use
+`#!/bin/sh` — which on Ubuntu 24.04 is `dash`, not traceable by
+bashcov's DEBUG-trap mechanism — the coverage job temporarily redirects
+`/bin/sh → bash` before running. The correctness test (`linux` job) still
+runs under real sh/dash; this job only measures which lines execute.
+
+The badge is **not** a required check and only updates on pushes to
+`main`. Coverage is scoped to `bin/` via a `.simplecov` filter created
+in the runner at runtime (not checked in). To run locally:
+
+```sh
+gem install bashcov --no-document
+sudo ln -sf /usr/bin/bash /bin/sh   # Linux only
+cat > .simplecov << 'EOF'
+SimpleCov.configure do
+  add_filter { |f| !f.filename.include?('/bin/') }
+end
+EOF
+bashcov -- bash tests/test_backmeup.sh
+# result: coverage/.last_run.json
+```
