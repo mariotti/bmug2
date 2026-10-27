@@ -162,22 +162,17 @@ jobs:
           # a drift check: if GPG_PRIVATE_KEY is ever rotated without
           # updating the committed public key, --checksig below fails
           # and so does the build.
+          #
+          # Both commands run with sudo intentionally: on Ubuntu, `sudo
+          # rpm --import` writes keys to the system-wide trust db at
+          # /var/lib/rpm/, which `rpm --checksig` as the regular user
+          # cannot read (confirmed in run 40601719854's diagnostic
+          # output - `rpm -qa gpg-pubkey*` was EMPTY as the user but
+          # listed the key under sudo). Keeping both under sudo keeps
+          # the trust-db view consistent.
           sudo rpm --import docs/bmug2-releases.asc
-          echo "=== Keys in rpm trust db (sudo view) ==="
-          sudo rpm -qa 'gpg-pubkey*' || true
-          echo "=== Keys in rpm trust db (user view) ==="
-          rpm -qa 'gpg-pubkey*' || true
-          echo "=== GPG signing-keyring fingerprint ==="
-          gpg --list-keys --with-colons | awk -F: '/^fpr/{print $10}'
-          echo "=== docs/bmug2-releases.asc fingerprint ==="
-          gpg --show-keys --with-colons docs/bmug2-releases.asc | awk -F: '/^fpr/{print $10}'
           for rpm in "${rpms[@]}"; do
-            echo "=== rpm --checksig --verbose for $rpm ==="
-            rpm --checksig --verbose "$rpm" || echo "(checksig exit $?)"
-          done
-          # Final gate (unchanged): fail the job if ANY rpm fails checksig.
-          for rpm in "${rpms[@]}"; do
-            rpm --checksig "$rpm"
+            sudo rpm --checksig "$rpm"
           done
       - uses: actions/upload-artifact@v7
         with:
