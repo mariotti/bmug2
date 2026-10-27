@@ -1,7 +1,14 @@
 name: tests
 
 on:
+  # `push: branches: [main]` restricts the push trigger to post-merge
+  # runs on main (keeping the update-test-count-badge aggregator fed,
+  # which only runs on push-to-main), while `pull_request:` covers
+  # every PR once. Before this restriction, every branch push also
+  # fired `push`, so PRs ran CI TWICE for the same commit (visible as
+  # 12 rows in `gh pr checks` for 6 real jobs).
   push:
+    branches: [main]
   pull_request:
 
 jobs:
