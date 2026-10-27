@@ -118,7 +118,9 @@ jobs:
         # Imports the private key into the runner's keyring and
         # pre-caches the passphrase into gpg-agent (loopback pinentry)
         # so the subsequent `rpm --addsign` can sign non-interactively.
-        uses: crazy-max/ghaction-import-gpg@v6
+        # v6 targeted Node 20 (deprecated by GHA Oct 2025, auto-promoted
+        # to Node 24 with a warning); v7 targets Node 24 natively.
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -153,7 +155,15 @@ jobs:
             echo "Signing $rpm"
             rpm --addsign "$rpm"
           done
-          # Fail loudly if signing didn't actually attach a signature.
+          # rpm --checksig has its own trust db separate from gpg's -
+          # even a correctly-attached signature prints "SIGNATURES NOT OK"
+          # unless the signer's public key is imported into rpm's keyring
+          # too. Doing this from the committed docs/bmug2-releases.asc
+          # file (rather than re-exporting from the just-imported gpg
+          # keyring) doubles as a drift check: if someone ever rotates
+          # the GPG_PRIVATE_KEY secret without updating the committed
+          # public key, --checksig below fails and the build does too.
+          sudo rpm --import docs/bmug2-releases.asc
           for rpm in "${rpms[@]}"; do
             rpm --checksig "$rpm"
           done
