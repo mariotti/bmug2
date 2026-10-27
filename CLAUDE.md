@@ -111,3 +111,12 @@ state one.
   never required - see `parses_the_minimal_locate_json_contract_forever`
   in `gui/src-tauri/src/dashboard.rs` for the standing regression
   guard and why it exists.
+- **Fix every warning in the same PR, not later.** Any build/test/CI
+  deprecation notice (clippy, `tsc`, cargo "unused", npm audit,
+  "Node 20 is deprecated" from GHA, pytest warnings) is in-scope for
+  the current task - the discipline is that logs stay clean, so new
+  warnings stay visible. If fixing one would meaningfully expand the
+  PR's scope, open a tightly-scoped **companion PR** (as with #159
+  for codecov-action's Node 20 dep) and ship both together, never
+  deferred. Don't end a PR summary with a "we can fix this later"
+  note - fix it, then mention the fix.
