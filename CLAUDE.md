@@ -78,9 +78,11 @@ state one.
 7. Watch the build (Monitor + `gh run view <id> --json status -q
    '.status'`, polling).
 8. Once it succeeds: `gh run download <id> --dir
-   <scratchpad>/release-X.Y.Z`, then `gh release upload
-   vX.Y.Z[-experimental] <the 3 downloaded files>` (macOS
-   `.dmg`, Linux `.deb`, Linux `.AppImage`).
+   <scratchpad>/release-X.Y.Z`, then
+   `gh release upload vX.Y.Z[-experimental] <scratchpad>/release-X.Y.Z/**/bmug2_*.{dmg,deb,AppImage,rpm}`
+   (bash globstar + brace expansion flattens the 7 files across 3
+   artifact dirs: 1 macOS .dmg + 2 arches × 3 formats on Linux). The
+   `.rpm`s are GPG-signed in CI; nothing to re-sign manually.
 9. `gh release edit vX.Y.Z[-experimental] --notes "..."` to drop the
    placeholder line now that assets are attached.
 
