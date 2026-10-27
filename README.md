@@ -3,8 +3,15 @@
 <!-- unofficially, also a "Beer MUG for 2" -->
 
 [![Tests](https://github.com/mariotti/bmug2/actions/workflows/tests.yml/badge.svg)](https://github.com/mariotti/bmug2/actions/workflows/tests.yml)
-<!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
-![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
+<!-- Test count is auto-updated by .github/workflows/tests.yml's
+     update-test-count-badge job on every push to main - it sums the
+     four CI suites' real "N passed" counts (shell + python + rust +
+     typescript, all parsed from their actual runner output) and force-
+     pushes a single orphan commit to the `badges` branch with a
+     shields.io endpoint-badge JSON. The badge below reads that JSON
+     directly; a PR branch can't move it (the aggregator only runs on
+     push-to-main). -->
+![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/mariotti/bmug2/badges/test-count.json)
 <!-- Per-component coverage, each its own flag - never a blurred
      repo-wide %. No shell badge: no POSIX-sh coverage tool is packaged
      on Ubuntu 24.04. The bin/*.sh scripts correctly use #!/bin/sh (sh
