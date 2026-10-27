@@ -1703,6 +1703,32 @@ describe("user journeys (Settings/update)", () => {
     await waitFor(() => document.querySelector(".settings-version") !== null);
     expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "apply_update")).toBe(false);
   });
+
+  // Regression guard for issue #154: Install on the experimental row
+  // must call apply_update with that exact tag, not the stable one, and
+  // not without a tag at all - the backend used to always hit
+  // /releases/latest and silently installed stable regardless of which
+  // row the user clicked.
+  it("passes the exact clicked tag through to apply_update (not just binDir)", async () => {
+    mockSettingsFlow({
+      check_for_update: behindBoth,
+      apply_update: { bin_dir: "/bin", log: "re-ran install.sh" } satisfies InstallOutcome,
+    });
+    await renderSettings("/bin");
+    const installButtons = Array.from(document.querySelectorAll("button")).filter(
+      (b) => b.textContent === "Install",
+    );
+    expect(installButtons.length).toBe(2);
+    installButtons[1]!.dispatchEvent(new Event("click")); // the experimental row
+    buttonLabeled(document.body, "Yes, install the update").dispatchEvent(new Event("click"));
+    await waitFor(() => document.querySelector(".run-banner") !== null);
+
+    const applyCall = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "apply_update");
+    expect(applyCall).toBeDefined();
+    expect(applyCall![1]).toEqual({ binDir: "/bin", tag: "v2.15.9-experimental" });
+  });
 });
 
 describe("user journeys (app bootstrap: init)", () => {

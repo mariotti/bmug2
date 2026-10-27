@@ -1864,18 +1864,22 @@ export async function renderSettings(binDir: string) {
 }
 
 // Explicit, separate confirmation step before any apply_update call -
-// clicking "Install" never installs by itself.
-function showUpdateConfirm(binDir: string, version: string) {
+// clicking "Install" never installs by itself. `tag` is the GitHub
+// release tag (e.g. "v2.18.9-experimental") the user just clicked
+// Install on - threaded through to apply_update so the install matches
+// the version advertised (issue #154: without this the backend always
+// hit /releases/latest and silently installed stable regardless).
+function showUpdateConfirm(binDir: string, tag: string) {
   const confirmBtn = el("button", { type: "button" }, ["Yes, install the update"]);
   const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
   cancelBtn.addEventListener("click", () => void renderSettings(binDir));
-  confirmBtn.addEventListener("click", () => void performUpdate(binDir));
+  confirmBtn.addEventListener("click", () => void performUpdate(binDir, tag));
 
   app.replaceChildren(
     el("h1", {}, ["Settings"]),
     el("div", { class: "settings-confirm" }, [
       el("p", {}, [
-        `This will download bmug2 ${version} and re-run install.sh ` +
+        `This will download bmug2 ${tag} and re-run install.sh ` +
           "in place over your existing install. Your SYNC/HISTORY data and settings are not touched.",
       ]),
       confirmBtn,
@@ -1884,10 +1888,10 @@ function showUpdateConfirm(binDir: string, version: string) {
   );
 }
 
-async function performUpdate(binDir: string) {
+async function performUpdate(binDir: string, tag: string) {
   renderInstalling("Updating…");
   try {
-    const outcome = await invoke<InstallOutcome>("apply_update", { binDir });
+    const outcome = await invoke<InstallOutcome>("apply_update", { binDir, tag });
     void renderDashboard(outcome.bin_dir, {
       ok: true,
       message: "Updated successfully.",

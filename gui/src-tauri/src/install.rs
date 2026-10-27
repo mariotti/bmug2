@@ -190,8 +190,11 @@ fn find_extracted_dir(extract_dir: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// Downloads the latest bmug2 release and runs its install.sh
-/// non-interactively with the four given paths.
+/// Downloads the latest stable bmug2 release and runs its install.sh
+/// non-interactively with the four given paths. First-run entry point;
+/// never installs an experimental release (that path is only reachable
+/// from Settings → apply_update, which passes an explicit tag the user
+/// chose).
 pub fn install_new(
     app_data_dir: &Path,
     sync_dir: &str,
@@ -203,7 +206,7 @@ pub fn install_new(
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
 
-    let result = install_new_into(&work_dir, sync_dir, backup_dir, index_dir, install_dir);
+    let result = install_new_into(&work_dir, sync_dir, backup_dir, index_dir, install_dir, None);
     let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
 
     let outcome = result?;
@@ -260,6 +263,20 @@ pub fn is_experimental(version: (u32, u32, u32)) -> bool {
     minor % 2 != 0 || patch % 2 != 0
 }
 
+/// The running GUI binary's own compile-time version. Used to decide
+/// whether to surface experimental CLI releases even when the installed
+/// CLI itself is stable (an experimental GUI installed via a .dmg/.deb/
+/// .AppImage left the user with no path to upgrade the CLI from Settings
+/// before — see issue #154) and to cap offered experimental CLI
+/// releases at the GUI's own version, since a newer CLI may rely on GUI
+/// changes this build doesn't have yet. CARGO_PKG_VERSION is baked in
+/// at build time from Cargo.toml, which the version-bump recipe keeps
+/// in lockstep with BMU_VERSION.
+pub fn gui_version() -> (u32, u32, u32) {
+    crate::version::parse_version(env!("CARGO_PKG_VERSION"))
+        .expect("CARGO_PKG_VERSION must parse as X.Y.Z")
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UpdateInfo {
     pub current: (u32, u32, u32),
@@ -272,15 +289,17 @@ pub struct UpdateInfo {
 }
 
 /// Compares the installed CLI's version against GitHub releases.
-/// Always fetches /releases/latest (stable). When the installed version
-/// is experimental (odd minor or odd patch), also fetches
-/// /releases?per_page=10 to find the newest pre-release tag.
-/// Read-only - never downloads or installs anything; apply_update is
-/// the only function that mutates the install, and is never called
-/// implicitly from here.
+/// Always fetches /releases/latest (stable). When EITHER the installed
+/// CLI OR the running GUI is experimental (odd minor or odd patch),
+/// also fetches /releases?per_page=10 to find the newest pre-release
+/// tag, capped at the GUI's own version so a newer-than-GUI
+/// experimental CLI is never paired with this GUI. Read-only - never
+/// downloads or installs anything; apply_update is the only function
+/// that mutates the install, and is never called implicitly from here.
 pub fn check_for_update(bin_dir: &Path) -> Result<UpdateInfo, String> {
     let current = crate::version::read_installed_version(bin_dir)
         .ok_or_else(|| format!("{} has no BMU_VERSION marker", bin_dir.display()))?;
+    let gui = gui_version();
 
     let stable_api = run(Command::new("curl").args([
         "-sL",
@@ -308,8 +327,8 @@ pub fn check_for_update(bin_dir: &Path) -> Result<UpdateInfo, String> {
         None
     };
 
-    let latest_experimental = if is_experimental(current) {
-        fetch_latest_experimental(current)
+    let latest_experimental = if is_experimental(current) || is_experimental(gui) {
+        fetch_latest_experimental(current, gui)
     } else {
         None
     };
@@ -322,10 +341,14 @@ pub fn check_for_update(bin_dir: &Path) -> Result<UpdateInfo, String> {
 }
 
 /// Fetches /releases?per_page=10 and returns the tag of the newest
-/// pre-release that is newer than `current`, or None. Best-effort:
-/// any network or parse failure silently returns None rather than
-/// surfacing an error to the user.
-fn fetch_latest_experimental(current: (u32, u32, u32)) -> Option<String> {
+/// pre-release that is strictly newer than `current` and no newer than
+/// `max` (the running GUI's version — see gui_version()), or None.
+/// Best-effort: any network or parse failure silently returns None
+/// rather than surfacing an error to the user.
+fn fetch_latest_experimental(
+    current: (u32, u32, u32),
+    max: (u32, u32, u32),
+) -> Option<String> {
     let api = run(Command::new("curl").args([
         "-sL",
         "https://api.github.com/repos/mariotti/bmug2/releases?per_page=10",
@@ -334,17 +357,19 @@ fn fetch_latest_experimental(current: (u32, u32, u32)) -> Option<String> {
     if !api.ok {
         return None;
     }
-    find_newest_experimental_tag(&api.log, current)
+    find_newest_experimental_tag(&api.log, current, max)
 }
 
 /// Parses a GitHub releases list JSON response and returns the tag name
-/// of the newest pre-release entry that is also newer than `current`.
-/// Strips the leading "v" before comparing versions, same as
-/// parse_latest_version. The "-experimental" suffix is stripped before
-/// numeric comparison since parse_version only handles X.Y.Z.
+/// of the newest pre-release entry strictly newer than `current` and
+/// no newer than `max`. Strips the leading "v" before comparing
+/// versions, same as parse_latest_version. The "-experimental" suffix
+/// is stripped before numeric comparison since parse_version only
+/// handles X.Y.Z.
 pub fn find_newest_experimental_tag(
     api_response: &str,
     current: (u32, u32, u32),
+    max: (u32, u32, u32),
 ) -> Option<String> {
     let items: Vec<ReleaseItem> = serde_json::from_str(api_response).ok()?;
     items
@@ -355,7 +380,7 @@ pub fn find_newest_experimental_tag(
             let stripped = tag.strip_prefix('v').unwrap_or(&tag);
             let bare = stripped.split('-').next().unwrap_or(stripped);
             let ver = crate::version::parse_version(bare)?;
-            if ver > current {
+            if ver > current && ver <= max {
                 Some((ver, tag))
             } else {
                 None
@@ -376,7 +401,11 @@ pub fn find_newest_experimental_tag(
 /// Must only ever be invoked after the caller has already obtained an
 /// explicit, separate user confirmation - this function itself performs
 /// no confirmation of its own and is never called automatically.
-pub fn apply_update(app_data_dir: &Path, bin_dir: &Path) -> Result<InstallOutcome, String> {
+pub fn apply_update(
+    app_data_dir: &Path,
+    bin_dir: &Path,
+    tag: &str,
+) -> Result<InstallOutcome, String> {
     let dirs = read_installed_dirs(bin_dir)?;
 
     let work_dir = std::env::temp_dir().join(format!("bmug2-update-{}", std::process::id()));
@@ -389,6 +418,7 @@ pub fn apply_update(app_data_dir: &Path, bin_dir: &Path) -> Result<InstallOutcom
         &dirs.backup_dir,
         &dirs.index_dir,
         &dirs.install_dir,
+        Some(tag),
     );
     let _ = std::fs::remove_dir_all(&work_dir); // best-effort cleanup either way
 
@@ -403,6 +433,7 @@ fn install_new_into(
     backup_dir: &str,
     index_dir: &str,
     install_dir: &str,
+    tag: Option<&str>,
 ) -> Result<InstallOutcome, String> {
     // Only install.sh's own output (the chatty, human-relevant one) joins
     // `log` on the success path below - api/dl/tar's curl/tar invocations
@@ -412,11 +443,17 @@ fn install_new_into(
     // it's exactly the diagnostic a failure needs.
     let mut log = String::new();
 
-    log.push_str("Looking up the latest release...\n");
-    let api = run(Command::new("curl").args([
-        "-sL",
-        "https://api.github.com/repos/mariotti/bmug2/releases/latest",
-    ]))?;
+    let api_url = match tag {
+        Some(t) => {
+            log.push_str(&format!("Looking up release {t}...\n"));
+            format!("https://api.github.com/repos/mariotti/bmug2/releases/tags/{t}")
+        }
+        None => {
+            log.push_str("Looking up the latest release...\n");
+            "https://api.github.com/repos/mariotti/bmug2/releases/latest".to_string()
+        }
+    };
+    let api = run(Command::new("curl").args(["-sL", &api_url]))?;
     if !api.ok {
         return Err(format!("{log}Failed to query GitHub releases API.\n{}", api.log));
     }
@@ -697,6 +734,7 @@ mod tests {
             backup_dir.to_str().unwrap(),
             index_dir.to_str().unwrap(),
             install_dir.to_str().unwrap(),
+            None,
         );
 
         assert!(result.is_ok(), "install_new_into failed: {:?}", result.err());
@@ -900,6 +938,11 @@ mod tests {
         format!("[{}]", entries.join(","))
     }
 
+    // All of these use (99, 99, 99) as the max so the pre-#154 behavior
+    // (no upper cap) is preserved for the baseline cases - the cap
+    // itself is covered by caps_experimental_at_max_version below.
+    const UNCAPPED: (u32, u32, u32) = (99, 99, 99);
+
     #[test]
     fn finds_newest_prerelease_newer_than_current() {
         // Both pre-releases are newer; v2.18.7 wins.
@@ -909,7 +952,7 @@ mod tests {
             ("v2.18.0", false),
         ]);
         assert_eq!(
-            find_newest_experimental_tag(&json, (2, 18, 0)),
+            find_newest_experimental_tag(&json, (2, 18, 0), UNCAPPED),
             Some("v2.18.7-experimental".to_string()),
         );
     }
@@ -921,18 +964,72 @@ mod tests {
             ("v2.18.7-experimental", true),
             ("v2.18.5-experimental", true),
         ]);
-        assert_eq!(find_newest_experimental_tag(&json, (2, 18, 7)), None);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 7), UNCAPPED),
+            None
+        );
     }
 
     #[test]
     fn returns_none_when_list_has_only_stable_releases() {
         let json = releases_json(&[("v2.18.0", false), ("v2.16.0", false)]);
-        assert_eq!(find_newest_experimental_tag(&json, (2, 18, 0)), None);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 0), UNCAPPED),
+            None
+        );
     }
 
     #[test]
     fn returns_none_for_invalid_json() {
-        assert_eq!(find_newest_experimental_tag("not json", (2, 18, 0)), None);
+        assert_eq!(
+            find_newest_experimental_tag("not json", (2, 18, 0), UNCAPPED),
+            None
+        );
+    }
+
+    // --- cap at max (issue #154) ---
+
+    #[test]
+    fn caps_experimental_at_max_version() {
+        // A newer experimental exists but the GUI is older - we must
+        // not offer a CLI release the GUI can't guarantee compat with.
+        let json = releases_json(&[
+            ("v2.18.11-experimental", true),
+            ("v2.18.9-experimental", true),
+            ("v2.18.7-experimental", true),
+        ]);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 0), (2, 18, 9)),
+            Some("v2.18.9-experimental".to_string()),
+        );
+    }
+
+    #[test]
+    fn allows_experimental_exactly_at_max_version() {
+        let json = releases_json(&[("v2.18.9-experimental", true)]);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 0), (2, 18, 9)),
+            Some("v2.18.9-experimental".to_string()),
+        );
+    }
+
+    #[test]
+    fn returns_none_when_only_experimental_exceeds_max() {
+        let json = releases_json(&[("v2.18.11-experimental", true)]);
+        assert_eq!(
+            find_newest_experimental_tag(&json, (2, 18, 0), (2, 18, 9)),
+            None
+        );
+    }
+
+    // --- gui_version ---
+
+    #[test]
+    fn gui_version_parses_cargo_pkg_version() {
+        // Just checks the compile-time env! and parse succeed - the exact
+        // version floats with every version bump, so we don't pin it.
+        let (major, _minor, _patch) = gui_version();
+        assert!(major >= 2);
     }
 
     // --- check_for_update: error when bin_dir lacks version marker ---

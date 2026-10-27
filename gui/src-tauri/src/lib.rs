@@ -97,9 +97,9 @@ fn check_for_update(bin_dir: String) -> Result<UpdateInfo, String> {
 }
 
 #[tauri::command]
-fn apply_update(app: AppHandle, bin_dir: String) -> Result<InstallOutcome, String> {
+fn apply_update(app: AppHandle, bin_dir: String, tag: String) -> Result<InstallOutcome, String> {
     let app_data_dir = resolve_app_data_dir(&app)?;
-    install::apply_update(&app_data_dir, std::path::Path::new(&bin_dir))
+    install::apply_update(&app_data_dir, std::path::Path::new(&bin_dir), &tag)
 }
 
 #[tauri::command]
