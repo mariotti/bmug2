@@ -30,7 +30,11 @@ jobs:
       - name: Install bashcov
         # Ruby is pre-installed on ubuntu-latest; no apt step needed.
         # sudo required — the system gem dir (/var/lib/gems) is root-owned.
-        run: sudo gem install bashcov --no-document
+        # Pinned to < 4: bashcov 4.x is incompatible with the /bin/sh→bash
+        # redirect used below (it tries to exec the bash binary as a script,
+        # producing exit 126). bashcov 3.x uses a simpler PS4/xtrace mechanism
+        # that works correctly with the redirect.
+        run: sudo gem install bashcov --version "< 4" --no-document
       - name: Run test suite with coverage
         # bashcov instruments bash scripts via the DEBUG trap. The bin/*.sh
         # scripts use #!/bin/sh, which on Ubuntu 24.04 is dash — not
@@ -57,7 +61,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PCT=$(jq -r '.result.line | floor' coverage/.last_run.json)
+          # .covered_percent = SimpleCov 0.x (bashcov 3.x); .line = SimpleCov 1.x
+          PCT=$(jq -r '(.result.covered_percent // .result.line) | floor' coverage/.last_run.json)
           if [ "$PCT" -ge 90 ]; then COLOR="brightgreen"
           elif [ "$PCT" -ge 70 ]; then COLOR="green"
           elif [ "$PCT" -ge 50 ]; then COLOR="yellow"
