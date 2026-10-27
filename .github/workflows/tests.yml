@@ -29,7 +29,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rsync plocate zsh rclone
       - name: Install bashcov
         # Ruby is pre-installed on ubuntu-latest; no apt step needed.
-        run: gem install bashcov --no-document
+        # sudo required — the system gem dir (/var/lib/gems) is root-owned.
+        run: sudo gem install bashcov --no-document
       - name: Run test suite with coverage
         # bashcov instruments bash scripts via the DEBUG trap. The bin/*.sh
         # scripts use #!/bin/sh, which on Ubuntu 24.04 is dash — not
