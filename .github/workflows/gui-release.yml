@@ -155,17 +155,24 @@ jobs:
             echo "Signing $rpm"
             rpm --addsign "$rpm"
           done
-          # rpm --checksig has its own trust db separate from gpg's -
-          # even a correctly-attached signature prints "SIGNATURES NOT OK"
-          # unless the signer's public key is imported into rpm's keyring
-          # too. Doing this from the committed docs/bmug2-releases.asc
-          # file (rather than re-exporting from the just-imported gpg
-          # keyring) doubles as a drift check: if someone ever rotates
-          # the GPG_PRIVATE_KEY secret without updating the committed
-          # public key, --checksig below fails and the build does too.
+          # rpm --checksig has its own trust db separate from gpg's,
+          # so the signer's public key must also be imported there.
+          # Importing from the committed docs/bmug2-releases.asc file
+          # (rather than re-exporting from the gpg keyring) doubles as
+          # a drift check: if GPG_PRIVATE_KEY is ever rotated without
+          # updating the committed public key, --checksig below fails
+          # and so does the build.
+          #
+          # Both commands run with sudo intentionally: on Ubuntu, `sudo
+          # rpm --import` writes keys to the system-wide trust db at
+          # /var/lib/rpm/, which `rpm --checksig` as the regular user
+          # cannot read (confirmed in run 40601719854's diagnostic
+          # output - `rpm -qa gpg-pubkey*` was EMPTY as the user but
+          # listed the key under sudo). Keeping both under sudo keeps
+          # the trust-db view consistent.
           sudo rpm --import docs/bmug2-releases.asc
           for rpm in "${rpms[@]}"; do
-            rpm --checksig "$rpm"
+            sudo rpm --checksig "$rpm"
           done
       - uses: actions/upload-artifact@v7
         with:
