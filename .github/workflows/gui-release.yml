@@ -6,9 +6,26 @@ name: gui-release
 # GitHub Release, since that's cut by hand shortly after tagging and the
 # ordering between the two isn't guaranteed. Attach manually once both
 # exist:
-#   gh run download <run-id> -n bmug2-macos-bundle
-#   gh run download <run-id> -n bmug2-linux-bundles
-#   gh release upload vX.Y.Z bmug2_*.dmg *.AppImage *.deb
+#   gh run download <run-id> --dir /tmp/release-X.Y.Z
+#   gh release upload vX.Y.Z /tmp/release-X.Y.Z/**/*.{dmg,AppImage,deb,rpm}
+#
+# The three Linux variants (x86_64 and aarch64 bundles, plus the single
+# macOS .dmg) ship:
+#   - .dmg       macOS (arm64 — Apple Silicon)
+#   - .deb       Debian/Ubuntu x86_64 + aarch64
+#   - .AppImage  distro-agnostic Linux x86_64 + aarch64
+#   - .rpm       Fedora/RHEL/CentOS Stream/Rocky/Alma x86_64 + aarch64
+#                (GPG-signed; public key at docs/bmug2-releases.asc)
+#
+# The .rpm artifacts are signed with the repo's release key, using the
+# GPG_PRIVATE_KEY / GPG_PASSPHRASE / GPG_KEY_ID secrets. Users verify
+# with:
+#   sudo rpm --import https://raw.githubusercontent.com/mariotti/bmug2/main/docs/bmug2-releases.asc
+#   rpm --checksig bmug2_*.rpm      # expect "digests signatures OK"
+# .deb and .AppImage are NOT signed by this workflow - Debian-side
+# signing is a separate flow (dpkg-sig / debsigs + repo metadata) and
+# AppImage signing uses a different embedded-signature format; neither
+# is set up yet.
 #
 # IMPORTANT: the macOS app is ad-hoc signed (tauri.conf.json's
 # bundle.macOS.signingIdentity: "-") but not notarized - a real
@@ -21,8 +38,7 @@ name: gui-release
 # With ad-hoc signing in place, a fresh download instead shows the
 # normal, recoverable Gatekeeper prompt for an unnotarized app -
 # right-click > Open, or System Settings > Privacy & Security > Open
-# Anyway. The Linux bundles have no equivalent step - no macOS-style
-# code signing requirement there.
+# Anyway.
 
 on:
   push:
@@ -56,7 +72,21 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    runs-on: ubuntu-latest
+    # x86_64 and aarch64 share the same step list (same Ubuntu base,
+    # same Tauri build command, same signing) so one matrix definition
+    # is cleaner than two near-duplicate jobs. ubuntu-24.04-arm became
+    # a GA GitHub-hosted runner for public repos in Jan 2025 - no
+    # cross-compilation needed, each build runs natively on its own
+    # architecture.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -68,20 +98,70 @@ jobs:
           # just goes stale again later.
           node-version: "lts/*"
       - name: Install Tauri Linux build dependencies
+        # `rpm` was added so Tauri's `bundle.targets: "all"` actually
+        # produces a .rpm - without the rpm CLI on PATH it silently
+        # skips that target, which is how we shipped v2.18.9/v2.18.11
+        # with .deb + .AppImage but no .rpm despite the config asking
+        # for all three.
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf build-essential curl wget file libssl-dev libgtk-3-dev
+            librsvg2-dev patchelf build-essential curl wget file libssl-dev libgtk-3-dev \
+            rpm
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci
       - name: Build Tauri bundles
         working-directory: gui
         run: npm run tauri build
+      - name: Import GPG signing key
+        # Imports the private key into the runner's keyring and
+        # pre-caches the passphrase into gpg-agent (loopback pinentry)
+        # so the subsequent `rpm --addsign` can sign non-interactively.
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Sign RPM
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        # rpm --addsign shells out to gpg via %__gpg_sign_cmd; a tiny
+        # wrapper script injects --pinentry-mode loopback and the
+        # passphrase from env so gpg doesn't block for a tty prompt.
+        # Keeping the passphrase in a step env + wrapper (not in
+        # ~/.rpmmacros on disk) means it never persists to a file.
+        run: |
+          mkdir -p "$HOME/.gpg-wrapper"
+          cat > "$HOME/.gpg-wrapper/gpg-sign-wrapper" <<'WRAPPER'
+          #!/bin/bash
+          exec gpg --batch --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" "$@"
+          WRAPPER
+          chmod +x "$HOME/.gpg-wrapper/gpg-sign-wrapper"
+          cat > "$HOME/.rpmmacros" <<MACROS
+          %_signature gpg
+          %_gpg_name ${GPG_KEY_ID}
+          %__gpg_sign_cmd $HOME/.gpg-wrapper/gpg-sign-wrapper --no-armor --no-secmem-warning -u "%{_gpg_name}" -sbo %{__signature_filename} %{__plaintext_filename}
+          MACROS
+          shopt -s nullglob
+          rpms=(gui/src-tauri/target/release/bundle/rpm/*.rpm)
+          if [ ${#rpms[@]} -eq 0 ]; then
+            echo "No RPMs found to sign - did the Tauri build skip the rpm bundle target?" >&2
+            exit 1
+          fi
+          for rpm in "${rpms[@]}"; do
+            echo "Signing $rpm"
+            rpm --addsign "$rpm"
+          done
+          # Fail loudly if signing didn't actually attach a signature.
+          for rpm in "${rpms[@]}"; do
+            rpm --checksig "$rpm"
+          done
       - uses: actions/upload-artifact@v7
         with:
-          name: bmug2-linux-bundles
+          name: bmug2-linux-${{ matrix.arch }}-bundles
           path: |
             gui/src-tauri/target/release/bundle/appimage/*.AppImage
             gui/src-tauri/target/release/bundle/deb/*.deb
+            gui/src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
