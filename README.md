@@ -6,9 +6,15 @@
 <!-- test count is manual - sum of all 4 CI suites (shell, Rust, TS, Python); update when they change -->
 ![tests](https://img.shields.io/badge/tests-370%20passing-brightgreen)
 <!-- Per-component coverage, each its own flag - never a blurred
-     repo-wide %. Shell has no coverage badge: kcov (the only practical
-     ptrace-based instrumenter for sh) is not in Ubuntu 24.04's repos and
-     building it from source in CI proved too fragile. Deferred.
+     repo-wide %. No shell badge: no POSIX-sh coverage tool is packaged
+     on Ubuntu 24.04. The bin/*.sh scripts correctly use #!/bin/sh (sh
+     is the one shell every Unix guarantees - the right target for a
+     portable backup tool), which runs under dash on Ubuntu. bashcov
+     and friends hook into bash-specific features (DEBUG trap,
+     BASH_XTRACEFD) that don't exist in dash. kcov is the one exception
+     - ptrace-based, shell-agnostic - but Ubuntu 24.04 dropped it from
+     apt and building from source in CI proved too fragile. The gap is
+     in the shell-coverage tooling ecosystem, not the scripts. Deferred.
      Using shields.io's Codecov badge rather than Codecov's own: its
      own badge always prints the generic word "codecov" regardless of
      flag, so all 3 looked visually identical with no way to tell
