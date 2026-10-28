@@ -260,12 +260,20 @@ or the isolated session will silently drop it.
 ## Test
 
 ```
-cd gui/src-tauri && cargo test && cargo clippy --all-targets
+cd gui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 cd gui && npx tsc --noEmit && npm run test
 ```
 
-Coverage (not gated in CI - these are local, point-in-time numbers to
-track by eye, not a pass/fail threshold):
+(The `-- -D warnings` on clippy promotes every clippy and rustc warning
+to a hard error - CI enforces the same thing since PR #161, so running
+it this way locally catches anything that would fail CI anyway.)
+
+Coverage: CI measures both Rust (`cargo-llvm-cov`) and TypeScript
+(`vitest --coverage`) on every push, uploads to Codecov under per-flag
+badges (`rust`, `typescript`) - the badges are on `../README.md`. CI
+doesn't *gate* on a coverage threshold, but the per-flag %s are tracked
+there, so this isn't a point-in-time-only measurement anymore. To
+reproduce the same numbers locally:
 
 ```
 # Rust - needs cargo-llvm-cov + the llvm-tools-preview rustup component once:
@@ -290,5 +298,12 @@ npm run tauri build
 ```
 
 Produces a native app bundle under `src-tauri/target/release/bundle/`
-(`.app`/`.dmg` on macOS, `.AppImage`/`.deb` on Linux — whichever
-platform you build on; Tauri doesn't cross-compile installers).
+(`.app`/`.dmg` on macOS, `.AppImage`/`.deb`/`.rpm` on Linux —
+whichever platform you build on; Tauri doesn't cross-compile
+installers, so a Linux `.rpm` is produced only when `rpm` is on PATH
+of a Linux build machine). The `gui-release.yml` workflow drives all
+three Linux formats × two arches (x86_64 + aarch64) × GPG-signing of
+the `.rpm`s on tag pushes — see
+`../.github/workflows/gui-release.yml` and
+`../docs/bmug2-releases.asc` (the signing pubkey) for the full
+release-time setup.
