@@ -95,3 +95,18 @@ tar-verification *count-mismatch* path (as opposed to `tar` outright
 failing) is not, since faking a tarball with a plausible-but-wrong
 entry count adds real complexity for the same code path already
 covered by the failure case.
+
+### Pre-release RPM smoke test (Lima)
+
+Between an experimental tag (`vX.Y.Z-experimental`) and the plain
+(`vX.Y.Z`) promotion, the `make test-rpm-*` targets install the
+produced `.rpm` on real RPM-family distros via Lima VMs. One target
+each for Fedora / Rocky / AlmaLinux, plus `test-rpm-all` to run all
+three, and `test-rpm-clean` to tear down the VMs afterward. `make
+help` prints the full list.
+
+Smoke-tests the install path (`sudo rpm --import` → `sudo rpm
+--checksig` → `sudo dnf install` → `rpm -V`), not GUI runtime — a
+Lima VM is headless, so verifying the Tauri window actually opens
+stays a manual pre-release step. Needs Lima (`brew install lima`)
+and an authenticated `gh` CLI.
