@@ -68,16 +68,70 @@ echo "Installed: $installed_version"
 echo
 
 # ------------------------------------------------------------------
-# 2. Generate controlled tree (flat-many preset: 100 files × 10 KB)
+# 2. Generate controlled tree (preset-selected)
 # ------------------------------------------------------------------
-echo "==> Generating tree (flat-many: 100 files × 10 KB)..."
+# edit_files is an array of "label|relative-path" pairs - the LABEL is
+# used in file content ("file-${label}-v${cycle}") so the sim loop can
+# grep for it later; the PATH can contain subdirectories (needed for
+# the `deep` preset). Each gen_* function populates edit_files for
+# its own tree shape.
+PRESET="${PRESET:-flat-many}"
+edit_files=()
+
+gen_flat_few() {
+    # 10 files × 1 MB flat. Tests "fewer, larger files" - more rsync
+    # bytes per file, fewer stats to compare.
+    for i in $(seq -w 1 10); do
+        { echo "file-f${i}-v0"; head -c 1048566 /dev/zero | tr '\0' 'a'; } > "$SOURCE_DIR/f${i}.txt"
+    done
+    edit_files=("f01|f01.txt" "f02|f02.txt")
+}
+
+gen_flat_many() {
+    # 100 files × 10 KB flat. Original baseline. Tests "many, smaller
+    # files" - more stats, less rsync bytes per file.
+    for i in $(seq -w 1 100); do
+        { echo "file-f${i}-v0"; head -c 10200 /dev/zero | tr '\0' 'a'; } > "$SOURCE_DIR/f${i}.txt"
+    done
+    edit_files=("f001|f001.txt" "f002|f002.txt")
+}
+
+gen_deep() {
+    # 100 files × 100 KB, placed across a depth-5 / fanout-3 tree.
+    # 3^5 = 243 leaf dirs; first 100 (lexicographic) get a file.
+    # Tests "path traversal depth" - how rsync + find scale with
+    # directory nesting at ~constant file count.
+    local count=0 label a b c d e path
+    for a in 0 1 2; do for b in 0 1 2; do for c in 0 1 2; do
+    for d in 0 1 2; do for e in 0 1 2; do
+        if [ "$count" -lt 100 ]; then
+            label=$(printf 'deep%02d' "$count")
+            path="d${a}/d${b}/d${c}/d${d}/d${e}"
+            mkdir -p "$SOURCE_DIR/$path"
+            { echo "file-${label}-v0"; head -c 102390 /dev/zero | tr '\0' 'a'; } > "$SOURCE_DIR/$path/f.txt"
+            count=$((count + 1))
+        fi
+    done; done; done; done; done
+    # Edit two files: file #0 and file #50 of the 100 generated. File
+    # N's path is (N/81, N/27, N/9, N/3, N) each mod 3, in a-e order
+    # (outer-to-inner loop). File #50 = (0,1,2,1,2).
+    edit_files=("deep00|d0/d0/d0/d0/d0/f.txt" "deep50|d0/d1/d2/d1/d2/f.txt")
+}
+
+echo "==> Generating tree (preset: $PRESET)..."
 mkdir -p "$SOURCE_DIR"
-for i in $(seq -w 1 100); do
-    { echo "file-${i}-v0"; head -c 10200 /dev/zero | tr '\0' 'a'; } > "$SOURCE_DIR/f${i}.txt"
-done
+case "$PRESET" in
+    flat-few)  gen_flat_few ;;
+    flat-many) gen_flat_many ;;
+    deep)      gen_deep ;;
+    *) echo "ERROR: unknown PRESET='$PRESET' (expected: flat-few | flat-many | deep)" >&2; exit 2 ;;
+esac
 tree_bytes=$(du -sb "$SOURCE_DIR" | cut -f1)
 tree_count=$(find "$SOURCE_DIR" -type f | wc -l)
-echo "Tree: ${tree_count} files, ${tree_bytes} bytes"
+tree_dirs=$(find "$SOURCE_DIR" -type d | wc -l)
+echo "Tree ($PRESET): ${tree_count} files in ${tree_dirs} dirs, ${tree_bytes} bytes"
+echo "Edit targets: ${#edit_files[@]} files"
+for ef in "${edit_files[@]}"; do echo "  ${ef%%|*}: ${ef#*|}"; done
 echo
 
 project=$(basename "$SOURCE_DIR")
@@ -101,7 +155,6 @@ echo
 # 4. Sim loop
 # ------------------------------------------------------------------
 cycles=10
-edit_files=(f001.txt f002.txt)
 pass=0
 fail=0
 declare -a sync_times=()
@@ -115,11 +168,20 @@ declare -a sync_times=()
 sleep 1
 
 echo "==> Sim loop: ${cycles} cycles, SYNC every 5s sim..."
+# Determine per-file payload size from the preset (match the generator
+# so overwrites keep the same size - rsync won't skip-on-size-match
+# in that case; it still has to compare content via mtime+size).
+case "$PRESET" in
+    flat-few)  payload_size=1048566 ;;
+    flat-many) payload_size=10200   ;;
+    deep)      payload_size=102390  ;;
+esac
 for cycle in $(seq 1 $cycles); do
     # Edit each tracked file to version "v${cycle}".
-    for fn in "${edit_files[@]}"; do
-        num="${fn#f}"; num="${num%.txt}"
-        { echo "file-${num}-v${cycle}"; head -c 10200 /dev/zero | tr '\0' 'b'; } > "$SOURCE_DIR/$fn"
+    for entry in "${edit_files[@]}"; do
+        label="${entry%%|*}"
+        path="${entry#*|}"
+        { echo "file-${label}-v${cycle}"; head -c "$payload_size" /dev/zero | tr '\0' 'b'; } > "$SOURCE_DIR/$path"
         sleep 2.5
     done
 
@@ -133,28 +195,29 @@ for cycle in $(seq 1 $cycles); do
     # .filelist file) captures the version replaced by this SYNC
     # (i.e. "v$((cycle - 1))" on cycle ≥ 2; "v0" on cycle 1).
     latest_snapshot=$(find "$BACKUP_DIR/$project/" -maxdepth 1 -type d -name 'B-*' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)
-    for fn in "${edit_files[@]}"; do
-        num="${fn#f}"; num="${num%.txt}"
-        expected_sync="file-${num}-v${cycle}"
+    for entry in "${edit_files[@]}"; do
+        label="${entry%%|*}"
+        path="${entry#*|}"
+        expected_sync="file-${label}-v${cycle}"
         expected_prev=$((cycle - 1))
-        expected_history="file-${num}-v${expected_prev}"
+        expected_history="file-${label}-v${expected_prev}"
 
         # Check SYNC has current version.
-        if ! grep -q "^${expected_sync}$" "$SYNC_DIR/$project/$fn"; then
-            echo "FAIL cycle=$cycle $fn: SYNC missing '$expected_sync'"
+        if ! grep -q "^${expected_sync}$" "$SYNC_DIR/$project/$path"; then
+            echo "FAIL cycle=$cycle $path: SYNC missing '$expected_sync'"
             fail=$((fail + 1))
             continue
         fi
         pass=$((pass + 1))
 
         # Check HISTORY has prior version (always exists from cycle 1 onwards).
-        if [ -z "$latest_snapshot" ] || [ ! -f "$BACKUP_DIR/$project/$latest_snapshot/$fn" ]; then
-            echo "FAIL cycle=$cycle $fn: no HISTORY snapshot file"
+        if [ -z "$latest_snapshot" ] || [ ! -f "$BACKUP_DIR/$project/$latest_snapshot/$path" ]; then
+            echo "FAIL cycle=$cycle $path: no HISTORY snapshot file"
             fail=$((fail + 1))
             continue
         fi
-        if ! grep -q "^${expected_history}$" "$BACKUP_DIR/$project/$latest_snapshot/$fn"; then
-            echo "FAIL cycle=$cycle $fn: HISTORY has wrong version (expected '$expected_history')"
+        if ! grep -q "^${expected_history}$" "$BACKUP_DIR/$project/$latest_snapshot/$path"; then
+            echo "FAIL cycle=$cycle $path: HISTORY has wrong version (expected '$expected_history')"
             fail=$((fail + 1))
             continue
         fi
