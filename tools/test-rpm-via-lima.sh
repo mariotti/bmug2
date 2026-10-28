@@ -92,8 +92,12 @@ sudo rpm --checksig "$work/$rpm"
 # time (couple minutes on a fresh cloud image, cached afterwards).
 sudo dnf install -y "$work/$rpm"
 
-# Package is registered.
-rpm -qa | grep -q '^bmug2-' || { echo "ERROR: bmug2 not in rpm db after install"; exit 1; }
+# Package is registered. rpm -q <name> is a direct lookup rather than
+# the previous "rpm -qa | grep" pipeline, which raced dnf5's commit-
+# visibility window on Fedora 44 (verified on a real Lima run: the
+# pipeline returned no match immediately after dnf's "Complete!"
+# message, even though the package WAS registered a moment later).
+rpm -q bmug2 > /dev/null || { echo "ERROR: bmug2 not in rpm db after install"; exit 1; }
 
 # All installed files still match the RPM's manifest (catches a mangled
 # install - no .5. prefix on verify output = all good).
