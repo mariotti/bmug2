@@ -101,11 +101,16 @@ data loss is a risk you take entirely on yourself.
 **Specific risks worth understanding before you rely on this:**
 
 - **SYNC is a destructive mirror.** `backmeup.sh` runs `rsync
-  --delete`, so any file you delete from the source *will be deleted
-  from SYNC on the next run*. HISTORY snapshots preserve earlier
-  versions, but only up to the last run before the deletion — a backup
-  that hasn't run recently won't have them. Run `--dry-run` first on a
-  new project and review the output before running for real.
+  --delete`: a file deleted from the source is also removed from SYNC
+  on the next run. HISTORY captures **what was in the mirror at the
+  moment of that SYNC** — effectively, the state as of the previous
+  successful SYNC. Edits you made in the gap between the last SYNC and
+  the deletion were never mirrored and so are **not** in HISTORY:
+  recovery gets you the last-SYNC'd version, not your most recent
+  on-disk edit. The gap between SYNC runs is therefore the window of
+  work most at risk — run `bmug2` more often if you're actively
+  editing. Preview with `--dry-run` first on any new project to
+  confirm what the delete + mirror would do.
 - **Restores are never verified automatically.** The tool writes the
   backup; it does not read it back to confirm the destination is
   intact. Periodically restore a sample of files and check they open
