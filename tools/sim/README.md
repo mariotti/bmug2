@@ -205,6 +205,40 @@ scanning. The real risk this verifies is the **existence** path (that
 HISTORY actually contains the pre-delete version with the right
 content), not the speed path.
 
+## Phase 2.5 — N trials (Monte-Carlo over seeds)
+
+Same deletion scenario, N trials back-to-back. Each trial:
+
+- Gets its own derived seed (`SEED + trial - 1`) → different
+  `delete_at_cycle` per trial if DELETE_AT_CYCLE is unset
+- Starts from a fresh tree + fresh SYNC/HISTORY (no cross-trial
+  contamination) but reuses the same bmug2 install
+- Runs the full 10-cycle sim + the 3 deletion checks
+
+The outer loop aggregates per-trial pass/fail + records
+delete_at_cycle, SYNC avg, and recovery time per trial. Final report
+shows totals + ranges.
+
+```sh
+make test-sim-deletion TRIALS=3              # 3 trials, seeds 42/43/44
+make test-sim-deletion TRIALS=10 SEED=100    # 10 trials, seeds 100..109
+make test-sim-deletion TRIALS=5 DELETE_AT_CYCLE=5  # 5 trials, fixed cycle 5
+```
+
+Observed with `TRIALS=3`:
+
+| Trial | Seed | Delete cycle | Recovery |
+|---|---|---|---|
+| 1 | 42 | 3 | 9 ms |
+| 2 | 43 | 7 | 6 ms |
+| 3 | 44 | 8 | 6 ms |
+
+Aggregate: 3/3 trials passed, SYNC avg 0.074s across trials
+(per-trial range 0.071s..0.076s), recovery 6-9 ms. Each trial got a
+clean slate — the `reset_data_dirs` + `generate_tree` call at the
+top of each trial erases any SYNC/HISTORY state from the previous
+one, so trial N's results are independent of trial N-1's.
+
 ## Phased plan
 
 - **Phase 1 — baseline (done).** No disruption; confirm the
@@ -213,8 +247,7 @@ content), not the speed path.
 - **Phase 2 — deletion (done).** User deletes a file at a chosen
   cycle; verify recovery via `backmeup.retrieve.sh` end-to-end.
   Predictable (fixed cycle) and seeded (random in [3,8]) modes.
-- **Phase 2.5 — N trials.** Loop Phase 2 with varying seeds,
-  aggregate pass/fail across trials. Easy addition once Phase 2 is
-  proven to be a reliable mechanism.
+- **Phase 2.5 — N trials (done).** Loop Phase 2 with derived seeds;
+  aggregate pass/fail + stats across trials. Table above.
 - **Phase 3 — crash.** `SIGKILL` a running backup; verify the lock
   recovers cleanly on the next run.
