@@ -35,7 +35,7 @@ MEMORY ?= 2
 DISK ?= 20
 
 .PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
-        test-sim-baseline test-sim-clean
+        test-sim-baseline test-sim-sweep test-sim-clean
 
 help:
 	@echo "bmug2 Makefile targets"
@@ -48,7 +48,8 @@ help:
 	@echo "    test-rpm-clean     Delete every Lima VM the RPM test created"
 	@echo ""
 	@echo "  End-to-end backup sim (needs Lima; see tools/sim/README.md):"
-	@echo "    test-sim-baseline  Phase 1 baseline: deterministic claim + perf measurement"
+	@echo "    test-sim-baseline  Phase 1 baseline (one preset; default PRESET=flat-many)"
+	@echo "    test-sim-sweep     Run baseline across every preset (flat-few + flat-many + deep)"
 	@echo "    test-sim-clean     Delete every Lima VM the sim created"
 	@echo ""
 	@echo "  Variables (overridable):"
@@ -64,6 +65,8 @@ help:
 	@echo "    make test-rpm-fedora CPUS=4 MEMORY=4    # all-out run"
 	@echo "    make test-rpm-all"
 	@echo "    make test-sim-baseline"
+	@echo "    make test-sim-baseline PRESET=deep"
+	@echo "    make test-sim-sweep"
 
 test-rpm-fedora:
 	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -92,7 +95,20 @@ test-rpm-clean:
 	fi
 
 test-sim-baseline:
-	BMUG2_SOURCE=$(CURDIR) tools/sim/run-baseline.sh
+	BMUG2_SOURCE=$(CURDIR) PRESET=$(or $(PRESET),flat-many) tools/sim/run-baseline.sh
+
+test-sim-sweep:
+	@# Run the baseline across every tree-shape preset in sequence,
+	@# producing a comparable timing table. Each run gets its own
+	@# fresh VM (PID-named + trap-deleted), so there's no cross-run
+	@# state leakage.
+	@for p in flat-few flat-many deep; do \
+	    echo ""; \
+	    echo "####################################"; \
+	    echo "# PRESET=$$p"; \
+	    echo "####################################"; \
+	    BMUG2_SOURCE=$(CURDIR) PRESET=$$p tools/sim/run-baseline.sh || exit 1; \
+	done
 
 test-sim-clean:
 	@# Sim VMs are named `bmug2-sim-fedora-<pid>` (PID suffix for

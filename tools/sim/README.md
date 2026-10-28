@@ -114,26 +114,56 @@ Future sim phases could derive and verify rules like:
 
 ## Scripts
 
-Current scratch location: `~/.cache/bmug2-sim-wip/`
-
 - `run-baseline.sh` — host orchestrator. Starts Lima VM, runs the sim
   inside, tears down. Trap: delete VM on exit regardless of outcome.
+  Reads `BMUG2_SOURCE` (defaults to repo root) and `PRESET` env.
 - `sim-inside-vm.sh` — the sim itself. Installs bmug2, generates the
   tree, runs the calibration SYNC + sim loop + verification.
 - `README.md` — this file.
 
-Once Phase 2 is also working, these transplant to `tools/sim/` in
-the repo + a Makefile target (`make test-sim-baseline`).
+Entry points via the top-level `Makefile`:
+
+- `make test-sim-baseline` — default preset `flat-many`
+- `make test-sim-baseline PRESET=deep` — explicit preset
+- `make test-sim-sweep` — all three presets back-to-back
+- `make test-sim-clean` — tear down any leftover VMs
+
+## Tree-shape sweep (Phase 1 extended)
+
+Three presets, same 10-cycle sim loop, same compression ratio, run
+back-to-back via `make test-sim-sweep`. Each preset uses a fresh VM;
+run on this host (M-series Mac):
+
+| Preset | Files | Size each | Dirs | Tree | SYNC avg | SYNC max | HISTORY/10 | SYNC size |
+|---|---|---|---|---|---|---|---|---|
+| `flat-few` | 10 | 1 MB | 1 | ~10 MB | 77 ms | 95 ms | 21 MB | 11 MB |
+| `flat-many` | 100 | 10 KB | 1 | ~1 MB | 62 ms | 86 ms | 288 KB | 1.2 MB |
+| `deep` | 100 | 100 KB | 153 | ~10 MB | 76 ms | 102 ms | 2.1 MB | 11 MB |
+
+Pattern-level observations:
+
+- **SYNC time is remarkably flat across tree shapes** (62-77 ms avg).
+  The 100× difference in file count (`flat-few` vs `flat-many`) is
+  barely visible, and the 153× difference in dir count (`flat-many`
+  vs `deep`) adds only ~15 ms. rsync's walk is dominated by stat()
+  cost per file; 100-10000 files is still cheap on an aarch64 VZ VM.
+- **HISTORY grows linearly with modified-file size, not tree size.**
+  `flat-few`'s 2 × 1 MB per snapshot = 20 MB over 10 cycles;
+  `flat-many`'s 2 × 10 KB = 200 KB + overhead; `deep`'s 2 × 100 KB =
+  2 MB. The claim "HISTORY scales with CHANGES, not with tree size"
+  is empirically confirmed.
+- **Compression ratio holds at every tree size tested.** Worst SYNC
+  was `deep`'s 102 ms — still ~24× under the 2.5s edit-interval
+  budget. The 1 day = 60s mapping has significant headroom; a
+  working-tree ~10× bigger than any tested here would still fit.
 
 ## Phased plan
 
-- **Phase 1 — baseline (done, this doc).** No disruption; confirm the
-  deterministic claim + measure baseline performance.
+- **Phase 1 — baseline (done).** No disruption; confirm the
+  deterministic claim + measure baseline performance across three
+  tree-shape presets. Sweep table above.
 - **Phase 2 — deletion.** User deletes a file at random time; verify
   recovery via `backmeup.retrieve.sh` works. Starts needing
   Monte-Carlo infra (N trials, seeded).
-- **Phase 3 — crash.** SIGKILL a running backup; verify the lock
+- **Phase 3 — crash.** `SIGKILL` a running backup; verify the lock
   recovers cleanly on the next run.
-- **Phase 4 — tree-shape sweep.** Run baseline across `flat-few` (10
-  big files), `flat-many` (100 small, current default), `deep` (100
-  files, depth 5, fanout 3). Produce a timing table.
