@@ -22,6 +22,18 @@ VERSION ?= $(shell grep -E '^BMU_VERSION=' bin/backmeup.configure.sh | head -1 |
 # Silicon's VZ backend, so that's the fast path).
 ARCH ?= $(shell uname -m | sed 's/arm64/aarch64/')
 
+# Per-VM resource shaping. Lima's defaults (4 CPUs / 4 GiB / 100 GiB)
+# are generous for arbitrary workloads; this test only needs enough
+# to run dnf install of ~290 packages (mostly webkit/gtk deps) and
+# a few rpm queries. Measured: ~7 GB disk, ~1.5 GB peak RAM, barely
+# scales past 2 CPUs. Dropping memory in particular is the biggest
+# host-friendly win because VZ pins the declared RAM for the VM's
+# whole lifetime (not reclaimable), so a 2 GiB VM leaves 2 GiB more
+# on the host vs the default 4 GiB. Units are GiB throughout.
+CPUS ?= 2
+MEMORY ?= 2
+DISK ?= 20
+
 .PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
         test-sim-baseline test-sim-sweep test-sim-clean
 
@@ -43,23 +55,27 @@ help:
 	@echo "  Variables (overridable):"
 	@echo "    VERSION=$(VERSION)"
 	@echo "    ARCH=$(ARCH)"
+	@echo "    CPUS=$(CPUS)        # VM vCPUs"
+	@echo "    MEMORY=$(MEMORY)    # VM RAM, GiB (biggest host-cost knob: VZ pins this)"
+	@echo "    DISK=$(DISK)       # VM disk cap, GiB (sparse: actual use ~7 GB)"
 	@echo ""
 	@echo "  Examples:"
 	@echo "    make test-rpm-fedora"
 	@echo "    make test-rpm-fedora VERSION=2.18.13"
+	@echo "    make test-rpm-fedora CPUS=4 MEMORY=4    # all-out run"
 	@echo "    make test-rpm-all"
 	@echo "    make test-sim-baseline"
 	@echo "    make test-sim-baseline PRESET=deep"
 	@echo "    make test-sim-sweep"
 
 test-rpm-fedora:
-	tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
+	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
 
 test-rpm-rocky:
-	tools/test-rpm-via-lima.sh rocky $(VERSION) $(ARCH)
+	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh rocky $(VERSION) $(ARCH)
 
 test-rpm-alma:
-	tools/test-rpm-via-lima.sh almalinux $(VERSION) $(ARCH)
+	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh almalinux $(VERSION) $(ARCH)
 
 test-rpm-all: test-rpm-fedora test-rpm-rocky test-rpm-alma
 	@echo "All three RPM-family distros installed bmug2 v$(VERSION) ($(ARCH)) cleanly."
