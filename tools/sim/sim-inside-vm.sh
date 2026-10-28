@@ -152,12 +152,46 @@ fi
 echo
 
 # ------------------------------------------------------------------
-# 4. Sim loop
+# 4. Scenario setup
 # ------------------------------------------------------------------
+# SCENARIO=baseline — original: 10 cycles of edits + SYNC + verify
+# SCENARIO=deletion — baseline PLUS: at cycle $delete_at_cycle, delete
+#                     the SECOND tracked file instead of editing it.
+#                     Verify (a) SYNC drops it, (b) HISTORY captures
+#                     its pre-delete version, (c) retrieve pulls it
+#                     back out to a scratch dir with matching content.
+SCENARIO="${SCENARIO:-baseline}"
+SEED="${SEED:-42}"
 cycles=10
+
+# Pick delete_at_cycle. DELETE_AT_CYCLE=<n> overrides for a predictable
+# run; otherwise seed bash's $RANDOM for a reproducible pick in [3,8]
+# (early enough that there's prior HISTORY to recover from, late
+# enough that there are post-deletion cycles to prove the sim keeps
+# running).
+if [ "$SCENARIO" = "deletion" ]; then
+    if [ -n "${DELETE_AT_CYCLE:-}" ]; then
+        delete_at_cycle="$DELETE_AT_CYCLE"
+    else
+        RANDOM="$SEED"
+        delete_at_cycle=$((3 + RANDOM % 6))
+    fi
+    # The deletion target is the SECOND file in edit_files (so the
+    # first stays alive and keeps proving the baseline mechanics
+    # through to cycle 10 even after we delete this one).
+    deletion_entry="${edit_files[1]}"
+    deletion_label="${deletion_entry%%|*}"
+    deletion_path="${deletion_entry#*|}"
+    echo "==> Scenario: deletion (seed=$SEED, delete_at_cycle=$delete_at_cycle, target=$deletion_path)"
+fi
+
+# ------------------------------------------------------------------
+# 5. Sim loop
+# ------------------------------------------------------------------
 pass=0
 fail=0
 declare -a sync_times=()
+deletion_recovery_elapsed=""   # recorded on the deletion cycle
 
 # Buffer sleep: ensure the first cycle's edit has a visibly later
 # mtime than the calibration SYNC. Without this, a fast first edit
@@ -177,10 +211,23 @@ case "$PRESET" in
     deep)      payload_size=102390  ;;
 esac
 for cycle in $(seq 1 $cycles); do
-    # Edit each tracked file to version "v${cycle}".
+    # Edit each tracked file to version "v${cycle}". For the deletion
+    # scenario: at cycle==delete_at_cycle, delete the target instead
+    # of editing. After the deletion cycle, skip the target entirely.
     for entry in "${edit_files[@]}"; do
         label="${entry%%|*}"
         path="${entry#*|}"
+        if [ "$SCENARIO" = "deletion" ] && [ "$label" = "$deletion_label" ]; then
+            if [ "$cycle" -eq "$delete_at_cycle" ]; then
+                rm "$SOURCE_DIR/$path"
+                echo "cycle $cycle: deleted $path"
+                sleep 2.5
+                continue
+            fi
+            if [ "$cycle" -gt "$delete_at_cycle" ]; then
+                continue   # file is gone; don't try to touch it
+            fi
+        fi
         { echo "file-${label}-v${cycle}"; head -c "$payload_size" /dev/zero | tr '\0' 'b'; } > "$SOURCE_DIR/$path"
         sleep 2.5
     done
@@ -198,11 +245,70 @@ for cycle in $(seq 1 $cycles); do
     for entry in "${edit_files[@]}"; do
         label="${entry%%|*}"
         path="${entry#*|}"
+
+        # Deletion scenario: at the deletion cycle, run the three
+        # recovery checks against the file we just deleted. After,
+        # verify the file stays absent from SYNC.
+        if [ "$SCENARIO" = "deletion" ] && [ "$label" = "$deletion_label" ]; then
+            if [ "$cycle" -eq "$delete_at_cycle" ]; then
+                expected_prev=$((cycle - 1))
+                expected_history="file-${label}-v${expected_prev}"
+
+                # (a) SYNC drops it.
+                if [ -e "$SYNC_DIR/$project/$path" ]; then
+                    echo "FAIL cycle=$cycle $path: SYNC still has deleted file"
+                    fail=$((fail + 1))
+                else
+                    pass=$((pass + 1))
+                fi
+
+                # (b) HISTORY captures the pre-delete version.
+                if [ -z "$latest_snapshot" ] || [ ! -f "$BACKUP_DIR/$project/$latest_snapshot/$path" ]; then
+                    echo "FAIL cycle=$cycle $path: deleted file not in HISTORY snapshot"
+                    fail=$((fail + 1))
+                elif ! grep -q "^${expected_history}$" "$BACKUP_DIR/$project/$latest_snapshot/$path"; then
+                    echo "FAIL cycle=$cycle $path: HISTORY wrong version (expected '$expected_history')"
+                    fail=$((fail + 1))
+                else
+                    pass=$((pass + 1))
+                fi
+
+                # (c) retrieve pulls it back + content matches.
+                scratch="/tmp/retrieve-$$"
+                rm -rf "$scratch"
+                recov_start=$(date +%s.%N)
+                backmeup.retrieve.sh "$project" "$latest_snapshot" "$path" "$scratch" > /dev/null
+                recov_end=$(date +%s.%N)
+                deletion_recovery_elapsed=$(awk "BEGIN{printf \"%.3f\", $recov_end - $recov_start}")
+                if [ -f "$scratch/$path" ] && grep -q "^${expected_history}$" "$scratch/$path"; then
+                    pass=$((pass + 1))
+                    echo "cycle $cycle: recovered $path from $latest_snapshot in ${deletion_recovery_elapsed}s"
+                else
+                    echo "FAIL cycle=$cycle $path: retrieve didn't recover the file (or content mismatch)"
+                    fail=$((fail + 1))
+                fi
+                rm -rf "$scratch"
+                continue
+            fi
+
+            if [ "$cycle" -gt "$delete_at_cycle" ]; then
+                # File stays deleted from SYNC for the rest of the sim.
+                if [ -e "$SYNC_DIR/$project/$path" ]; then
+                    echo "FAIL cycle=$cycle $path: SYNC resurrected the deleted file"
+                    fail=$((fail + 1))
+                else
+                    pass=$((pass + 1))
+                fi
+                continue
+            fi
+        fi
+
+        # Baseline check path (used for the non-deletion-target file
+        # on every cycle, and for the target before delete_at_cycle).
         expected_sync="file-${label}-v${cycle}"
         expected_prev=$((cycle - 1))
         expected_history="file-${label}-v${expected_prev}"
 
-        # Check SYNC has current version.
         if ! grep -q "^${expected_sync}$" "$SYNC_DIR/$project/$path"; then
             echo "FAIL cycle=$cycle $path: SYNC missing '$expected_sync'"
             fail=$((fail + 1))
@@ -210,7 +316,6 @@ for cycle in $(seq 1 $cycles); do
         fi
         pass=$((pass + 1))
 
-        # Check HISTORY has prior version (always exists from cycle 1 onwards).
         if [ -z "$latest_snapshot" ] || [ ! -f "$BACKUP_DIR/$project/$latest_snapshot/$path" ]; then
             echo "FAIL cycle=$cycle $path: no HISTORY snapshot file"
             fail=$((fail + 1))
@@ -248,9 +353,13 @@ history_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 snapshot_count=$(find "$BACKUP_DIR/$project/" -maxdepth 1 -type d -name 'B-*' 2>/dev/null | wc -l | tr -d ' ')
 
 echo "=== Results ==="
+echo "Scenario: ${SCENARIO}"
 echo "Checks:   ${pass} passed / ${fail} failed  (expected: 0 failed)"
 echo "SYNC avg: ${avg}s  min: ${min}s  max: ${max}s  (cal: ${cal_elapsed}s)"
 echo "After ${cycles} cycles: SYNC=${sync_size}, HISTORY=${history_size}, snapshots=${snapshot_count}"
+if [ "$SCENARIO" = "deletion" ]; then
+    echo "Deletion: cycle ${delete_at_cycle}, target ${deletion_path}, recovered in ${deletion_recovery_elapsed}s"
+fi
 
 if [ "$fail" -eq 0 ]; then
     echo
