@@ -77,6 +77,14 @@ else
     limactl start --name="$vm" "template://$distro"
 fi
 
+# Always stop the VM on exit (success OR failure) so a run doesn't
+# leave a 4-CPU/4GiB/100GiB VM idling after the test completes - the
+# project's clean-environment discipline. Config + disk are preserved
+# (fast restart next run); full deletion stays behind
+# `make test-rpm-clean`. If the test fails and you want to inspect,
+# `limactl start $vm` resumes with everything the install left behind.
+trap 'echo "==> Stopping Lima VM: $vm (preserved for fast restart; make test-rpm-clean to delete)..."; limactl stop "$vm" 2>/dev/null || true' EXIT
+
 # Run the install + verification inside the VM. $HOME on the host is
 # mounted at the same path inside the VM (Lima's default), so $work is
 # directly accessible.
