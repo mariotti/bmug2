@@ -40,5 +40,6 @@ limactl shell --workdir "$HOME" "$vm" -- \
         PRESET="${PRESET:-flat-many}" \
         SCENARIO="${SCENARIO:-baseline}" \
         SEED="${SEED:-42}" \
+        TRIALS="${TRIALS:-1}" \
         DELETE_AT_CYCLE="${DELETE_AT_CYCLE:-}" \
         bash "$inside_script"

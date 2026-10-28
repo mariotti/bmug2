@@ -70,6 +70,7 @@ help:
 	@echo "    make test-sim-sweep"
 	@echo "    make test-sim-deletion                  # seeded cycle (default SEED=42)"
 	@echo "    make test-sim-deletion DELETE_AT_CYCLE=5 # predictable cycle override"
+	@echo "    make test-sim-deletion TRIALS=5          # 5 trials, derived seeds, aggregate"
 
 test-rpm-fedora:
 	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -105,6 +106,7 @@ test-sim-deletion:
 	    PRESET=$(or $(PRESET),flat-many) \
 	    SCENARIO=deletion \
 	    SEED=$(or $(SEED),42) \
+	    TRIALS=$(or $(TRIALS),1) \
 	    DELETE_AT_CYCLE=$(DELETE_AT_CYCLE) \
 	    tools/sim/run-baseline.sh
 
