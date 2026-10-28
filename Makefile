@@ -35,7 +35,7 @@ MEMORY ?= 2
 DISK ?= 20
 
 .PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
-        test-sim-baseline test-sim-sweep test-sim-clean
+        test-sim-baseline test-sim-sweep test-sim-deletion test-sim-clean
 
 help:
 	@echo "bmug2 Makefile targets"
@@ -50,6 +50,7 @@ help:
 	@echo "  End-to-end backup sim (needs Lima; see tools/sim/README.md):"
 	@echo "    test-sim-baseline  Phase 1 baseline (one preset; default PRESET=flat-many)"
 	@echo "    test-sim-sweep     Run baseline across every preset (flat-few + flat-many + deep)"
+	@echo "    test-sim-deletion  Phase 2: delete a file mid-run, verify recovery via backmeup.retrieve.sh"
 	@echo "    test-sim-clean     Delete every Lima VM the sim created"
 	@echo ""
 	@echo "  Variables (overridable):"
@@ -67,6 +68,8 @@ help:
 	@echo "    make test-sim-baseline"
 	@echo "    make test-sim-baseline PRESET=deep"
 	@echo "    make test-sim-sweep"
+	@echo "    make test-sim-deletion                  # seeded cycle (default SEED=42)"
+	@echo "    make test-sim-deletion DELETE_AT_CYCLE=5 # predictable cycle override"
 
 test-rpm-fedora:
 	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -96,6 +99,14 @@ test-rpm-clean:
 
 test-sim-baseline:
 	BMUG2_SOURCE=$(CURDIR) PRESET=$(or $(PRESET),flat-many) tools/sim/run-baseline.sh
+
+test-sim-deletion:
+	BMUG2_SOURCE=$(CURDIR) \
+	    PRESET=$(or $(PRESET),flat-many) \
+	    SCENARIO=deletion \
+	    SEED=$(or $(SEED),42) \
+	    DELETE_AT_CYCLE=$(DELETE_AT_CYCLE) \
+	    tools/sim/run-baseline.sh
 
 test-sim-sweep:
 	@# Run the baseline across every tree-shape preset in sequence,

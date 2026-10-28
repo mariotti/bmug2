@@ -157,13 +157,64 @@ Pattern-level observations:
   budget. The 1 day = 60s mapping has significant headroom; a
   working-tree ~10× bigger than any tested here would still fit.
 
+## Phase 2 — deletion scenario
+
+Simulates the "user accidentally deleted a file" story end-to-end:
+
+- The sim runs its normal baseline cycles, but at a chosen cycle K it
+  **deletes** the second tracked file (`f002.txt`) instead of editing it.
+- After the SYNC that follows the deletion, the sim verifies three
+  deterministic claims:
+  - (a) the file is gone from SYNC;
+  - (b) the latest HISTORY snapshot contains the file with its
+    pre-deletion content (`file-f002-vK-1`);
+  - (c) **`backmeup.retrieve.sh` pulls it back into a scratch dir and
+    the content matches** — end-to-end confirmation that recovery
+    actually works, not just that the file exists in HISTORY.
+- For the remaining cycles (K+1 … 10), the file stays absent from
+  SYNC; the sim keeps running against the other tracked file to
+  prove the backup system doesn't get confused by the deletion.
+
+### Picking the deletion cycle
+
+Two modes:
+
+```sh
+# Predictable: fixed cycle, same every run
+make test-sim-deletion DELETE_AT_CYCLE=5
+
+# Seeded random: $SEED → cycle in [3, 8]. Default SEED=42.
+make test-sim-deletion
+make test-sim-deletion SEED=17
+```
+
+The seeded picker uses bash's own `$RANDOM`, re-seeded from `SEED`. Range
+[3, 8] is chosen so there's always prior HISTORY to recover from AND
+post-deletion cycles to prove the sim keeps running cleanly.
+
+### Observed on this host
+
+| Mode | Cycle | Recovery time | Snapshot |
+|---|---|---|---|
+| `DELETE_AT_CYCLE=5` | 5 | 5 ms | `B-<time>` |
+| `SEED=42` (default) | 3 | 6 ms | `B-<time>` |
+
+Recovery is near-instantaneous because `backmeup.retrieve.sh` just
+copies a single file from HISTORY — no decompression, no rsync, no
+scanning. The real risk this verifies is the **existence** path (that
+HISTORY actually contains the pre-delete version with the right
+content), not the speed path.
+
 ## Phased plan
 
 - **Phase 1 — baseline (done).** No disruption; confirm the
   deterministic claim + measure baseline performance across three
   tree-shape presets. Sweep table above.
-- **Phase 2 — deletion.** User deletes a file at random time; verify
-  recovery via `backmeup.retrieve.sh` works. Starts needing
-  Monte-Carlo infra (N trials, seeded).
+- **Phase 2 — deletion (done).** User deletes a file at a chosen
+  cycle; verify recovery via `backmeup.retrieve.sh` end-to-end.
+  Predictable (fixed cycle) and seeded (random in [3,8]) modes.
+- **Phase 2.5 — N trials.** Loop Phase 2 with varying seeds,
+  aggregate pass/fail across trials. Easy addition once Phase 2 is
+  proven to be a reliable mechanism.
 - **Phase 3 — crash.** `SIGKILL` a running backup; verify the lock
   recovers cleanly on the next run.

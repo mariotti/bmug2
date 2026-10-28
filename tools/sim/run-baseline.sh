@@ -36,4 +36,9 @@ echo "==> Running Phase 1 baseline sim inside VM..."
 # guest's own $HOME is `/home/mariotti.guest`, a DIFFERENT path — the
 # inside script explicitly uses BMUG2_SOURCE, not $HOME.
 limactl shell --workdir "$HOME" "$vm" -- \
-    env BMUG2_SOURCE="$BMUG2_SOURCE" PRESET="${PRESET:-flat-many}" bash "$inside_script"
+    env BMUG2_SOURCE="$BMUG2_SOURCE" \
+        PRESET="${PRESET:-flat-many}" \
+        SCENARIO="${SCENARIO:-baseline}" \
+        SEED="${SEED:-42}" \
+        DELETE_AT_CYCLE="${DELETE_AT_CYCLE:-}" \
+        bash "$inside_script"
