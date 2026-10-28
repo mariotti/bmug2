@@ -55,6 +55,15 @@ test-rpm-all: test-rpm-fedora test-rpm-rocky test-rpm-alma
 	@echo "All three RPM-family distros installed bmug2 v$(VERSION) ($(ARCH)) cleanly."
 
 test-rpm-clean:
-	-limactl stop   bmug2-rpmtest-fedora bmug2-rpmtest-rocky bmug2-rpmtest-almalinux 2>/dev/null || true
-	-limactl delete bmug2-rpmtest-fedora bmug2-rpmtest-rocky bmug2-rpmtest-almalinux 2>/dev/null || true
-	@echo "Deleted any Lima VMs this Makefile created (unknown-VM errors are harmless)."
+	@# Glob over the `bmug2-rpmtest-` prefix because the per-run VM names
+	@# include a PID suffix for parallel-safety (bmug2-rpmtest-<distro>-<pid>).
+	@# `limactl list -q` emits one name per line; the pipeline is a no-op
+	@# if none match (xargs -r is GNU-only, so testing emptiness explicitly).
+	@vms="$$(limactl list -q 2>/dev/null | grep '^bmug2-rpmtest-' || true)"; \
+	if [ -z "$$vms" ]; then \
+	    echo "No bmug2-rpmtest-* VMs to clean."; \
+	else \
+	    echo "Deleting: $$vms"; \
+	    echo "$$vms" | xargs limactl stop 2>/dev/null || true; \
+	    echo "$$vms" | xargs limactl delete 2>/dev/null || true; \
+	fi

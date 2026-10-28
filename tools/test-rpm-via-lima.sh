@@ -31,7 +31,11 @@ distro="$1"
 version="$2"
 arch="$3"
 
-vm="bmug2-rpmtest-${distro}"
+# PID-based suffix so parallel invocations (even against the same
+# distro) each get their own VM instead of racing on a shared name.
+# `test-rpm-clean` globs by the `bmug2-rpmtest-` prefix, so any
+# left-behind VMs across runs are picked up by the sweep.
+vm="bmug2-rpmtest-${distro}-$$"
 rpm="bmug2-${version}-1.${arch}.rpm"
 tag="v${version}-experimental"
 
@@ -77,13 +81,17 @@ else
     limactl start --name="$vm" "template://$distro"
 fi
 
-# Always stop the VM on exit (success OR failure) so a run doesn't
-# leave a 4-CPU/4GiB/100GiB VM idling after the test completes - the
-# project's clean-environment discipline. Config + disk are preserved
-# (fast restart next run); full deletion stays behind
-# `make test-rpm-clean`. If the test fails and you want to inspect,
-# `limactl start $vm` resumes with everything the install left behind.
-trap 'echo "==> Stopping Lima VM: $vm (preserved for fast restart; make test-rpm-clean to delete)..."; limactl stop "$vm" 2>/dev/null || true' EXIT
+# Always stop AND delete the VM on exit (success OR failure) so a
+# run doesn't leave a 100GiB disk image behind - the project's
+# clean-environment discipline. Debugging a failure is explicitly
+# done by hand (spin up a fresh VM via `limactl start
+# template://fedora` and run the install steps yourself), not by
+# inspecting whatever state the test ran into - a one-off diagnostic
+# session is cheaper than permanent 100GiB-per-distro cost of
+# never-deleted VMs. `test-rpm-clean` sweeps any left-behind VMs
+# matching the `bmug2-rpmtest-` prefix (shouldn't happen under
+# normal exit, but a `kill -9` of this script would skip the trap).
+trap 'echo "==> Cleaning up VM $vm..."; limactl stop "$vm" 2>/dev/null || true; limactl delete "$vm" 2>/dev/null || true' EXIT
 
 # Run the install + verification inside the VM. $HOME on the host is
 # mounted at the same path inside the VM (Lima's default), so $work is
