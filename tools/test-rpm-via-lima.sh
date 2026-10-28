@@ -31,6 +31,14 @@ distro="$1"
 version="$2"
 arch="$3"
 
+# VM resource shaping. The Makefile passes these in; running the script
+# directly, these defaults match the Makefile's own (host-friendly
+# "nice spot" vs Lima's generous 4/4/100 defaults). Override via env
+# for an all-out run: `CPUS=4 MEMORY=4 tools/test-rpm-via-lima.sh ...`
+cpus="${CPUS:-2}"
+memory="${MEMORY:-2}"
+disk="${DISK:-20}"
+
 # PID-based suffix so parallel invocations (even against the same
 # distro) each get their own VM instead of racing on a shared name.
 # `test-rpm-clean` globs by the `bmug2-rpmtest-` prefix, so any
@@ -69,16 +77,18 @@ else
     echo "==> Reusing cached $work/$rpm."
 fi
 
-# Start the VM. Idempotent: if it already exists and is running, no-op;
-# if it exists but is stopped, start it; if it doesn't exist, create.
-echo "==> Preparing Lima VM: $vm (template://$distro)..."
+# Start the VM. Under normal operation each run creates a fresh VM
+# (PID-based name, deleted on exit), so the "create" path is the
+# common case; the "already-exists" branch below only matters if a
+# previous run was killed before its trap fired.
+echo "==> Preparing Lima VM: $vm (template://$distro, cpus=$cpus mem=${memory}GiB disk=${disk}GiB)..."
 if limactl list --format '{{.Name}}' 2>/dev/null | grep -qx "$vm"; then
     status=$(limactl list --format '{{.Status}}' "$vm")
     if [ "$status" != "Running" ]; then
         limactl start "$vm"
     fi
 else
-    limactl start --name="$vm" "template://$distro"
+    limactl start --name="$vm" --cpus="$cpus" --memory="$memory" --disk="$disk" "template://$distro"
 fi
 
 # Always stop AND delete the VM on exit (success OR failure) so a
