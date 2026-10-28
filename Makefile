@@ -22,16 +22,22 @@ VERSION ?= $(shell grep -E '^BMU_VERSION=' bin/backmeup.configure.sh | head -1 |
 # Silicon's VZ backend, so that's the fast path).
 ARCH ?= $(shell uname -m | sed 's/arm64/aarch64/')
 
-.PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean
+.PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
+        test-sim-baseline test-sim-clean
 
 help:
 	@echo "bmug2 Makefile targets"
 	@echo ""
-	@echo "  test-rpm-fedora   Install bmug2 v$(VERSION) $(ARCH) .rpm on a Fedora Lima VM"
-	@echo "  test-rpm-rocky    Same, on Rocky Linux"
-	@echo "  test-rpm-alma     Same, on AlmaLinux"
-	@echo "  test-rpm-all      Run all three in sequence"
-	@echo "  test-rpm-clean    Delete every Lima VM this Makefile created"
+	@echo "  Pre-release RPM-install smoke tests (needs Lima + gh CLI):"
+	@echo "    test-rpm-fedora    Install bmug2 v$(VERSION) $(ARCH) .rpm on a Fedora Lima VM"
+	@echo "    test-rpm-rocky     Same, on Rocky Linux"
+	@echo "    test-rpm-alma      Same, on AlmaLinux"
+	@echo "    test-rpm-all       Run all three in sequence"
+	@echo "    test-rpm-clean     Delete every Lima VM the RPM test created"
+	@echo ""
+	@echo "  End-to-end backup sim (needs Lima; see tools/sim/README.md):"
+	@echo "    test-sim-baseline  Phase 1 baseline: deterministic claim + perf measurement"
+	@echo "    test-sim-clean     Delete every Lima VM the sim created"
 	@echo ""
 	@echo "  Variables (overridable):"
 	@echo "    VERSION=$(VERSION)"
@@ -41,6 +47,7 @@ help:
 	@echo "    make test-rpm-fedora"
 	@echo "    make test-rpm-fedora VERSION=2.18.13"
 	@echo "    make test-rpm-all"
+	@echo "    make test-sim-baseline"
 
 test-rpm-fedora:
 	tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -65,5 +72,21 @@ test-rpm-clean:
 	else \
 	    echo "Deleting: $$vms"; \
 	    echo "$$vms" | xargs limactl stop 2>/dev/null || true; \
+	    echo "$$vms" | xargs limactl delete 2>/dev/null || true; \
+	fi
+
+test-sim-baseline:
+	BMUG2_SOURCE=$(CURDIR) tools/sim/run-baseline.sh
+
+test-sim-clean:
+	@# Sim VMs are named `bmug2-sim-fedora-<pid>` (PID suffix for
+	@# parallel-safety). Normal exit deletes them via the script's trap;
+	@# this target is the kill -9 safety net.
+	@vms="$$(limactl list -q 2>/dev/null | grep '^bmug2-sim-' || true)"; \
+	if [ -z "$$vms" ]; then \
+	    echo "No bmug2-sim-* VMs to clean."; \
+	else \
+	    echo "Deleting: $$vms"; \
+	    echo "$$vms" | xargs limactl stop   2>/dev/null || true; \
 	    echo "$$vms" | xargs limactl delete 2>/dev/null || true; \
 	fi
