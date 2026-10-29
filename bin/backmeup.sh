@@ -54,7 +54,23 @@ fi;
 #is meant to protect - a real, confirmed gap, not a hypothetical one.
 #Skipped entirely when either var is empty: an install that predates
 #this check, or was never run through backmeup.configure.sh since -
-#re-run it once to opt in, same as any other config refresh.
+#re-run it once to opt in, same as any other config refresh. The one
+#WARNING below replaces the previous silent-skip for that case (see
+#OPEN_ISSUES #3): the user keeps running, but is told the guard is
+#off and how to turn it on. Exit code deliberately unchanged so cron
+#jobs on older installs stay working across the upgrade.
+if [ -z "${BMU_DIRRSYNC_MOUNT}" ] || [ -z "${BMU_DIRBACKUPS_MOUNT}" ]; then
+    l_bmu_missing_mount=""
+    if [ -z "${BMU_DIRRSYNC_MOUNT}" ]; then
+        l_bmu_missing_mount="BMU_DIRRSYNC_MOUNT"
+    fi
+    if [ -z "${BMU_DIRBACKUPS_MOUNT}" ]; then
+        l_bmu_missing_mount="${l_bmu_missing_mount}${l_bmu_missing_mount:+, }BMU_DIRBACKUPS_MOUNT"
+    fi
+    echo "WARNING: mount check is disabled (empty: ${l_bmu_missing_mount})."
+    echo "  Re-run backmeup.configure.sh to populate these and enable"
+    echo "  the silent-filling-the-system-disk guard."
+fi
 if [ -n "${BMU_DIRRSYNC_MOUNT}" ]; then
     l_bmu_live_mount=`bmuMountPoint "${BMU_DIRRSYNC}"`
     if [ "${l_bmu_live_mount}" != "${BMU_DIRRSYNC_MOUNT}" ]; then
