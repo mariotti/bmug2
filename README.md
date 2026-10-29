@@ -105,17 +105,20 @@ data loss is a risk you take entirely on yourself.
 
 **Specific risks worth understanding before you rely on this:**
 
-- **SYNC is a destructive mirror.** `backmeup.sh` runs `rsync
-  --delete`: a file deleted from the source is also removed from SYNC
-  on the next run. HISTORY captures **what was in the mirror at the
-  moment of that SYNC** — effectively, the state as of the previous
-  successful SYNC. Edits you made in the gap between the last SYNC and
-  the deletion were never mirrored and so are **not** in HISTORY:
-  recovery gets you the last-SYNC'd version, not your most recent
-  on-disk edit. The gap between SYNC runs is therefore the window of
-  work most at risk — run `bmug2` more often if you're actively
-  editing. Preview with `--dry-run` first on any new project to
-  confirm what the delete + mirror would do.
+- **SYNC propagates deletions, but HISTORY protects against them.**
+  When you delete a file from the source, `backmeup.sh` moves the
+  **last-SYNC'd version** into HISTORY *before* removing it from the
+  mirror. `backmeup.retrieve.sh` pulls it back. The real risk is
+  **edits made since the last SYNC** — those live only on the source
+  disk and aren't in HISTORY, so if you edit, then delete before the
+  next SYNC, those edits are gone. The gap between SYNC runs is the
+  window of work at risk; run `bmug2` more often if you're actively
+  editing. This is a property of any snapshot-based backup system
+  (Time Machine, borg, restic, rsnapshot, ZFS/Btrfs snapshots) —
+  continuous-sync services (Dropbox, Google Drive, Syncthing) shrink
+  the gap to near-zero but trade off the plain-filesystem durability
+  bmug2 is designed around. Preview with `--dry-run` first on any new
+  project.
 - **Restores are never verified automatically.** The tool writes the
   backup; it does not read it back to confirm the destination is
   intact. Periodically restore a sample of files and check they open
