@@ -35,7 +35,7 @@ MEMORY ?= 2
 DISK ?= 20
 
 .PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
-        test-sim-baseline test-sim-sweep test-sim-deletion test-sim-clean
+        test-sim-baseline test-sim-sweep test-sim-deletion test-sim-crash test-sim-clean
 
 help:
 	@echo "bmug2 Makefile targets"
@@ -51,6 +51,7 @@ help:
 	@echo "    test-sim-baseline  Phase 1 baseline (one preset; default PRESET=flat-many)"
 	@echo "    test-sim-sweep     Run baseline across every preset (flat-few + flat-many + deep)"
 	@echo "    test-sim-deletion  Phase 2: delete a file mid-run, verify recovery via backmeup.retrieve.sh"
+	@echo "    test-sim-crash     Phase 3: inject stale lock, verify bmug2 reclaims it + runs cleanly"
 	@echo "    test-sim-clean     Delete every Lima VM the sim created"
 	@echo ""
 	@echo "  Variables (overridable):"
@@ -71,6 +72,9 @@ help:
 	@echo "    make test-sim-deletion                  # seeded cycle (default SEED=42)"
 	@echo "    make test-sim-deletion DELETE_AT_CYCLE=5 # predictable cycle override"
 	@echo "    make test-sim-deletion TRIALS=5          # 5 trials, derived seeds, aggregate"
+	@echo "    make test-sim-crash                     # seeded crash cycle (default SEED=42)"
+	@echo "    make test-sim-crash CRASH_AT_CYCLE=4     # predictable cycle override"
+	@echo "    make test-sim-crash TRIALS=3             # 3 trials, derived seeds, aggregate"
 
 test-rpm-fedora:
 	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -108,6 +112,15 @@ test-sim-deletion:
 	    SEED=$(or $(SEED),42) \
 	    TRIALS=$(or $(TRIALS),1) \
 	    DELETE_AT_CYCLE=$(DELETE_AT_CYCLE) \
+	    tools/sim/run-baseline.sh
+
+test-sim-crash:
+	BMUG2_SOURCE=$(CURDIR) \
+	    PRESET=$(or $(PRESET),flat-many) \
+	    SCENARIO=crash \
+	    SEED=$(or $(SEED),42) \
+	    TRIALS=$(or $(TRIALS),1) \
+	    CRASH_AT_CYCLE=$(CRASH_AT_CYCLE) \
 	    tools/sim/run-baseline.sh
 
 test-sim-sweep:

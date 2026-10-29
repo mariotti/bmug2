@@ -172,6 +172,20 @@ if [ "$SCENARIO" = "deletion" ]; then
     deletion_path="${deletion_entry#*|}"
 fi
 
+# Crash scenario: pick a PID that is definitely not running. bmug2's
+# bmuAcquireLock reclaims the lock dir if its pid file names a dead
+# process (kill -0 returns non-zero) - that's exactly what we test.
+# 999999 is well above the default max_pid on Fedora (4194304 range
+# but typical live range is in the thousands-to-tens-of-thousands),
+# so a collision with an actual process is extremely unlikely in a
+# short-lived Lima VM. Belt-and-braces: step up until kill -0 fails.
+if [ "$SCENARIO" = "crash" ]; then
+    dead_pid=999999
+    while kill -0 "$dead_pid" 2>/dev/null; do
+        dead_pid=$((dead_pid + 1))
+    done
+fi
+
 echo "==> Scenario: ${SCENARIO} (SEED=${SEED}, TRIALS=${TRIALS})"
 
 # Aggregates across trials (Phase 2.5):
@@ -179,6 +193,8 @@ agg_pass=0            # trials where fail==0
 agg_fail=0            # trials where fail>0
 declare -a agg_cycles=()        # delete_at_cycle per trial (deletion scenario)
 declare -a agg_recoveries=()    # retrieve elapsed per trial (deletion scenario)
+declare -a agg_crash_cycles=()  # crash_at_cycle per trial (crash scenario)
+declare -a agg_crash_reclaims=() # yes/no per trial (crash scenario)
 declare -a agg_cal=()           # per-trial calibration SYNC time
 declare -a agg_sync_avg=()      # per-trial avg SYNC
 declare -a agg_hist_size=()     # per-trial HISTORY du after 10 cycles
@@ -211,6 +227,14 @@ for trial in $(seq 1 "$TRIALS"); do
             delete_at_cycle=$((3 + RANDOM % 6))
         fi
     fi
+    if [ "$SCENARIO" = "crash" ]; then
+        if [ -n "${CRASH_AT_CYCLE:-}" ]; then
+            crash_at_cycle="$CRASH_AT_CYCLE"
+        else
+            RANDOM="$trial_seed"
+            crash_at_cycle=$((3 + RANDOM % 6))
+        fi
+    fi
 
     # Calibration SYNC (once per trial — the fresh tree has never
     # been synced yet; measures the cold-first-run cost separately
@@ -229,6 +253,7 @@ for trial in $(seq 1 "$TRIALS"); do
     fail=0
     declare -a sync_times=()
     deletion_recovery_elapsed=""
+    crash_reclaim_seen="no"
 
     # Buffer sleep: ensure the first cycle's edit has a visibly later
     # mtime than the calibration SYNC. Without this, a fast first
@@ -240,6 +265,9 @@ for trial in $(seq 1 "$TRIALS"); do
 
     if [ "$SCENARIO" = "deletion" ]; then
         printf "Trial %d: seed=%d delete_at_cycle=%d target=%s\n" "$trial" "$trial_seed" "$delete_at_cycle" "$deletion_path"
+    fi
+    if [ "$SCENARIO" = "crash" ]; then
+        printf "Trial %d: seed=%d crash_at_cycle=%d dead_pid=%d\n" "$trial" "$trial_seed" "$crash_at_cycle" "$dead_pid"
     fi
 # Determine per-file payload size from the preset (match the generator
 # so overwrites keep the same size - rsync won't skip-on-size-match
@@ -271,8 +299,25 @@ for cycle in $(seq 1 $cycles); do
         sleep 2.5
     done
 
+    # Crash scenario injection: before SYNC on the picked cycle,
+    # create a stale .bmulock dir holding a dead PID. The next
+    # backmeup.sh call should reclaim it (per docs/MANUAL.md's own
+    # troubleshooting entry) and complete successfully.
+    inject_stale=no
+    if [ "$SCENARIO" = "crash" ] && [ "$cycle" -eq "$crash_at_cycle" ]; then
+        mkdir -p "$BACKUP_DIR/$project/.bmulock"
+        echo "$dead_pid" > "$BACKUP_DIR/$project/.bmulock/pid"
+        echo "cycle $cycle: injected stale .bmulock with dead pid=$dead_pid"
+        inject_stale=yes
+    fi
+
     sync_start=$(date +%s.%N)
-    backmeup.sh "$SOURCE_DIR" > /dev/null
+    if [ "$inject_stale" = "yes" ]; then
+        sync_log="/tmp/sync-$$-$cycle.log"
+        backmeup.sh "$SOURCE_DIR" > "$sync_log" 2>&1
+    else
+        backmeup.sh "$SOURCE_DIR" > /dev/null
+    fi
     sync_end=$(date +%s.%N)
     sync_elapsed=$(awk "BEGIN{printf \"%.3f\", $sync_end - $sync_start}")
     sync_times+=("$sync_elapsed")
@@ -368,6 +413,30 @@ for cycle in $(seq 1 $cycles); do
         pass=$((pass + 1))
     done
 
+    # Crash-cycle verifications: (a) the reclaim WARNING was emitted
+    # by bmuAcquireLock, (b) the lock dir was removed cleanly after
+    # SYNC's normal release. The baseline SYNC+HISTORY content checks
+    # on the two tracked files already ran above - the crash scenario
+    # just adds this lock-reclaim pair on top.
+    if [ "$inject_stale" = "yes" ]; then
+        if grep -q "removing a stale lock" "$sync_log"; then
+            pass=$((pass + 1))
+            crash_reclaim_seen="yes"
+            echo "cycle $cycle: lock reclaimed (saw 'removing a stale lock' warning)"
+        else
+            echo "FAIL cycle=$cycle: expected 'removing a stale lock' warning, log tail:"
+            tail -5 "$sync_log" | sed 's/^/  /'
+            fail=$((fail + 1))
+        fi
+        if [ -d "$BACKUP_DIR/$project/.bmulock" ]; then
+            echo "FAIL cycle=$cycle: .bmulock directory still present after SYNC"
+            fail=$((fail + 1))
+        else
+            pass=$((pass + 1))
+        fi
+        rm -f "$sync_log"
+    fi
+
     printf "cycle %2d: SYNC %.3fs  snapshot=%s\n" "$cycle" "$sync_elapsed" "$latest_snapshot"
 done
 
@@ -390,11 +459,18 @@ done
         agg_cycles+=("$delete_at_cycle")
         agg_recoveries+=("$deletion_recovery_elapsed")
     fi
+    if [ "$SCENARIO" = "crash" ]; then
+        agg_crash_cycles+=("$crash_at_cycle")
+        agg_crash_reclaims+=("$crash_reclaim_seen")
+    fi
 
     printf "Trial %d: %d pass / %d fail, SYNC avg %ss, HISTORY %s" \
         "$trial" "$pass" "$fail" "$trial_avg" "$trial_hist"
     if [ "$SCENARIO" = "deletion" ]; then
         printf ", deletion cycle=%d recovered in %ss" "$delete_at_cycle" "$deletion_recovery_elapsed"
+    fi
+    if [ "$SCENARIO" = "crash" ]; then
+        printf ", crash cycle=%d reclaim=%s" "$crash_at_cycle" "$crash_reclaim_seen"
     fi
     printf "\n"
 done   # <-- end for trial
@@ -420,6 +496,14 @@ if [ "$TRIALS" -gt 1 ]; then
     echo "SYNC avg across trials: ${avg}s  (per-trial range ${min_v}s..${max_v}s)"
 fi
 
+if [ "$SCENARIO" = "crash" ] && [ "${#agg_crash_cycles[@]}" -gt 0 ]; then
+    echo -n "Per-trial crash cycles: "
+    printf "%s " "${agg_crash_cycles[@]}"
+    echo
+    echo -n "Per-trial reclaim seen: "
+    printf "%s " "${agg_crash_reclaims[@]}"
+    echo
+fi
 if [ "$SCENARIO" = "deletion" ] && [ "${#agg_cycles[@]}" -gt 0 ]; then
     rsum=0; rmin=99999; rmax=0
     for v in "${agg_recoveries[@]}"; do

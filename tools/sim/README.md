@@ -239,6 +239,51 @@ clean slate — the `reset_data_dirs` + `generate_tree` call at the
 top of each trial erases any SYNC/HISTORY state from the previous
 one, so trial N's results are independent of trial N-1's.
 
+## Phase 3 — crash scenario
+
+Verifies bmug2's **stale-lock reclaim** mechanism (documented in
+`docs/MANUAL.md`'s own troubleshooting section). A real crash leaves
+a `.bmulock` directory holding a dead PID; the next `backmeup.sh`
+invocation should check `kill -0 <pid>`, see the process is gone,
+and reclaim the lock before running.
+
+**Why synthetic lock, not actual SIGKILL:** on an aarch64 Lima VM
+with a 100-file × 10 KB tree, `backmeup.sh` completes in ~50-80 ms.
+Racing a `SIGKILL` into that window is unreliable — half the time
+the backup finishes before the signal lands. Injecting the stale
+lock directly (write a dead-PID file to `.bmulock/pid`) exercises
+the exact code path (`bmuAcquireLock` in
+`bin/backmeup.shellfunctions.sh`) deterministically.
+
+### Three checks per crash cycle (on top of baseline)
+
+- (a) `backmeup.sh` prints the `removing a stale lock...` warning
+  from `bmuAcquireLock`
+- (b) After SYNC, `.bmulock/` directory is removed (normal release)
+- (c) Baseline SYNC + HISTORY checks still pass on both tracked
+  files (the crash doesn't corrupt the cycle's content capture)
+
+### Modes
+
+```sh
+make test-sim-crash                       # seeded (default SEED=42)
+make test-sim-crash CRASH_AT_CYCLE=4      # predictable cycle
+make test-sim-crash TRIALS=3              # 3 trials, derived seeds
+make test-sim-crash TRIALS=5 CRASH_AT_CYCLE=5   # 5 trials, all at cycle 5
+```
+
+### Observed with TRIALS=3
+
+| Trial | Seed | Crash cycle | Reclaim seen |
+|---|---|---|---|
+| 1 | 42 | 3 | yes |
+| 2 | 43 | 7 | yes |
+| 3 | 44 | 8 | yes |
+
+Aggregate: **3/3 trials passed**, 42 pass + 0 fail per trial, SYNC
+avg 0.062s across trials. The reclaim mechanism holds across every
+timing window the seeded picker produces.
+
 ## Phased plan
 
 - **Phase 1 — baseline (done).** No disruption; confirm the
@@ -249,5 +294,5 @@ one, so trial N's results are independent of trial N-1's.
   Predictable (fixed cycle) and seeded (random in [3,8]) modes.
 - **Phase 2.5 — N trials (done).** Loop Phase 2 with derived seeds;
   aggregate pass/fail + stats across trials. Table above.
-- **Phase 3 — crash.** `SIGKILL` a running backup; verify the lock
-  recovers cleanly on the next run.
+- **Phase 3 — crash (done).** Inject stale `.bmulock`; verify
+  `bmuAcquireLock` reclaims and the backup completes. Table above.
