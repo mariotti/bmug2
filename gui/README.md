@@ -7,6 +7,45 @@ runtime, no logic reimplemented in a third language. `mcp/` (bmug2's
 separate MCP server for LLM assistants) is untouched by this; the two
 are independent consumers of the same core.
 
+## Install
+
+Download the latest installer for your platform from
+**[github.com/mariotti/bmug2/releases](https://github.com/mariotti/bmug2/releases)**:
+
+| Platform | Artifact |
+|---|---|
+| **macOS** (Apple Silicon) | `bmug2_X.Y.Z_aarch64.dmg` |
+| **Linux x86_64** — Debian / Ubuntu | `bmug2_X.Y.Z_amd64.deb` |
+| **Linux x86_64** — Fedora / RHEL / Rocky / Alma | `bmug2-X.Y.Z-1.x86_64.rpm` *(GPG-signed)* |
+| **Linux x86_64** — distro-agnostic | `bmug2_X.Y.Z_amd64.AppImage` |
+| **Linux aarch64** — Debian / Ubuntu | `bmug2_X.Y.Z_arm64.deb` |
+| **Linux aarch64** — Fedora / RHEL / Rocky / Alma | `bmug2-X.Y.Z-1.aarch64.rpm` *(GPG-signed)* |
+| **Linux aarch64** — distro-agnostic | `bmug2_X.Y.Z_aarch64.AppImage` |
+
+Releases marked with `-experimental` are pre-releases (odd MINOR
+or odd PATCH — see [`../README.md#versioning`](../README.md#versioning)).
+
+**On first launch**, the setup wizard either installs the matching
+`bmug2` CLI for you (reading your existing SYNC/HISTORY config if any)
+or lets you point at an install you already have. The GUI drives
+the same shell scripts documented in [`../docs/MANUAL.md`](../docs/MANUAL.md);
+nothing you can't eventually do by hand from a terminal.
+
+### Verify a signed `.rpm` before installing (optional)
+
+```sh
+sudo rpm --import https://raw.githubusercontent.com/mariotti/bmug2/main/docs/bmug2-releases.asc
+rpm --checksig bmug2-*.rpm   # expect: "digests signatures OK"
+```
+
+### macOS Gatekeeper note
+
+The `.dmg` is ad-hoc signed but **not** notarized (bmug2 doesn't have
+a paid Apple Developer account yet). First launch may show a *"cannot
+be opened because the developer cannot be verified"* prompt — open
+it via **System Settings → Privacy & Security → Open Anyway**, or
+right-click the app → **Open**.
+
 ## Status
 
 On launch, the app checks a small config it owns
