@@ -35,7 +35,8 @@ MEMORY ?= 2
 DISK ?= 20
 
 .PHONY: help test-rpm-fedora test-rpm-rocky test-rpm-alma test-rpm-all test-rpm-clean \
-        test-sim-baseline test-sim-sweep test-sim-deletion test-sim-crash test-sim-clean
+        test-sim-baseline test-sim-sweep test-sim-deletion test-sim-crash \
+        test-sim-mtime-scan test-sim-clean
 
 help:
 	@echo "bmug2 Makefile targets"
@@ -52,6 +53,7 @@ help:
 	@echo "    test-sim-sweep     Run baseline across every preset (flat-few + flat-many + deep)"
 	@echo "    test-sim-deletion  Phase 2: delete a file mid-run, verify recovery via backmeup.retrieve.sh"
 	@echo "    test-sim-crash     Phase 3: inject stale lock, verify bmug2 reclaims it + runs cleanly"
+	@echo "    test-sim-mtime-scan Heuristic: measure the min edit→SYNC delay where rsync captures reliably"
 	@echo "    test-sim-clean     Delete every Lima VM the sim created"
 	@echo ""
 	@echo "  Variables (overridable):"
@@ -75,6 +77,9 @@ help:
 	@echo "    make test-sim-crash                     # seeded crash cycle (default SEED=42)"
 	@echo "    make test-sim-crash CRASH_AT_CYCLE=4     # predictable cycle override"
 	@echo "    make test-sim-crash TRIALS=3             # 3 trials, derived seeds, aggregate"
+	@echo "    make test-sim-mtime-scan                # measure min safe edit→SYNC delay (default sweep)"
+	@echo "    make test-sim-mtime-scan TRIALS=20       # tighten the measurement"
+	@echo "    make test-sim-mtime-scan DELAYS=\"0.01 0.1 1\"  # custom delay sweep"
 
 test-rpm-fedora:
 	CPUS=$(CPUS) MEMORY=$(MEMORY) DISK=$(DISK) tools/test-rpm-via-lima.sh fedora $(VERSION) $(ARCH)
@@ -121,6 +126,14 @@ test-sim-crash:
 	    SEED=$(or $(SEED),42) \
 	    TRIALS=$(or $(TRIALS),1) \
 	    CRASH_AT_CYCLE=$(CRASH_AT_CYCLE) \
+	    tools/sim/run-baseline.sh
+
+test-sim-mtime-scan:
+	BMUG2_SOURCE=$(CURDIR) \
+	    PRESET=$(or $(PRESET),flat-many) \
+	    SCENARIO=mtime_scan \
+	    TRIALS=$(or $(TRIALS),10) \
+	    DELAYS="$(DELAYS)" \
 	    tools/sim/run-baseline.sh
 
 test-sim-sweep:
