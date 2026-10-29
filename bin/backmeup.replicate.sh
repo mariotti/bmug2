@@ -55,6 +55,20 @@ fi;
 #      install step creates it and nothing removes it; an unmounted
 #      mountpoint never has it. This also protects older installs
 #      with empty *_MOUNT variables.
+# OPEN_ISSUES #3: an install with either *_MOUNT still empty gets
+# only the .bmumeta half of the guard - the stronger mount-point
+# match is silently off. Tell the user, don't change exit code.
+if [ -z "${BMU_DIRRSYNC_MOUNT}" ] || [ -z "${BMU_DIRBACKUPS_MOUNT}" ]; then
+    l_bmu_missing_mount=""
+    if [ -z "${BMU_DIRRSYNC_MOUNT}" ]; then
+        l_bmu_missing_mount="BMU_DIRRSYNC_MOUNT"
+    fi
+    if [ -z "${BMU_DIRBACKUPS_MOUNT}" ]; then
+        l_bmu_missing_mount="${l_bmu_missing_mount}${l_bmu_missing_mount:+, }BMU_DIRBACKUPS_MOUNT"
+    fi
+    echo "WARNING: source mount check is disabled (empty: ${l_bmu_missing_mount})."
+    echo "  Re-run backmeup.configure.sh to populate these and enable it."
+fi
 if [ -n "${BMU_DIRRSYNC_MOUNT}" ]; then
     l_bmu_live_mount=`bmuMountPoint "${BMU_DIRRSYNC}"`
     if [ "${l_bmu_live_mount}" != "${BMU_DIRRSYNC_MOUNT}" ]; then
@@ -98,6 +112,20 @@ fi
 # above protects against. Empty *_MOUNT also means skip (installs
 # predating this capture): same behavior as the source side.
 if [ "${BMU_REPLICATE_BACKEND}" = "local" ]; then
+    # OPEN_ISSUES #3 (symmetric): an install predating #181 has
+    # these two empty - the local-backend target mount check is
+    # silently off. Tell the user, don't change exit code.
+    if [ -z "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ] || [ -z "${BMU_REPLICATE_REMOTE_BACKUPS_MOUNT}" ]; then
+        l_bmu_missing_mount=""
+        if [ -z "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ]; then
+            l_bmu_missing_mount="BMU_REPLICATE_REMOTE_SYNC_MOUNT"
+        fi
+        if [ -z "${BMU_REPLICATE_REMOTE_BACKUPS_MOUNT}" ]; then
+            l_bmu_missing_mount="${l_bmu_missing_mount}${l_bmu_missing_mount:+, }BMU_REPLICATE_REMOTE_BACKUPS_MOUNT"
+        fi
+        echo "WARNING: local-backend target mount check is disabled (empty: ${l_bmu_missing_mount})."
+        echo "  Re-run backmeup.configure.sh to populate these and enable it."
+    fi
     if [ -n "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ]; then
         l_bmu_live_mount=`bmuMountPoint "${BMU_REPLICATE_REMOTE_SYNC}"`
         if [ "${l_bmu_live_mount}" != "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ]; then

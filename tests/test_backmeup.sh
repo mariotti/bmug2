@@ -908,6 +908,85 @@ testBackupStillRunsWithoutMountCheckConfigured() {
         "[ -f '${l_home}/sync/nomountcheckproj/fine.txt' ]"
 }
 
+testBackupWarnsWhenMountCheckNotConfigured() {
+    # Companion to testBackupStillRunsWithoutMountCheckConfigured above:
+    # the two guarantees are "the run still succeeds" (there, exit 0 +
+    # mirror populated) AND "the user is told the guard is off" (here).
+    # Without this warning the pre-#104 install silently gets no mount
+    # protection and never knows - that's exactly OPEN_ISSUES #3. Must
+    # NOT change exit code: existing cron jobs stay working.
+    l_home="${SHUNIT_TMPDIR}/mountwarnhome"
+    l_checkout="${SHUNIT_TMPDIR}/mountwarncheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/mountwarn-install.log" 2>&1
+    assertEquals "install failed, see mountwarn-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    l_oldsetup="${SHUNIT_TMPDIR}/mountwarn-oldstyle-setup.sh"
+    grep -v '^BMU_DIR\(RSYNC\|BACKUPS\)_MOUNT=' "${l_setup}" > "${l_oldsetup}"
+    cp "${l_oldsetup}" "${l_setup}"
+
+    l_src="${l_home}/src/mountwarnproj"
+    mkdir -p "${l_src}"
+    echo "fine" > "${l_src}/fine.txt"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" \
+        > "${SHUNIT_TMPDIR}/mountwarn-run.log" 2>&1
+    assertEquals "warning must not change the exit code - cron jobs stay green" \
+        0 $?
+    grep -q "WARNING.*mount check" "${SHUNIT_TMPDIR}/mountwarn-run.log"
+    assertTrue "backup should warn about the disabled mount check" $?
+    grep -q "configure.sh" "${SHUNIT_TMPDIR}/mountwarn-run.log"
+    assertTrue "warning should point at backmeup.configure.sh for the fix" $?
+    assertTrue "fine.txt did not reach the mirror (warning must not block the backup)" \
+        "[ -f '${l_home}/sync/mountwarnproj/fine.txt' ]"
+}
+
+testReplicateWarnsWhenMountCheckNotConfigured() {
+    # Mirrors Issue #3's reasoning but for replicate.sh: #180 and #181
+    # introduced the same silent-skip-when-empty behavior on
+    # BMU_DIRRSYNC_MOUNT / BMU_DIRBACKUPS_MOUNT (source side, all
+    # backends) and on BMU_REPLICATE_REMOTE_SYNC_MOUNT /
+    # _BACKUPS_MOUNT (target side, local backend only). Any install
+    # predating those captures gets no protection; replicate.sh must
+    # say so. Exit code unchanged - replication still runs.
+    l_home="${SHUNIT_TMPDIR}/replmountwarnhome"
+    l_checkout="${SHUNIT_TMPDIR}/replmountwarncheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    l_sync_dst="${l_home}/cloud/SYNC"
+    l_bkup_dst="${l_home}/cloud/BackUp"
+    mkdir -p "${l_sync_dst}" "${l_bkup_dst}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=local \
+        --replicate-remote-sync="${l_sync_dst}" \
+        --replicate-remote-backups="${l_bkup_dst}" \
+        < /dev/null > "${SHUNIT_TMPDIR}/replmountwarn-install.log" 2>&1
+    assertEquals "install failed, see replmountwarn-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    l_oldsetup="${SHUNIT_TMPDIR}/replmountwarn-oldstyle-setup.sh"
+    grep -v '^BMU_DIR\(RSYNC\|BACKUPS\)_MOUNT=\|^BMU_REPLICATE_REMOTE_\(SYNC\|BACKUPS\)_MOUNT=' \
+        "${l_setup}" > "${l_oldsetup}"
+    cp "${l_oldsetup}" "${l_setup}"
+
+    "${l_home}/usr/bmu/bin/backmeup.replicate.sh" \
+        > "${SHUNIT_TMPDIR}/replmountwarn-run.log" 2>&1
+    assertEquals "warning must not change replicate.sh's exit code" 0 $?
+    grep -q "WARNING.*mount check" "${SHUNIT_TMPDIR}/replmountwarn-run.log"
+    assertTrue "replicate should warn about the disabled mount check" $?
+    grep -q "configure.sh" "${SHUNIT_TMPDIR}/replmountwarn-run.log"
+    assertTrue "warning should point at backmeup.configure.sh for the fix" $?
+}
+
 #
 # non-interactive replication flags (--replicate-backend= etc, a GUI's
 # own way to configure/clear either backend without a terminal)
