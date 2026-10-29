@@ -91,6 +91,11 @@ exact bug each one closed in [docs/MANUAL.md](docs/MANUAL.md) and
    minimal PATH can't silently swap in the wrong binary.
  - `backmeup.retrieve.sh` can only ever add files to a destination you
    name; it can't touch `SYNC`/`HISTORY` or overwrite anything.
+ - **End-to-end verified** against real disruption scenarios in a
+   controlled Linux VM — deterministic SYNC/HISTORY recovery,
+   deletion recovery via `backmeup.retrieve.sh`, and stale-lock
+   reclaim across random timing windows. Full catalog with
+   measured timings in [`tools/sim/README.md`](tools/sim/README.md).
 
 ## Disclaimer
 
