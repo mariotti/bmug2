@@ -52,9 +52,12 @@ HISTORY/<project>/B-<date>/...        the changed/deleted files, that run
 HISTORY/<project>/B-<date>.filelist   plain-text `find` listing of the snapshot
 HISTORY/<project>/B-<date>.tar.gz     the snapshot, once archived (see below)
 HISTORY/<project>/.bmulastrun         timestamp of the last successful run
-HISTORY/<project>/.bmulock            present only while a backmeup.sh run for
-                                       this project is in progress; removed when
-                                       it finishes - see Troubleshooting below
+HISTORY/<project>/.bmulock/           a directory present only while a backmeup.sh
+                                       run for this project is in progress; its
+                                       `pid` file holds the running backup's PID,
+                                       which the next run checks (via `kill -0`)
+                                       to reclaim the lock if the previous one
+                                       was killed - see Troubleshooting below
 HISTORY/<project>/.bmuconfig          optional - BMU_GITIGNORE="no"/
                                        BMU_BMUIGNORE="yes" to override this
                                        project's .gitignore/.bmuignore handling,
@@ -152,22 +155,28 @@ point:
 ```
 
 **Replication has its own, independent non-interactive flag**:
-`--replicate-backend=rclone|proton|none`, with `--replicate-remote-sync=`
-and `--replicate-remote-backups=` required alongside `rclone` (optional
+`--replicate-backend=rclone|proton|local|none`, with
+`--replicate-remote-sync=` and `--replicate-remote-backups=` required
+alongside `rclone` *and* `local` (both backends use the two
+destination paths; `rclone` passes them to `rclone sync`, `local`
+passes them to `rsync` as plain filesystem paths — e.g. a mounted
+Google Drive / Dropbox / iCloud Drive folder). Optional
 `--replicate-proton-remote=` alongside `proton`, falling back to
 `/bmug2/<hostname>` when omitted — the same default the interactive
-prompt uses). This is gated separately from the four directory flags
+prompt uses. This is gated separately from the four directory flags
 above on purpose: a directory-flagged run with no `--replicate-backend=`
 still skips replication entirely, exactly as before (so existing
 scripted/GUI callers that only ever pass directory flags see no
 behavior change), while `--replicate-backend=` alone — no directory
 flags at all — still prompts interactively for directories, letting a
 caller reconfigure *just* replication on an already-installed system.
-The chosen backend's tool must actually be detected (`rclone`/
-`proton-drive` on `PATH` or a Homebrew/system location — see
+For `rclone` and `proton` the chosen backend's tool must actually be
+detected (`rclone`/`proton-drive` on `PATH` or a Homebrew/system
+location — see
 [DESTINATIONS.md](DESTINATIONS.md#proton-drive-as-a-replication-target)),
 or the run fails with a clear message rather than silently writing an
-unusable config:
+unusable config. The `local` backend has no such precondition — only
+`rsync`, which bmug2 already requires.
 
 ```
 backmeup.configure.sh --replicate-backend=rclone \
@@ -177,7 +186,11 @@ backmeup.configure.sh --replicate-backend=rclone \
 backmeup.configure.sh --replicate-backend=proton \
     --replicate-proton-remote=/bmug2/my-mac
 
-backmeup.configure.sh --replicate-backend=none   # clears either backend
+backmeup.configure.sh --replicate-backend=local \
+    --replicate-remote-sync="$HOME/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/bmug2/SYNC" \
+    --replicate-remote-backups="$HOME/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/bmug2/BackUp"
+
+backmeup.configure.sh --replicate-backend=none   # clears any backend
 ```
 
 ## Upgrading an existing install
@@ -385,24 +398,36 @@ creating anything.
 backmeup.replicate.sh [-n|--dry-run]
 ```
 
-Copies the whole SYNC and HISTORY trees to an off-site destination via
-`rclone sync` — the actual backup disk (external drive, NAS, cloud;
-see [DESTINATIONS.md](DESTINATIONS.md)), layered on top of the local
-versioning above, not a replacement for it. Run it as often as you can
-tolerate losing — the gap between replication runs is how much work a
-local-disk failure could cost, not a fixed "nightly is enough" default.
+Copies the whole SYNC and HISTORY trees to an off-site destination,
+layered on top of the local versioning above (not a replacement for
+it). Two backends are supported — picked at configure time; the
+script dispatches to the chosen one at run time:
+
+- **`rclone`** — passes the paths to `rclone sync`, hitting any
+  rclone remote (S3, Backblaze B2, etc.; see
+  [DESTINATIONS.md](DESTINATIONS.md)).
+- **`local`** — passes the paths to `rsync`, into a plain local
+  directory (typically a cloud-sync desktop folder like Google Drive
+  for Desktop, Dropbox, or iCloud Drive — the desktop client handles
+  the upload on its own; see
+  [DESTINATIONS.md](DESTINATIONS.md#replicating-to-a-mounted-cloud-folder-the-fast-path)).
+
+Run it as often as you can tolerate losing — the gap between
+replication runs is how much work a local-disk failure could cost,
+not a fixed "nightly is enough" default.
 
 `-n`/`--dry-run` previews what would be copied without changing the
 destination.
 
 Refuses to run (exit 1) when:
  - replication hasn't been configured — re-run `backmeup.configure.sh`
-   (only offered if `rclone` is installed)
+   (the `rclone` backend is only offered if `rclone` is installed; the
+   `local` backend has no extra prerequisite beyond bmug2's own `rsync`)
 
-This is the `rclone` backend — the only one bmug2 had until
-`backmeup.replicate.proton.sh` below. The two are mutually exclusive per
-install (`backmeup.configure.sh` asks which one to set up, if both
-tools are detected) and are not meant to run side by side.
+For end-to-end encryption to Proton Drive specifically, see the
+separate [`backmeup.replicate.proton.sh`](#backmeupreplicateprotonsh)
+below — a third, Proton-only backend. The three backends (`rclone`,
+`local`, `proton`) are mutually exclusive per install.
 
 ### backmeup.replicate.proton.sh
 
