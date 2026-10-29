@@ -43,4 +43,5 @@ limactl shell --workdir "$HOME" "$vm" -- \
         TRIALS="${TRIALS:-1}" \
         DELETE_AT_CYCLE="${DELETE_AT_CYCLE:-}" \
         CRASH_AT_CYCLE="${CRASH_AT_CYCLE:-}" \
+        DELAYS="${DELAYS:-}" \
         bash "$inside_script"

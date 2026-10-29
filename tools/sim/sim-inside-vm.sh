@@ -200,6 +200,93 @@ declare -a agg_sync_avg=()      # per-trial avg SYNC
 declare -a agg_hist_size=()     # per-trial HISTORY du after 10 cycles
 
 # ------------------------------------------------------------------
+# 4a. mtime-window scan (SCENARIO=mtime_scan — different flow)
+# ------------------------------------------------------------------
+# Measures the smallest edit→SYNC delay at which rsync RELIABLY
+# captures the edit. Below the threshold, rsync compares size +
+# mtime, sees "no change" (because the mtime of the just-written
+# file is within rsync's comparison window of the previous SYNC's
+# metadata), and skips - the edit is on-disk at the source but
+# never reaches SYNC. This is a real property of rsync, not a
+# bmug2 bug; the scan quantifies the threshold on this specific
+# filesystem + rsync version so docs/sims can cite a real number.
+#
+# Returns 0 unconditionally (the scan is INFORMATIONAL, not
+# pass/fail - a result like "100% below 500 ms" is itself the
+# answer, not a failure).
+if [ "$SCENARIO" = "mtime_scan" ]; then
+    DELAYS_DEFAULT="0.001 0.01 0.05 0.1 0.25 0.5 1.0 2.0"
+    DELAYS="${DELAYS:-$DELAYS_DEFAULT}"
+    TRIALS="${TRIALS:-10}"
+    case "$PRESET" in
+        flat-few)  payload_size=1048566 ;;
+        flat-many) payload_size=10200   ;;
+        deep)      payload_size=102390  ;;
+    esac
+    scan_entry="${edit_files[0]}"
+    scan_label="${scan_entry%%|*}"
+    scan_path="${scan_entry#*|}"
+
+    reset_data_dirs
+    generate_tree
+    echo "==> mtime-window scan: TRIALS=${TRIALS} per delay, target=${scan_path}"
+
+    # Initial SYNC populates the mirror. Buffer sleep after, same
+    # reason as the Phase 1 safety sleep (give mtime clear separation
+    # from the SYNC itself before trial 1's edit).
+    backmeup.sh "$SOURCE_DIR" > /dev/null
+    sleep 1
+
+    counter=0
+    echo
+    printf "%-10s %10s %10s %12s\n" "delay(s)" "trials" "captured" "capture_rate"
+    printf "%-10s %10s %10s %12s\n" "--------" "------" "--------" "------------"
+    declare -a scan_results=()
+    for delay in $DELAYS; do
+        captured=0
+        for trial in $(seq 1 "$TRIALS"); do
+            counter=$((counter + 1))
+            version="v${counter}"
+            { echo "file-${scan_label}-${version}"; head -c "$payload_size" /dev/zero | tr '\0' 'b'; } > "$SOURCE_DIR/$scan_path"
+            sleep "$delay"
+            backmeup.sh "$SOURCE_DIR" > /dev/null
+            if grep -q "^file-${scan_label}-${version}$" "$SYNC_DIR/$project/$scan_path"; then
+                captured=$((captured + 1))
+            fi
+            # Buffer between trials so the NEXT edit's mtime cleanly
+            # separates from this SYNC's completion. Without this,
+            # the next trial could inherit the previous trial's skip.
+            sleep 1
+        done
+        rate=$(awk "BEGIN{printf \"%.0f\", $captured * 100 / $TRIALS}")
+        printf "%-10s %10d %10d %11d%%\n" "$delay" "$TRIALS" "$captured" "$rate"
+        scan_results+=("${delay}|${captured}|${TRIALS}|${rate}")
+    done
+
+    # Compute threshold: smallest delay in the sweep where capture
+    # rate hit 100%. If none did, report that too.
+    echo
+    threshold=""
+    for row in "${scan_results[@]}"; do
+        delay="${row%%|*}"
+        rate="${row##*|}"
+        if [ "$rate" = "100" ]; then
+            threshold="$delay"
+            break
+        fi
+    done
+    if [ -n "$threshold" ]; then
+        echo "Threshold (smallest delay with 100% capture): ${threshold}s"
+    else
+        echo "No delay in [${DELAYS}] reached 100% capture on this host."
+        echo "Try a larger upper bound via DELAYS=\"... <bigger>\" or increase TRIALS."
+    fi
+    echo
+    echo "PASS (scan complete)."
+    exit 0
+fi
+
+# ------------------------------------------------------------------
 # 4. Trial loop (Phase 2.5)
 # ------------------------------------------------------------------
 for trial in $(seq 1 "$TRIALS"); do

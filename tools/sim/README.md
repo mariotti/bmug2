@@ -284,6 +284,62 @@ Aggregate: **3/3 trials passed**, 42 pass + 0 fail per trial, SYNC
 avg 0.062s across trials. The reclaim mechanism holds across every
 timing window the seeded picker produces.
 
+## Heuristic: edit → SYNC mtime window
+
+One of the "future heuristic tests implied" in Phase 1's
+observations was: *at what edit → SYNC delay does rsync start
+skipping the edit as "unchanged" (size + mtime match)?*
+
+`make test-sim-mtime-scan` sweeps across a configurable list of
+delays, running N trials at each, and reports the capture rate per
+delay plus the smallest delay that reached 100%.
+
+### Observed on this host (Fedora inside Lima VZ, rsync 3.x)
+
+```
+delay(s)       trials   captured capture_rate
+--------       ------   -------- ------------
+0.001              10         10         100%
+0.01               10         10         100%
+0.05               10         10         100%
+0.1                10         10         100%
+0.25               10         10         100%
+0.5                10         10         100%
+1.0                10         10         100%
+2.0                10         10         100%
+
+Threshold (smallest delay with 100% capture): 0.001s
+```
+
+### Interpretation + important caveat
+
+The heuristic hits 100% capture at **1 ms** — effectively invisible
+to any human-paced workflow. **But that's the forward direction
+only** (edit → wait → SYNC). The sibling phenomenon that bit the
+sim at Phase 1's cycle 1 is different: **SYNC completes → edit
+immediately after → next SYNC**. There, the previous SYNC's write
+timestamp can collide with the immediate re-edit's mtime, making
+rsync treat the edit as "unchanged."
+
+The scan's inter-trial buffer sleep (1 s) deliberately separates
+each trial's edit from the previous trial's SYNC, so it only
+measures edit → SYNC, not the SYNC → next-edit gap. A tightened
+Phase 1 safety-sleep scan (varying the gap BEFORE the edit) is a
+reasonable follow-up — but under normal human-paced use neither
+timing is actually at risk, since no editor saves faster than
+rsync completes.
+
+### Modes
+
+```sh
+make test-sim-mtime-scan                        # default sweep (8 delays × 10 trials)
+make test-sim-mtime-scan TRIALS=20              # tighten the measurement
+make test-sim-mtime-scan DELAYS="0.01 0.1 1"    # custom sweep
+```
+
+Filesystem- and rsync-version-dependent — this is one data point,
+not a universal law.
+
 ## Phased plan
 
 - **Phase 1 — baseline (done).** No disruption; confirm the
@@ -296,3 +352,7 @@ timing window the seeded picker produces.
   aggregate pass/fail + stats across trials. Table above.
 - **Phase 3 — crash (done).** Inject stale `.bmulock`; verify
   `bmuAcquireLock` reclaims and the backup completes. Table above.
+- **Heuristic: mtime scan (done).** Measured the forward
+  edit→SYNC gap; 100% at 1 ms on this host (reasonable follow-up:
+  measure the reverse SYNC→edit gap, which was Phase 1 cycle 1's
+  observed failure).
