@@ -86,6 +86,38 @@ if [ ! -f "${BMU_DIRBACKUPS}/.bmumeta" ]; then
     exit 1
 fi
 #
+# Symmetric target-side mount check for the local backend only. The
+# rclone and proton backends talk to a remote protocol, not a mounted
+# filesystem, so bmuMountPoint doesn't apply there - BMU_REPLICATE_
+# REMOTE_SYNC_MOUNT / _BACKUPS_MOUNT stay empty for those backends and
+# this block is a no-op. For the local backend the destination is a
+# plain path (typically an external drive or cloud-sync folder); if
+# that drive is not mounted right now, rsync --delete would write
+# the mirror onto the system disk at the mountpoint path - the exact
+# "silently fills the system disk" scenario the source-side check
+# above protects against. Empty *_MOUNT also means skip (installs
+# predating this capture): same behavior as the source side.
+if [ "${BMU_REPLICATE_BACKEND}" = "local" ]; then
+    if [ -n "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ]; then
+        l_bmu_live_mount=`bmuMountPoint "${BMU_REPLICATE_REMOTE_SYNC}"`
+        if [ "${l_bmu_live_mount}" != "${BMU_REPLICATE_REMOTE_SYNC_MOUNT}" ]; then
+            echo "ERROR: SYNC replication target ${BMU_REPLICATE_REMOTE_SYNC} is not on its"
+            echo "configured filesystem (expected mount: ${BMU_REPLICATE_REMOTE_SYNC_MOUNT}, found: ${l_bmu_live_mount:-<none>})."
+            echo "  Refusing to replicate - rsync --delete would write to the system disk instead."
+            exit 1
+        fi
+    fi
+    if [ -n "${BMU_REPLICATE_REMOTE_BACKUPS_MOUNT}" ]; then
+        l_bmu_live_mount=`bmuMountPoint "${BMU_REPLICATE_REMOTE_BACKUPS}"`
+        if [ "${l_bmu_live_mount}" != "${BMU_REPLICATE_REMOTE_BACKUPS_MOUNT}" ]; then
+            echo "ERROR: BackUp replication target ${BMU_REPLICATE_REMOTE_BACKUPS} is not on its"
+            echo "configured filesystem (expected mount: ${BMU_REPLICATE_REMOTE_BACKUPS_MOUNT}, found: ${l_bmu_live_mount:-<none>})."
+            echo "  Refusing to replicate - rsync --delete would write to the system disk instead."
+            exit 1
+        fi
+    fi
+fi
+#
 l_BMU_OPT=""
 if [ -n "${l_BMU_DRYRUN}" ]; then
     l_BMU_OPT="--dry-run"

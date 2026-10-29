@@ -223,6 +223,8 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_CMDREPLICATE=""
             BMU_REPLICATE_REMOTE_SYNC=""
             BMU_REPLICATE_REMOTE_BACKUPS=""
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
             BMU_REPLICATE_PROTON_BIN=""
             BMU_REPLICATE_PROTON_REMOTE=""
             echo "Off-site replication disabled (--replicate-backend=none)."
@@ -243,6 +245,8 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
             BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
             BMU_REPLICATE_REMOTE_BACKUPS="${BMU_CLI_REPLICATE_REMOTE_BACKUPS}"
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
             echo "Off-site replication configured (rclone, non-interactive)."
             ;;
         proton)
@@ -254,6 +258,8 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_CMDREPLICATE=""
             BMU_REPLICATE_REMOTE_SYNC=""
             BMU_REPLICATE_REMOTE_BACKUPS=""
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
             BMU_REPLICATE_BACKEND="proton"
             BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
             BMU_REPLICATE_PROTON_REMOTE="${BMU_CLI_REPLICATE_PROTON_REMOTE:-/bmug2/`hostname -s 2>/dev/null`}"
@@ -270,6 +276,8 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_CMDREPLICATE="${BMU_CMDRSYNC} -a --delete"
             BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
             BMU_REPLICATE_REMOTE_BACKUPS="${BMU_CLI_REPLICATE_REMOTE_BACKUPS}"
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT="`bmuMountPoint \"${BMU_REPLICATE_REMOTE_SYNC}\"`"
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT="`bmuMountPoint \"${BMU_REPLICATE_REMOTE_BACKUPS}\"`"
             echo "Off-site replication configured (local path, non-interactive)."
             ;;
         *)
@@ -307,6 +315,8 @@ elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
             BMU_CMDREPLICATE=""
             BMU_REPLICATE_REMOTE_SYNC=""
             BMU_REPLICATE_REMOTE_BACKUPS=""
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
             BMU_REPLICATE_BACKEND="proton"
             BMU_REPLICATE_PROTON_BIN="${BMU_CMDPROTON}"
             BMU_REPLICATE_PROTON_REMOTE="/bmug2/`hostname -s 2>/dev/null`"
@@ -321,6 +331,8 @@ elif bmuPromptyN "Set up off-site replication now (y/N)?"; then
         *)
             BMU_REPLICATE_PROTON_BIN=""
             BMU_REPLICATE_PROTON_REMOTE=""
+            BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
+            BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
             BMU_REPLICATE_BACKEND="rclone"
             BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
             while bmuPromptValue "Please type the remote SYNC destination (e.g. remote:bucket/path):" "BMU_REPLICATE_REMOTE_SYNC" "n"
@@ -362,7 +374,9 @@ for curvar in \
  BMU_CMDLOCATE \
  BMU_CMDREPLICATE \
  BMU_REPLICATE_REMOTE_SYNC \
+ BMU_REPLICATE_REMOTE_SYNC_MOUNT \
  BMU_REPLICATE_REMOTE_BACKUPS \
+ BMU_REPLICATE_REMOTE_BACKUPS_MOUNT \
  BMU_REPLICATE_BACKEND \
  BMU_REPLICATE_PROTON_BIN \
  BMU_REPLICATE_PROTON_REMOTE;

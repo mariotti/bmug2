@@ -2191,6 +2191,65 @@ testReplicateRefusesWhenSyncLacksBmumeta() {
     assertTrue "replica SYNC must be untouched" "[ -f '${l_remotesync}/precious.txt' ]"
 }
 
+# Local backend only: if the configured replicate TARGET (the mounted
+# cloud folder, external disk, etc.) is on a different filesystem now
+# than when it was configured, that usually means the external disk
+# isn't mounted and rsync would silently fill the (empty) mountpoint
+# on the system disk - a less-visible version of OPEN_ISSUES #1,
+# since the system disk doesn't get wiped but DOES grow by SYNC+BackUp
+# bytes every run. The test simulates the mismatch by hand-editing
+# the captured mountpoint in setup.sh and verifies replicate refuses.
+testReplicateLocalRefusesWhenTargetMountChanged() {
+    l_home="${SHUNIT_TMPDIR}/localtargetmount"
+    l_checkout="${SHUNIT_TMPDIR}/localtargetmount-ck"
+    l_fakersync="${SHUNIT_TMPDIR}/localtargetmount-fakersync"
+    rm -rf "${l_home}" "${l_checkout}" "${l_fakersync}"
+    mkdir -p "${l_checkout}" "${l_fakersync}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+    # fake rsync so we can detect if it was called at all (if the
+    # guard misses, rsync would write to the "wrong" target dir).
+    l_rsync_log="${SHUNIT_TMPDIR}/localtargetmount-rsync.log"
+    printf '#!/bin/sh\necho "$@" >> "%s"\n' "${l_rsync_log}" > "${l_fakersync}/rsync"
+    chmod +x "${l_fakersync}/rsync"
+
+    l_sync_dst="${l_home}/cloud/SYNC"
+    l_bkup_dst="${l_home}/cloud/BackUp"
+    mkdir -p "${l_home}/sync" "${l_home}/sync-BP" "${l_sync_dst}" "${l_bkup_dst}"
+    echo preexisting > "${l_sync_dst}/precious.txt"
+
+    PATH="${l_fakersync}:${PATH}" "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=local \
+        --replicate-remote-sync="${l_sync_dst}" \
+        --replicate-remote-backups="${l_bkup_dst}" \
+        < /dev/null > "${SHUNIT_TMPDIR}/localtargetmount-install.log" 2>&1
+    assertEquals "install must succeed" 0 $?
+
+    # Simulate "target is no longer on its configured mount" by
+    # rewriting the captured mountpoint to something that cannot
+    # currently resolve.
+    sed -i.bak \
+        -e 's|^BMU_REPLICATE_REMOTE_SYNC_MOUNT=.*|BMU_REPLICATE_REMOTE_SYNC_MOUNT="/__sim_unmount_cannot_exist__"|' \
+        "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+
+    # bmuDetectRsync in configure.sh above already ran "rsync --version"
+    # against the fake rsync (openrsync detection, by design), so the log
+    # file may already exist from that detection call. Reset it here so
+    # the final assertion below cleanly measures whether replicate.sh
+    # itself invoked rsync, not install-time detection.
+    rm -f "${l_rsync_log}"
+
+    PATH="${l_fakersync}:${PATH}" "${l_home}/usr/bmu/bin/backmeup.replicate.sh" \
+        > "${SHUNIT_TMPDIR}/localtargetmount-run.log" 2>&1
+    assertEquals "replicate must refuse when target mount no longer matches" 1 $?
+    grep -q "ERROR.*SYNC.*mount\|ERROR.*target.*mount\|ERROR.*remote.*mount" "${SHUNIT_TMPDIR}/localtargetmount-run.log"
+    assertTrue "error message should name the target mount mismatch" $?
+    assertTrue "replica SYNC must be untouched" "[ -f '${l_sync_dst}/precious.txt' ]"
+    # The fake rsync must never have been called (guard aborted first).
+    assertFalse "rsync must not run when the target mount guard fires" "[ -f '${l_rsync_log}' ]"
+}
+
 testReplicateRefusesWhenBackupLacksBmumeta() {
     l_dir="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta"
     l_src_sync="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta-sync"
