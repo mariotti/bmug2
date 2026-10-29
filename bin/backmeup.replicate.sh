@@ -26,6 +26,7 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
+. "${BMU_PATH}/backmeup.shellfunctions.sh"
 . "${BMU_PATH}/backmeup.setup.sh"
 #
 # Parsing options
@@ -41,6 +42,49 @@ if [ -z "${BMU_CMDREPLICATE}" ] || [ -z "${BMU_REPLICATE_REMOTE_SYNC}" ] \
     echo "  Re-run backmeup.configure.sh to set it up, or see docs/DESTINATIONS.md."
     exit 1
 fi;
+#
+# Guard against replicating from an unmounted source. If BMU_DIRRSYNC
+# or BMU_DIRBACKUPS is on a disk that isn't currently mounted, the
+# mountpoint is an empty directory - and both backends run with
+# --delete (rsync) or sync-semantics (rclone), which would propagate
+# that emptiness and wipe the replica. backmeup.sh has the same
+# protection; replicate.sh now mirrors it. Two layered checks:
+#   1. If *_MOUNT is set (configured after the backmeup.sh mount
+#      check landed), verify the current mountpoint still matches.
+#   2. Always verify .bmumeta exists in the source dir - bmug2's
+#      install step creates it and nothing removes it; an unmounted
+#      mountpoint never has it. This also protects older installs
+#      with empty *_MOUNT variables.
+if [ -n "${BMU_DIRRSYNC_MOUNT}" ]; then
+    l_bmu_live_mount=`bmuMountPoint "${BMU_DIRRSYNC}"`
+    if [ "${l_bmu_live_mount}" != "${BMU_DIRRSYNC_MOUNT}" ]; then
+        echo "ERROR: SYNC directory ${BMU_DIRRSYNC} is not on its configured"
+        echo "filesystem (expected mount: ${BMU_DIRRSYNC_MOUNT}, found: ${l_bmu_live_mount:-<none>})."
+        echo "  Refusing to replicate - rsync --delete / rclone sync would wipe the replica."
+        exit 1
+    fi
+fi
+if [ ! -f "${BMU_DIRRSYNC}/.bmumeta" ]; then
+    echo "ERROR: SYNC directory ${BMU_DIRRSYNC} is missing its .bmumeta marker."
+    echo "  Usually this means the backup disk isn't mounted (its mountpoint is empty)."
+    echo "  Refusing to replicate - rsync --delete / rclone sync would wipe the replica."
+    exit 1
+fi
+if [ -n "${BMU_DIRBACKUPS_MOUNT}" ]; then
+    l_bmu_live_mount=`bmuMountPoint "${BMU_DIRBACKUPS}"`
+    if [ "${l_bmu_live_mount}" != "${BMU_DIRBACKUPS_MOUNT}" ]; then
+        echo "ERROR: BackUp directory ${BMU_DIRBACKUPS} is not on its configured"
+        echo "filesystem (expected mount: ${BMU_DIRBACKUPS_MOUNT}, found: ${l_bmu_live_mount:-<none>})."
+        echo "  Refusing to replicate - rsync --delete / rclone sync would wipe the replica."
+        exit 1
+    fi
+fi
+if [ ! -f "${BMU_DIRBACKUPS}/.bmumeta" ]; then
+    echo "ERROR: BackUp directory ${BMU_DIRBACKUPS} is missing its .bmumeta marker."
+    echo "  Usually this means the backup disk isn't mounted (its mountpoint is empty)."
+    echo "  Refusing to replicate - rsync --delete / rclone sync would wipe the replica."
+    exit 1
+fi
 #
 l_BMU_OPT=""
 if [ -n "${l_BMU_DRYRUN}" ]; then

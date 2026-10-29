@@ -33,6 +33,10 @@ BMU_BIN_SRC="${TESTS_PATH}/../bin"
 oneTimeSetUp() {
     SB="${SHUNIT_TMPDIR}/bmu"
     mkdir -p "${SB}/src/myproject/sub" "${SB}/sync/.locate.dir" "${SB}/sync-BP"
+    # The real install.sh creates .bmumeta in SYNC/BackUp as a mounted-
+    # disk sentinel; the sed-on-template shortcut below doesn't, so
+    # drop the markers manually to match a real install's state.
+    touch "${SB}/sync/.bmumeta" "${SB}/sync-BP/.bmumeta"
     cp -R "${BMU_BIN_SRC}" "${SB}/bin"
     sed -e "s|\${HOME}/Backups/rsyncBackup|${SB}/sync|" \
         "${SB}/bin/backmeup.setup.sh.template" > "${SB}/bin/backmeup.setup.sh"
@@ -2145,6 +2149,77 @@ testReplicateFailsCleanlyWhenNotConfigured() {
     assertEquals "must fail without replication configured" 1 $?
     grep -q "ERROR" "${l_dir}/run.log"
     assertTrue "no ERROR message shown to the user" $?
+}
+
+# An unmounted mountpoint is an empty directory. If backmeup.replicate.sh
+# runs against an empty source dir, rsync --delete / rclone sync would
+# propagate the emptiness and wipe the off-site replica. The .bmumeta
+# sentinel (created at install time, never removed) is bmug2's "the
+# backup disk is actually here" marker. These two tests verify the
+# guard aborts the replicate rather than wiping.
+testReplicateRefusesWhenSyncLacksBmumeta() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-nosyncmeta"
+    l_src_sync="${SHUNIT_TMPDIR}/bmu-replicate-nosyncmeta-sync"
+    l_src_bp="${SHUNIT_TMPDIR}/bmu-replicate-nosyncmeta-sync-BP"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-nosyncmeta-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-nosyncmeta-remote-bp"
+    rm -rf "${l_dir}" "${l_src_sync}" "${l_src_bp}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    # SYNC source = empty mountpoint shape (no .bmumeta). BackUp has it.
+    mkdir -p "${l_src_sync}" "${l_src_bp}"
+    touch "${l_src_bp}/.bmumeta"
+    # Replica side already has content we want preserved.
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    echo "existing" > "${l_remotesync}/precious.txt"
+    # Patch sandbox to point at the empty mountpoint shape + a local
+    # rsync-backed replicate backend.
+    sed -i.bak \
+        -e "s|^BMU_DIRRSYNC=.*|BMU_DIRRSYNC=\"${l_src_sync}\"|" \
+        -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${l_src_bp}\"|" \
+        "${l_dir}/backmeup.setup.sh"
+    {
+        echo "BMU_REPLICATE_BACKEND=\"local\""
+        echo "BMU_CMDREPLICATE=\"${BMU_CMDRSYNC:-rsync} -a --delete\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "must refuse to replicate from a SYNC lacking .bmumeta" 1 $?
+    grep -q "ERROR.*SYNC.*bmumeta\|ERROR.*SYNC.*not mounted\|ERROR.*SYNC.*mountpoint" "${l_dir}/run.log"
+    assertTrue "error message should name the missing SYNC marker" $?
+    assertTrue "replica SYNC must be untouched" "[ -f '${l_remotesync}/precious.txt' ]"
+}
+
+testReplicateRefusesWhenBackupLacksBmumeta() {
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta"
+    l_src_sync="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta-sync"
+    l_src_bp="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta-sync-BP"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-nobkmeta-remote-bp"
+    rm -rf "${l_dir}" "${l_src_sync}" "${l_src_bp}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    # BackUp source = empty mountpoint shape (no .bmumeta). SYNC has it.
+    mkdir -p "${l_src_sync}" "${l_src_bp}"
+    touch "${l_src_sync}/.bmumeta"
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    echo "existing" > "${l_remotebp}/precious.txt"
+    sed -i.bak \
+        -e "s|^BMU_DIRRSYNC=.*|BMU_DIRRSYNC=\"${l_src_sync}\"|" \
+        -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${l_src_bp}\"|" \
+        "${l_dir}/backmeup.setup.sh"
+    {
+        echo "BMU_REPLICATE_BACKEND=\"local\""
+        echo "BMU_CMDREPLICATE=\"${BMU_CMDRSYNC:-rsync} -a --delete\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "must refuse to replicate from a BackUp lacking .bmumeta" 1 $?
+    grep -q "ERROR.*BackUp.*bmumeta\|ERROR.*BackUp.*not mounted\|ERROR.*BackUp.*mountpoint" "${l_dir}/run.log"
+    assertTrue "error message should name the missing BackUp marker" $?
+    assertTrue "replica BackUp must be untouched" "[ -f '${l_remotebp}/precious.txt' ]"
 }
 
 testReplicateSyncsSyncAndHistoryToLocalStandInRemote() {
