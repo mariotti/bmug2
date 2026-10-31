@@ -45,7 +45,7 @@ version history.
 
 This is a lift up of the old BMU project. It is fully AI driven, but with a lot of human directions.
 
-I started it as an experiment, but the outcome is indeed pretty nice: it is a project you can actually use.
+I started it as an experiment, the outcome is indeed pretty nice: it is a project you can actually use.
 
 I am sorry for the load of text that AI adds to every document.
 On the other side I could add a lot of tests using the AI.
