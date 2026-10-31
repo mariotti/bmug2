@@ -87,14 +87,19 @@ pub fn build_source_wrapper(bin_dir: &str, source_path: &str) -> String {
 /// bin_dir/backmeup.setup.sh, the same simple KEY="value" line-scan
 /// version.rs::read_installed_version already uses for BMU_VERSION.
 /// Reading BMU_REPLICATE_BACKEND (not the rclone-only BMU_CMDREPLICATE)
-/// is what makes this correct for both backends - a Proton-configured
+/// is what makes this correct for every backend - a Proton-configured
 /// install used to silently never run backmeup.replicate.proton.sh on
-/// its housekeeping schedule before this fix, since the old check only
-/// ever looked for rclone's own variable.
+/// its housekeeping schedule before that was fixed, since the old
+/// check only ever looked for rclone's own variable; the local backend
+/// used to fall through to the no-op arm for the same reason.
+/// rclone and local share backmeup.replicate.sh (the script dispatches
+/// off BMU_REPLICATE_BACKEND internally); proton has its own script.
 pub fn build_housekeeping_wrapper(bin_dir: &str) -> String {
     let mut script = format!("#!/bin/sh\nset -e\n\"{bin_dir}/backmeup.updatedb.sh\"\n");
     match configured_replication_backend(Path::new(bin_dir)).as_deref() {
-        Some("rclone") => script.push_str(&format!("\"{bin_dir}/backmeup.replicate.sh\"\n")),
+        Some("rclone") | Some("local") => {
+            script.push_str(&format!("\"{bin_dir}/backmeup.replicate.sh\"\n"))
+        }
         Some("proton") => script.push_str(&format!("\"{bin_dir}/backmeup.replicate.proton.sh\"\n")),
         _ => {}
     }
@@ -625,6 +630,28 @@ mod tests {
         assert!(script.contains("backmeup.updatedb.sh"));
         assert!(script.contains("backmeup.replicate.proton.sh"));
         assert!(!script.contains("backmeup.replicate.sh\""));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn housekeeping_wrapper_includes_local_replicate_when_configured() {
+        // The local backend shares backmeup.replicate.sh with rclone (the
+        // script dispatches off BMU_REPLICATE_BACKEND internally). Before
+        // this fix, the match arm only knew about "rclone" and "proton",
+        // so a local-backend install silently never had its scheduled
+        // replication run - the same shape of silent miss the proton
+        // wrapper comment above already documents for its own backend.
+        let tmp = std::env::temp_dir().join(format!("bmug2-sched-hk-local-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("backmeup.setup.sh"),
+            "BMU_REPLICATE_BACKEND=\"local\"\nBMU_CMDREPLICATE=\"rsync -a --delete\"\n",
+        )
+        .unwrap();
+        let script = build_housekeeping_wrapper(tmp.to_str().unwrap());
+        assert!(script.contains("backmeup.updatedb.sh"));
+        assert!(script.contains("backmeup.replicate.sh"));
+        assert!(!script.contains("backmeup.replicate.proton.sh"));
         std::fs::remove_dir_all(&tmp).ok();
     }
 
