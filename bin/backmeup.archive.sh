@@ -29,6 +29,7 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
+. "${BMU_PATH}/backmeup.shellfunctions.sh"
 . "${BMU_PATH}/backmeup.setup.sh"
 #
 # Parsing options
@@ -53,6 +54,17 @@ if [ ! -d "${l_BMU_BP}" ]; then
     echo "ERROR: no history for ${l_BMU_PRJDIR} in ${BMU_DIRBACKUPS}"
     exit 1
 fi;
+#
+# Per-project lock: same path backmeup.sh uses. Without it, a backup
+# run can be tarring a B-<stamp> directory while this archive run is
+# also reading/removing it - and the dry-run path writes a missing
+# .filelist too (line 83-85), so it's not purely read-only either.
+l_BMU_LOCKDIR="${l_BMU_BP}/.bmulock"
+if ! bmuAcquireLock "${l_BMU_LOCKDIR}"; then
+    echo "ERROR: another bmug2 run for '${l_BMU_PRJDIR}' is already in progress."
+    exit 1
+fi
+trap 'bmuReleaseLock "${l_BMU_LOCKDIR}"' EXIT
 #
 # Cutoff timestamp, BSD date first, GNU date as fallback. The snapshot
 # names sort chronologically as strings, so a string compare against

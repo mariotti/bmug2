@@ -23,6 +23,7 @@ fi
 BMU_PATH=${MY_PATH}
 #
 # SETUP
+. "${BMU_PATH}/backmeup.shellfunctions.sh"
 . "${BMU_PATH}/backmeup.setup.sh"
 #
 if [ -z "$1" ] || [ -z "$2" ]; then
@@ -46,6 +47,16 @@ if [ -d "${l_BMU_BP}/${l_BMU_SNAP}" ]; then
     echo "ERROR: ${l_BMU_SNAP} already exists as a directory, not touching it."
     exit 1
 fi;
+#
+# Per-project lock: same path backmeup.sh uses. A concurrent backup
+# run on the same project could otherwise write into the directory
+# this tar is in the middle of extracting.
+l_BMU_LOCKDIR="${l_BMU_BP}/.bmulock"
+if ! bmuAcquireLock "${l_BMU_LOCKDIR}"; then
+    echo "ERROR: another bmug2 run for '${l_BMU_PRJDIR}' is already in progress."
+    exit 1
+fi
+trap 'bmuReleaseLock "${l_BMU_LOCKDIR}"' EXIT
 #
 if ( cd "${l_BMU_BP}" && tar -xzf "${l_BMU_SNAP}.tar.gz" ); then
     rm "${l_BMU_TGZ}"
