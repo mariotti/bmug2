@@ -3095,6 +3095,240 @@ testNewlyIgnoredFileMovesToHistory() {
         "`cat \"${l_bdir}/later.log\" 2>/dev/null`"
 }
 
+#
+# backmeup.thin.sh - time-bucket snapshot thinning (dry-run only in
+# this PR; destructive fold-merge + tail-delete lands next)
+# ---------------------------------------------------------------------
+
+thinSetupFakeHistory() {
+    # $1 = project dir, $2+ = snapshot stamps (B-<stamp> dir will be
+    # created for each, with a fixed-size placeholder file inside so
+    # the dir is non-empty and real tar/rsync tools can see it).
+    # Uses _ts_* names to avoid clobbering the caller's l_* vars.
+    _ts_proj_bp="$1"; shift
+    rm -rf "${_ts_proj_bp}"
+    mkdir -p "${_ts_proj_bp}"
+    for _ts_stamp in "$@"; do
+        mkdir -p "${_ts_proj_bp}/B-${_ts_stamp}"
+        echo "ballast ${_ts_stamp}" > "${_ts_proj_bp}/B-${_ts_stamp}/f.txt"
+    done
+}
+
+thinSnapshot() {
+    # $1 = checkout bin dir, $2 = BackUp root, $3 = BMU_KEEP_* lines
+    # written straight into setup.sh (newline-separated), $4+ = args.
+    # NB: POSIX sh has no `local`, so this function uses _ts_* names
+    # for its own temporaries - plain l_dir / l_bp would otherwise
+    # clobber the caller's identically-named loop variables.
+    _ts_dir="$1"
+    _ts_bp="$2"
+    _ts_keeps="$3"
+    shift 3
+    # Materialise a sed-friendly setup.sh from the template (same
+    # pattern oneTimeSetUp above uses), pointing BMU_DIRBACKUPS at the
+    # per-test fixture; then append the test's BMU_KEEP_* overrides.
+    sed -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${_ts_bp}\"|" \
+        -e "/^BMU_KEEP_/d" \
+        "${_ts_dir}/backmeup.setup.sh.template" > "${_ts_dir}/backmeup.setup.sh"
+    printf '%s\n' "${_ts_keeps}" >> "${_ts_dir}/backmeup.setup.sh"
+    mkdir -p "${_ts_bp}"
+    touch "${_ts_bp}/.bmumeta"
+    "${_ts_dir}/backmeup.thin.sh" "$@"
+}
+
+testThinDisabledWhenAllKeepsEmpty() {
+    # Plan test #1: with every BMU_KEEP_* empty (the template default
+    # for every existing install), backmeup.thin.sh must exit 0 and
+    # touch nothing. Zero-regression contract for pre-thinning installs.
+    l_dir="${SHUNIT_TMPDIR}/thin-disabled"
+    l_bp="${SHUNIT_TMPDIR}/thin-disabled-bp/thindisabled"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" "20261029-100000" "20261029-110000"
+    l_pre=`ls -1 "${l_bp}" | sort`
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" "" -n thindisabled \
+        > "${SHUNIT_TMPDIR}/thin-disabled.log" 2>&1
+    assertEquals "thinning should be disabled by default (exit 0)" 0 $?
+    grep -q "disabled" "${SHUNIT_TMPDIR}/thin-disabled.log"
+    assertTrue "expected a 'disabled' hint in the output" $?
+    l_post=`ls -1 "${l_bp}" | sort`
+    assertEquals "disabled thinning must not change the tree" "${l_pre}" "${l_post}"
+}
+
+testThinKeepsNewestPerBucketAndMergesInBetween() {
+    # Plan test #2: with KEEP_DAILY=2 KEEP_HOURLY=1 and four snapshots
+    # (today 10:00, 11:00, 12:00 + yesterday 12:00), the keep set is
+    # the union: today-12 (hourly+daily newest-of-today) and
+    # yesterday-12 (daily newest-of-yesterday). Dropped 10:00 and
+    # 11:00 sit between keeps (both newer than oldest kept) and must
+    # be labelled "merge -> B-today-12", not deleted - that's the
+    # correctness-critical half the destructive PR will act on.
+    l_dir="${SHUNIT_TMPDIR}/thin-bucket"
+    l_bp="${SHUNIT_TMPDIR}/thin-bucket-bp/thinbucket"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" \
+        "20261028-120000" \
+        "20261029-100000" \
+        "20261029-110000" \
+        "20261029-120000"
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" \
+        'BMU_KEEP_HOURLY="1"
+BMU_KEEP_DAILY="2"
+BMU_KEEP_MIN="1"' -n thinbucket \
+        > "${SHUNIT_TMPDIR}/thin-bucket.log" 2>&1
+    assertEquals "thin dry-run exit code" 0 $?
+    # Today-12 is kept by both rules; label order matches rule order.
+    grep -q "B-20261029-120000 .* keep (" "${SHUNIT_TMPDIR}/thin-bucket.log"
+    assertTrue "today-12 should be marked kept" $?
+    grep -q "B-20261028-120000 .* keep (.*daily" "${SHUNIT_TMPDIR}/thin-bucket.log"
+    assertTrue "yesterday-12 should be kept by the daily rule" $?
+    grep -q "B-20261029-110000 .* merge -> B-20261029-120000" \
+        "${SHUNIT_TMPDIR}/thin-bucket.log"
+    assertTrue "today-11 (dropped, newer than oldest kept) should MERGE into today-12, not delete" $?
+    grep -q "B-20261029-100000 .* merge -> B-20261029-120000" \
+        "${SHUNIT_TMPDIR}/thin-bucket.log"
+    assertTrue "today-10 (dropped, newer than oldest kept) should MERGE into today-12" $?
+    grep -q "delete (tail)" "${SHUNIT_TMPDIR}/thin-bucket.log"
+    assertFalse "nothing older than the oldest kept exists; no tail delete expected" $?
+}
+
+testThinAlwaysKeepsNewestAndRespectsMin() {
+    # Plan test #6: the newest snapshot is never removed; BMU_KEEP_MIN
+    # is a hard floor. With KEEP_HOURLY=1 KEEP_MIN=3 on 4 within-hour
+    # snapshots, hourly alone keeps 1 (newest); MIN=3 promotes the
+    # next 2 oldest-not-yet-kept so the final keep set has >= 3.
+    l_dir="${SHUNIT_TMPDIR}/thin-min"
+    l_bp="${SHUNIT_TMPDIR}/thin-min-bp/thinmin"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" \
+        "20261029-120000" \
+        "20261029-120100" \
+        "20261029-120200" \
+        "20261029-120300"
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" \
+        'BMU_KEEP_HOURLY="1"
+BMU_KEEP_MIN="3"' -n thinmin \
+        > "${SHUNIT_TMPDIR}/thin-min.log" 2>&1
+    assertEquals "thin dry-run exit code" 0 $?
+    grep -q "B-20261029-120300 .* keep (newest" "${SHUNIT_TMPDIR}/thin-min.log"
+    assertTrue "newest-overall must always be kept and labelled" $?
+    l_kept=`grep -c " keep (" "${SHUNIT_TMPDIR}/thin-min.log"`
+    assertTrue "KEEP_MIN=3 should keep at least 3 (got ${l_kept})" "[ ${l_kept} -ge 3 ]"
+    grep -q "keep (KEEP_MIN)" "${SHUNIT_TMPDIR}/thin-min.log"
+    assertTrue "at least one promotion should be labelled 'keep (KEEP_MIN)'" $?
+}
+
+testThinDryRunChangesNothing() {
+    # Plan test #8: -n must leave the tree byte-identical. Snapshot a
+    # recursive listing (name + size) before and after and compare.
+    l_dir="${SHUNIT_TMPDIR}/thin-nochange"
+    l_bp="${SHUNIT_TMPDIR}/thin-nochange-bp/thinnc"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" \
+        "20261029-100000" "20261029-110000" "20261029-120000"
+    l_pre=`find "${l_bp}" | sort`
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" \
+        'BMU_KEEP_HOURLY="1"
+BMU_KEEP_MIN="1"' -n thinnc > /dev/null 2>&1
+    assertEquals "dry-run exit code" 0 $?
+    l_post=`find "${l_bp}" | sort`
+    assertEquals "dry-run must leave the tree exactly as it was" "${l_pre}" "${l_post}"
+}
+
+testThinWeekBucketCrossesYearBoundary() {
+    # Plan test #12: a Mon Dec 29 2025 snapshot and a Thu Jan 1 2026
+    # snapshot are in the SAME ISO week (Dec 29 - Jan 4, Monday-aligned
+    # per bmuStampToEpoch's UTC math). With KEEP_WEEKLY=2 and a
+    # Fri Dec 26 2025 snapshot one week earlier:
+    #   - weekly newest -> keep Jan 1 (week W)
+    #   - Dec 29 is same week W: skipped, dropped
+    #   - Dec 26 is week W-1: keep (count 2)
+    # Dec 29 falls BETWEEN the two keeps (newer than oldest kept Dec
+    # 26) and must therefore merge into Jan 1, not get labelled "tail".
+    # Runs on both macOS (BSD date -j) and Linux CI (GNU date -d);
+    # the test's assertions are platform-blind.
+    l_dir="${SHUNIT_TMPDIR}/thin-week"
+    l_bp="${SHUNIT_TMPDIR}/thin-week-bp/thinweek"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" \
+        "20251226-120000" \
+        "20251229-120000" \
+        "20260101-120000"
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" \
+        'BMU_KEEP_WEEKLY="2"
+BMU_KEEP_MIN="1"' -n thinweek \
+        > "${SHUNIT_TMPDIR}/thin-week.log" 2>&1
+    assertEquals "thin dry-run exit code" 0 $?
+    grep -q "B-20260101-120000 .* keep (" "${SHUNIT_TMPDIR}/thin-week.log"
+    assertTrue "Jan 1 2026 should be kept (newest + weekly bucket W)" $?
+    grep -q "B-20251226-120000 .* keep (.*weekly" "${SHUNIT_TMPDIR}/thin-week.log"
+    assertTrue "Dec 26 2025 should be kept (weekly bucket W-1)" $?
+    grep -q "B-20251229-120000 .* merge -> B-20260101-120000" \
+        "${SHUNIT_TMPDIR}/thin-week.log"
+    assertTrue "Dec 29 2025 is in the SAME week as Jan 1 2026; must merge, not tail-delete" $?
+}
+
+testThinRejectsInvalidKeepValues() {
+    # Plan test #13: a typo (BMU_KEEP_HOURLY="abc" or "0" or "-1" or
+    # 'all' outside yearly) must refuse to run with exit 1 - a
+    # silently-treated-as-off typo is the exact "no protection and
+    # no warning" footgun side #3/OPEN_ISSUES #3 fixed for the mount
+    # check. Nothing on disk changes.
+    l_dir="${SHUNIT_TMPDIR}/thin-bad"
+    l_bp="${SHUNIT_TMPDIR}/thin-bad-bp/thinbad"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" "20261029-120000"
+    l_pre=`find "${l_bp}" | sort`
+
+    for l_bad in 'BMU_KEEP_HOURLY="abc"' 'BMU_KEEP_DAILY="0"' \
+                 'BMU_KEEP_HOURLY="all"' 'BMU_KEEP_MIN="-1"'; do
+        thinSnapshot "${l_dir}" "${l_bp%/*}" "${l_bad}" -n thinbad \
+            > "${SHUNIT_TMPDIR}/thin-bad.log" 2>&1
+        assertEquals "must reject '${l_bad}'" 1 $?
+        grep -q "ERROR" "${SHUNIT_TMPDIR}/thin-bad.log"
+        assertTrue "no ERROR message for '${l_bad}'" $?
+    done
+    l_post=`find "${l_bp}" | sort`
+    assertEquals "invalid-config refuse must not touch the tree" "${l_pre}" "${l_post}"
+}
+
+testThinRefusesDestructiveWithoutDryRun() {
+    # Guard rail for this PR specifically: the destructive fold-merge
+    # path isn't implemented yet; running without -n must refuse
+    # loudly rather than silently fall back to dry-run (a future user
+    # or test could otherwise assume thinning works when it doesn't).
+    # Dropped when the destructive PR lands.
+    l_dir="${SHUNIT_TMPDIR}/thin-nodestructive"
+    l_bp="${SHUNIT_TMPDIR}/thin-nodestructive-bp/thinnd"
+    rm -rf "${l_dir}" "${l_bp%/*}"
+    mkdir -p "${l_dir}"
+    cp -R "${BMU_BIN_SRC}/." "${l_dir}"
+    thinSetupFakeHistory "${l_bp}" "20261029-120000"
+
+    thinSnapshot "${l_dir}" "${l_bp%/*}" \
+        'BMU_KEEP_HOURLY="1"' thinnd \
+        > "${SHUNIT_TMPDIR}/thin-nd.log" 2>&1
+    assertEquals "destructive invocation must refuse until PR 2 lands" 1 $?
+    grep -q "not yet implemented" "${SHUNIT_TMPDIR}/thin-nd.log"
+    assertTrue "expected an explicit 'not yet implemented' message" $?
+}
+
 testGuiVersionStaysInSyncWithBmuVersion() {
     # The GUI ships as its own app bundle (macOS .dmg, Linux .deb/
     # AppImage) with its own version metadata in three separate files -

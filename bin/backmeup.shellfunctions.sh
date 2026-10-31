@@ -503,3 +503,38 @@ bmuConfigureDir() {
     fi
     eval "echo \"${l_bcd_noun} Directory is: \${${l_bcd_varname}}\""
 }
+#
+# bmuStampToEpoch()
+# $1 = B-stamp body, "YYYYMMDD-HHMMSS" (no "B-" prefix, no .tar.gz).
+# Prints UTC epoch seconds and returns 0; returns 1 on parse failure
+# with no output. Same BSD-first / GNU-fallback pattern as
+# archive.sh's cutoff, kept here so backmeup.thin.sh can reuse it
+# without duplicating the detection. Parses the stamp as UTC on
+# both platforms deliberately: only relative-ordering bucketing
+# (week math) consumes the result today, and keeping the clock in
+# UTC on both ends sidesteps DST surprises on the local-timezone
+# path a dev-machine date(1) would otherwise take.
+bmuStampToEpoch() {
+    l_bmu_stamp="$1"
+    # BSD date (macOS): -j suppresses setting the clock; -f parses
+    # the stamp directly in the format bmug2 writes.
+    l_bmu_epoch=`date -j -u -f "%Y%m%d-%H%M%S" "${l_bmu_stamp}" "+%s" 2>/dev/null`
+    if [ -z "${l_bmu_epoch}" ]; then
+        # GNU date: no "parse arbitrary format" flag, so reshape the
+        # stamp into ISO8601 first. Six cut calls instead of
+        # ${var:0:4}-style slicing (not POSIX; dash and shunit2's
+        # subshells both lack it).
+        l_bmu_y=`echo "${l_bmu_stamp}" | cut -c1-4`
+        l_bmu_mo=`echo "${l_bmu_stamp}" | cut -c5-6`
+        l_bmu_d=`echo "${l_bmu_stamp}" | cut -c7-8`
+        l_bmu_hh=`echo "${l_bmu_stamp}" | cut -c10-11`
+        l_bmu_mi=`echo "${l_bmu_stamp}" | cut -c12-13`
+        l_bmu_ss=`echo "${l_bmu_stamp}" | cut -c14-15`
+        l_bmu_epoch=`date -u -d "${l_bmu_y}-${l_bmu_mo}-${l_bmu_d} ${l_bmu_hh}:${l_bmu_mi}:${l_bmu_ss}" "+%s" 2>/dev/null`
+    fi
+    if [ -z "${l_bmu_epoch}" ]; then
+        return 1
+    fi
+    echo "${l_bmu_epoch}"
+    return 0
+}
