@@ -2699,6 +2699,84 @@ testUnarchiveRefusesExistingDir() {
         "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
 }
 
+testArchiveRefusesWhenLockHeld() {
+    # A concurrent backmeup.sh and backmeup.archive.sh on the same
+    # project race on the same B-<stamp> dir: archive would tar a
+    # snapshot while the backup is still writing into it. Take the
+    # same per-project lock backmeup.sh already does.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/archlockproj"
+    mkdir -p "${l_src}"
+    echo "lock me v1" > "${l_src}/file.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "lock me v2" > "${l_src}/file.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    l_bk=`ls -d "${SB}/sync-BP/archlockproj"/B-*/ 2>/dev/null | head -1`
+    l_bk="${l_bk%/}"
+    assertNotNull "test setup: no snapshot created for archlockproj" "${l_bk}"
+    l_name=`basename "${l_bk}"`
+    sleep 1
+
+    . "${SB}/bin/backmeup.shellfunctions.sh"
+    l_lockdir="${SB}/sync-BP/archlockproj/.bmulock"
+    bmuAcquireLock "${l_lockdir}"
+    assertTrue "test setup: failed to acquire the simulated lock" $?
+
+    "${SB}/bin/backmeup.archive.sh" archlockproj 0 \
+        > "${SB}/archlock.log" 2>&1
+    assertEquals "archive should refuse while the project lock is held" 1 $?
+    grep -q "already in progress\|lock" "${SB}/archlock.log"
+    assertTrue "expected a lock-held error message" $?
+    assertFalse "no tarball must be created while locked" \
+        "[ -f '${l_bk}.tar.gz' ]"
+    assertFalse "no .part tarball must linger while locked" \
+        "[ -f '${l_bk}.tar.gz.part' ]"
+    assertTrue "snapshot dir must still be on disk" "[ -d '${l_bk}' ]"
+
+    bmuReleaseLock "${l_lockdir}"
+    "${SB}/bin/backmeup.archive.sh" archlockproj 0 \
+        > "${SB}/archlock-ok.log" 2>&1
+    assertEquals "archive should succeed once the lock is released" 0 $?
+    assertTrue "tarball should exist after the lock-free archive" \
+        "[ -f '${l_bk}.tar.gz' ]"
+    assertFalse "lock dir should be released after a successful archive" \
+        "[ -d '${l_lockdir}' ]"
+}
+
+testUnarchiveRefusesWhenLockHeld() {
+    l_bp="${SB}/sync-BP/unarchlockproj"
+    mkdir -p "${l_bp}/B-20200101-000000"
+    echo "inside" > "${l_bp}/B-20200101-000000/x.txt"
+    ( cd "${l_bp}" && tar -czf B-20200101-000000.tar.gz B-20200101-000000 \
+        && rm -rf B-20200101-000000 )
+    assertTrue "test setup: tarball not created" \
+        "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
+
+    . "${SB}/bin/backmeup.shellfunctions.sh"
+    l_lockdir="${l_bp}/.bmulock"
+    bmuAcquireLock "${l_lockdir}"
+    assertTrue "test setup: failed to acquire the simulated lock" $?
+
+    "${SB}/bin/backmeup.unarchive.sh" unarchlockproj B-20200101-000000 \
+        > "${SB}/unarchlock.log" 2>&1
+    assertEquals "unarchive should refuse while the project lock is held" 1 $?
+    grep -q "already in progress\|lock" "${SB}/unarchlock.log"
+    assertTrue "expected a lock-held error message" $?
+    assertFalse "snapshot dir must not have been extracted while locked" \
+        "[ -d '${l_bp}/B-20200101-000000' ]"
+    assertTrue "archive must still exist after a refused unarchive" \
+        "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
+
+    bmuReleaseLock "${l_lockdir}"
+    "${SB}/bin/backmeup.unarchive.sh" unarchlockproj B-20200101-000000 \
+        > "${SB}/unarchlock-ok.log" 2>&1
+    assertEquals "unarchive should succeed once the lock is released" 0 $?
+    assertTrue "extracted snapshot must appear" \
+        "[ -f '${l_bp}/B-20200101-000000/x.txt' ]"
+    assertFalse "lock dir should be released after a successful unarchive" \
+        "[ -d '${l_lockdir}' ]"
+}
+
 testUnarchiveLeavesArchiveOnExtractFailure() {
     l_bp="${SB}/sync-BP/unarchfailproj"
     mkdir -p "${l_bp}"
