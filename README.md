@@ -41,6 +41,18 @@ bmug2 starts from bmu's last state, fixes its known issues, and adds a
 regression test suite and CI. See [Releases](../../releases) for the
 version history.
 
+## By a human (granted :) )
+
+This is a lift up of the old BMU project. It is fully AI driven, but with a lot of human directions.
+
+I started it as an experiment, the outcome is indeed pretty nice: it is a project you can actually use.
+
+I am sorry for the load of text that AI adds to every document.
+On the other side I could add a lot of tests using the AI.
+
+I start to think that a "test driven" approach works nicely with AI. Given that the tests are correct.
+You need to get the right tests from the start.
+
 ## Status
 
 Personal-use software, actively developed, covered by a real regression
