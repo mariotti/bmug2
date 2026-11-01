@@ -149,27 +149,4 @@ BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
 BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
 BMU_REPLICATE_PROTON_BIN=""
 BMU_REPLICATE_PROTON_REMOTE=""
-#
-# Snapshot thinning (optional)
-# ----------------------------
-# bmug2 keeps every B-<stamp> snapshot forever by default - archive.sh
-# only compresses, never removes. backmeup.thin.sh is the opt-in step
-# that applies a time-bucket retention policy (borg prune / restic
-# forget style, with fold-merge semantics correct for bmug2's delta
-# snapshots - see docs/MANUAL.md once that lands).
-# Each rule keeps the newest snapshot in each bucket until N buckets
-# have been filled; walking newest -> oldest, counting only buckets
-# that actually contain a snapshot. All rules empty = thinning
-# disabled, backmeup.thin.sh exits 0 without changing anything.
-# BMU_KEEP_YEARLY accepts "all" (unlimited yearly keeps) alongside
-# a plain positive integer or empty.
-BMU_KEEP_HOURLY=""
-BMU_KEEP_DAILY=""
-BMU_KEEP_WEEKLY=""
-BMU_KEEP_MONTHLY=""
-BMU_KEEP_YEARLY=""
-# Hard floor: never go below this many snapshots regardless of the
-# rules above (3 by default). Promotes the next-oldest-not-yet-kept
-# until the floor is met.
-BMU_KEEP_MIN="3"
 
