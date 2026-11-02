@@ -29,6 +29,21 @@ BMU_PATH=${MY_PATH}
 . "${BMU_PATH}/backmeup.shellfunctions.sh"
 . "${BMU_PATH}/backmeup.setup.sh"
 #
+# pipefail: enable if the shell supports it. The | tee of rsync's
+# output into the status log below would otherwise mask rsync's
+# non-zero exit code behind tee's always-zero exit; pipefail makes
+# the pipeline exit non-zero when any component is. Capability
+# gated via a subshell probe (matches the project's bmuDetect*
+# pattern - never uname-based). Supported on dash >= 0.5.11,
+# every modern bash/zsh, macOS /bin/sh (bash in POSIX mode) -
+# effectively universal on anything bmug2 ships to. If an ancient
+# shell silently skips it, rsync's own ERROR output still appears
+# in the log; only the exit code might be rc=0 when it should be
+# non-zero. Not catastrophic, worth being honest about.
+if ( set -o pipefail ) 2>/dev/null; then
+    set -o pipefail
+fi
+#
 # Parsing options
 l_BMU_DRYRUN=""
 if [ "$1" = "-n" ] || [ "$1" = "--dry-run" ]; then
@@ -152,24 +167,74 @@ if [ -n "${l_BMU_DRYRUN}" ]; then
     echo "DRY RUN: nothing will actually be copied."
 fi;
 #
-# rclone-specific progress flags not valid for rsync; trailing-slash
-# source on rsync mirrors contents rather than nesting the directory name.
-if [ "${BMU_REPLICATE_BACKEND}" = "rclone" ]; then
-    l_BMU_REPLICATE_FLAGS="-v --stats=10s --stats-one-line --fast-list"
-    l_BMU_SYNC_SRC="${BMU_DIRRSYNC}"
-    l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}"
-else
-    l_BMU_REPLICATE_FLAGS="-v"
-    l_BMU_SYNC_SRC="${BMU_DIRRSYNC}/"
-    l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}/"
+# Status log: predictable path inside BackUp (already protected and
+# mount-checked above), truncated per run so backmeup.replicate.
+# status.sh always reads the current invocation only - no unbounded
+# history, no stale-run confusion. The log is a plain tee of this
+# script's own stdout+stderr; status.sh parses rsync's own
+# --info=progress2 output + the --info=stats2 end-of-leg block.
+# Named with a leading dot so it never shows up in a locate index
+# or a casual ls of the BackUp dir.
+l_BMU_STATUS_LOG="${BMU_DIRBACKUPS}/.bmureplicate.log"
+: > "${l_BMU_STATUS_LOG}"
+#
+# .DS_Store is pure macOS Finder noise - zero backup value, present
+# in nearly every directory a Mac user has ever opened in Finder,
+# and causes needless upload churn on cross-platform cloud targets.
+# Toggled off via BMU_REPLICATE_EXCLUDE_DS_STORE="" if a user really
+# wants it mirrored (unusual - documented in docs/MANUAL.md).
+# .locate.dir is NOT excluded: a disaster-recovery restore gets
+# instant search instead of having to rebuild updatedb first.
+l_BMU_EXCLUDE_FLAGS=""
+if [ -z "${BMU_REPLICATE_EXCLUDE_DS_STORE+set}" ] || [ -n "${BMU_REPLICATE_EXCLUDE_DS_STORE}" ]; then
+    l_BMU_EXCLUDE_FLAGS="--exclude=.DS_Store"
 fi
+#
+# Per-backend flag dispatch. Named `case` instead of a two-arm
+# if/else so a BMU_REPLICATE_BACKEND="" legacy install (which still
+# exists in the wild - BMU_REPLICATE_BACKEND was added later than
+# BMU_CMDREPLICATE) falls into the generic * branch rather than
+# the local branch's rsync-specific --info= flags. The rclone CLI
+# would reject --info=progress2,stats2 as "unknown flag" and exit
+# non-zero, breaking any older rclone caller that only set
+# BMU_CMDREPLICATE.
+#
+# --info=progress2,stats2 (rsync local backend only): progress2 is
+# a single in-place-updating line (bytes transferred, %, rate,
+# ETA), stats2 is the end-of-leg summary block - both near-zero
+# cost on small deltas, big UX win on first-time or large pushes
+# (verified live on a 44 GB stress test; see docs/MANUAL.md).
+#
+# rclone's own --stats=10s --stats-one-line --fast-list keeps the
+# rclone branch's existing periodic-stats UX. Trailing-slash source
+# on rsync mirrors contents rather than nesting the directory name;
+# rclone wants the bare source.
+case "${BMU_REPLICATE_BACKEND}" in
+    rclone)
+        l_BMU_REPLICATE_FLAGS="-v --stats=10s --stats-one-line --fast-list ${l_BMU_EXCLUDE_FLAGS}"
+        l_BMU_SYNC_SRC="${BMU_DIRRSYNC}"
+        l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}"
+        ;;
+    local)
+        l_BMU_REPLICATE_FLAGS="-v --info=progress2,stats2 ${l_BMU_EXCLUDE_FLAGS}"
+        l_BMU_SYNC_SRC="${BMU_DIRRSYNC}/"
+        l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}/"
+        ;;
+    *)
+        # legacy install (BMU_REPLICATE_BACKEND empty) - keep the
+        # pre-#192 flag set so an older rclone caller still works.
+        l_BMU_REPLICATE_FLAGS="-v ${l_BMU_EXCLUDE_FLAGS}"
+        l_BMU_SYNC_SRC="${BMU_DIRRSYNC}/"
+        l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}/"
+        ;;
+esac
 
-echo "Replicating SYNC (${BMU_DIRRSYNC}) -> ${BMU_REPLICATE_REMOTE_SYNC}"
-${BMU_CMDREPLICATE} ${l_BMU_REPLICATE_FLAGS} ${l_BMU_OPT} "${l_BMU_SYNC_SRC}" "${BMU_REPLICATE_REMOTE_SYNC}"
+echo "Replicating SYNC (${BMU_DIRRSYNC}) -> ${BMU_REPLICATE_REMOTE_SYNC}" | tee -a "${l_BMU_STATUS_LOG}"
+${BMU_CMDREPLICATE} ${l_BMU_REPLICATE_FLAGS} ${l_BMU_OPT} "${l_BMU_SYNC_SRC}" "${BMU_REPLICATE_REMOTE_SYNC}" 2>&1 | tee -a "${l_BMU_STATUS_LOG}"
 l_BMU_RC1=$?
 #
-echo "Replicating BackUp (${BMU_DIRBACKUPS}) -> ${BMU_REPLICATE_REMOTE_BACKUPS}"
-${BMU_CMDREPLICATE} ${l_BMU_REPLICATE_FLAGS} ${l_BMU_OPT} "${l_BMU_BKUP_SRC}" "${BMU_REPLICATE_REMOTE_BACKUPS}"
+echo "Replicating BackUp (${BMU_DIRBACKUPS}) -> ${BMU_REPLICATE_REMOTE_BACKUPS}" | tee -a "${l_BMU_STATUS_LOG}"
+${BMU_CMDREPLICATE} ${l_BMU_REPLICATE_FLAGS} ${l_BMU_OPT} "${l_BMU_BKUP_SRC}" "${BMU_REPLICATE_REMOTE_BACKUPS}" 2>&1 | tee -a "${l_BMU_STATUS_LOG}"
 l_BMU_RC2=$?
 #
 if [ ${l_BMU_RC1} -ne 0 ] || [ ${l_BMU_RC2} -ne 0 ]; then

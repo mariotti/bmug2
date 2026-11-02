@@ -2433,6 +2433,112 @@ bmuTestProtonSetup() {
     } >> "${l_bpts_dir}/bin/backmeup.setup.sh"
 }
 
+#
+# backmeup.replicate.status.sh - read-only status reporter that
+# parses the status log backmeup.replicate.sh writes to
+# ${BMU_DIRBACKUPS}/.bmureplicate.log. Fixture-driven: tests write
+# synthetic log content shaped like real rsync --info=progress2
+# output and assert the parser classifies state + extracts fields.
+# ---------------------------------------------------------------------
+
+statusSetupSandbox() {
+    # $1 = unique dir name under SHUNIT_TMPDIR
+    # Creates: ${SHUNIT_TMPDIR}/$1 holding a bmug2 bin checkout +
+    # setup.sh pointing BackUp at ${SHUNIT_TMPDIR}/$1-bp. Returns
+    # that bp dir path on stdout for the caller to populate.
+    _ss_name="$1"
+    _ss_dir="${SHUNIT_TMPDIR}/${_ss_name}"
+    _ss_bp="${SHUNIT_TMPDIR}/${_ss_name}-bp"
+    rm -rf "${_ss_dir}" "${_ss_bp}"
+    mkdir -p "${_ss_dir}" "${_ss_bp}"
+    cp -R "${BMU_BIN_SRC}/." "${_ss_dir}"
+    sed -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${_ss_bp}\"|" \
+        "${_ss_dir}/backmeup.setup.sh.template" > "${_ss_dir}/backmeup.setup.sh"
+    echo "${_ss_bp}"
+}
+
+testStatusReportsNotRunYetWhenLogMissing() {
+    l_bp=$(statusSetupSandbox "stat-notrun")
+    l_dir="${SHUNIT_TMPDIR}/stat-notrun"
+    "${l_dir}/backmeup.replicate.status.sh" > "${l_dir}/out.log" 2>&1
+    assertEquals "status with no log must exit 0" 0 $?
+    grep -q "not been run" "${l_dir}/out.log"
+    assertTrue "expected 'not been run' message" $?
+}
+
+testStatusReportsNotRunYetJsonWhenLogMissing() {
+    l_bp=$(statusSetupSandbox "stat-notrun-json")
+    l_dir="${SHUNIT_TMPDIR}/stat-notrun-json"
+    "${l_dir}/backmeup.replicate.status.sh" --json > "${l_dir}/out.log" 2>&1
+    assertEquals "json status with no log must exit 0" 0 $?
+    grep -q '"state":"not_run_yet"' "${l_dir}/out.log"
+    assertTrue "json should carry state=not_run_yet" $?
+}
+
+testStatusReportsInProgressFromRsyncProgress2Line() {
+    l_bp=$(statusSetupSandbox "stat-progress")
+    l_dir="${SHUNIT_TMPDIR}/stat-progress"
+    # Shape of real --info=progress2 output, carriage-return-separated
+    # updates on one line.
+    printf 'Replicating SYNC\r         12,345,678  52%%   15.23MB/s    0:14:12\r' \
+        > "${l_bp}/.bmureplicate.log"
+    "${l_dir}/backmeup.replicate.status.sh" > "${l_dir}/out.log" 2>&1
+    assertEquals "status with progress must exit 0" 0 $?
+    grep -q "in progress" "${l_dir}/out.log"
+    assertTrue "expected 'in progress' state" $?
+    grep -q "15.23MB/s" "${l_dir}/out.log"
+    assertTrue "expected the rate to be echoed from the latest progress line" $?
+}
+
+testStatusReportsCompleteWhenReplicationComplete() {
+    l_bp=$(statusSetupSandbox "stat-complete")
+    l_dir="${SHUNIT_TMPDIR}/stat-complete"
+    cat > "${l_bp}/.bmureplicate.log" <<'EOF'
+Replicating SYNC
+Total transferred file size: 47,428,304,791 bytes
+Replicating BackUp
+Replication complete.
+EOF
+    "${l_dir}/backmeup.replicate.status.sh" > "${l_dir}/out.log" 2>&1
+    assertEquals "status when complete must exit 0" 0 $?
+    grep -q "state: complete" "${l_dir}/out.log"
+    assertTrue "expected 'complete' state" $?
+    grep -q "47,428,304,791 bytes" "${l_dir}/out.log"
+    assertTrue "expected the final stats line to be echoed" $?
+}
+
+testStatusReportsErrorStateOnErrorLine() {
+    l_bp=$(statusSetupSandbox "stat-error")
+    l_dir="${SHUNIT_TMPDIR}/stat-error"
+    cat > "${l_bp}/.bmureplicate.log" <<'EOF'
+Replicating SYNC
+ERROR: SYNC directory /tmp/foo is not on its configured filesystem
+EOF
+    "${l_dir}/backmeup.replicate.status.sh" > "${l_dir}/out.log" 2>&1
+    assertEquals "status with ERROR must exit 0 (reporting only)" 0 $?
+    grep -q "state: ERROR" "${l_dir}/out.log"
+    assertTrue "expected ERROR state" $?
+    grep -q "configured filesystem" "${l_dir}/out.log"
+    assertTrue "expected the ERROR message to be echoed" $?
+}
+
+testStatusJsonSchemaStableAcrossStates() {
+    # Same seven top-level keys appear regardless of state, so a
+    # GUI/MCP consumer can parse unconditionally.
+    l_bp=$(statusSetupSandbox "stat-json-schema")
+    l_dir="${SHUNIT_TMPDIR}/stat-json-schema"
+    cat > "${l_bp}/.bmureplicate.log" <<'EOF'
+Replicating SYNC
+Replication complete.
+EOF
+    "${l_dir}/backmeup.replicate.status.sh" --json > "${l_dir}/out.log" 2>&1
+    assertEquals "json status must exit 0" 0 $?
+    for l_field in state progress dst_size upload_queue final_stats error log; do
+        grep -q "\"${l_field}\":" "${l_dir}/out.log"
+        assertTrue "json schema must include '${l_field}' field" $?
+    done
+}
+
 testReplicateProtonFailsCleanlyWhenNotConfigured() {
     l_dir="${SHUNIT_TMPDIR}/bmu-proton-noconfig"
     rm -rf "${l_dir}"
