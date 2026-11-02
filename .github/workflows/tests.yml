@@ -12,41 +12,74 @@ on:
   pull_request:
 
 jobs:
-  # Skip-the-matrix guard for docs-only PRs: when a PR touches only
-  # Markdown or docs/, every test job below `if:`-skips via the
-  # `non-docs` output - GitHub treats a job skipped by its own `if`
-  # as a passed required status check (branch protection semantics
-  # as of 2022; verified on this repo's required-checks list), so
-  # the merge is unblocked without burning macOS runners for a
-  # typo fix. Push-to-main always runs the full matrix regardless,
-  # keeping update-test-count-badge's inputs honest (the badge
-  # commit should reflect current counts, not whatever counts
-  # were last computed on code paths before a docs-only merge).
-  # The `**.md` + `docs/**` filter deliberately does NOT include
-  # workflow files themselves (`.github/workflows/*.yml`) - a CI
-  # config change should always re-verify the full matrix.
+  # Per-subproject skip guards: each PR triggers only the test
+  # families that cover what it touched. GitHub treats a job
+  # skipped by its own `if` as a passed required status check
+  # (branch protection semantics as of 2022; verified against
+  # this repo's required-checks list), so a PR that doesn't need
+  # a given family just merges without waiting on it. Push-to-
+  # main always runs the full matrix regardless, keeping
+  # update-test-count-badge's inputs honest (the badge should
+  # reflect current counts after every merge, not whatever
+  # counts were last computed on a path that happened to match).
+  #
+  # Each per-subproject filter deliberately includes
+  # `.github/workflows/**` - any CI config change re-verifies
+  # the entire matrix, same discipline the pure-docs skip in
+  # the previous iteration of this guard already enforced.
+  #
+  # Cross-subproject coupling worth being honest about:
+  # - MCP (bmug2_mcp Python package) and GUI (Rust+TS) both
+  #   wrap bin/*.sh at RUNTIME, but their test suites fully
+  #   mock the shell CLI (10+ fake `#!/bin/sh` scripts across
+  #   gui/src-tauri/src/schedule.rs, run.rs, replication.rs
+  #   and mcp/tests/test_commands.py, test_locate.py). So a
+  #   bin/**-only change can't fail MCP or GUI UNIT tests at
+  #   all - the real end-to-end coverage lives in the shell
+  #   suite (tests/test_backmeup.sh). Fine to skip MCP/GUI
+  #   when only bin/** changes.
+  # - testGuiVersionStaysInSyncWithBmuVersion in the shell
+  #   suite reads gui/package.json, gui/package-lock.json,
+  #   gui/src-tauri/tauri.conf.json, gui/src-tauri/Cargo.toml,
+  #   and gui/src-tauri/Cargo.lock to catch version drift.
+  #   Those five files are therefore listed in the `shell`
+  #   filter too, so a GUI-only version bump still exercises
+  #   that regression guard.
+  # - A pure docs-only PR matches NONE of the three filters,
+  #   so every test job if-skips - the same effect as the
+  #   previous `non-docs` catch-all, now derived rather than
+  #   named explicitly.
   changes:
     runs-on: ubuntu-latest
     outputs:
-      non-docs: ${{ steps.filter.outputs.non-docs }}
+      shell: ${{ steps.filter.outputs.shell }}
+      mcp:   ${{ steps.filter.outputs.mcp }}
+      gui:   ${{ steps.filter.outputs.gui }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
-          # Negated patterns: `non-docs` matches when any changed
-          # file is NOT (markdown OR under docs/). A PR touching
-          # only README.md + docs/MANUAL.md leaves `non-docs=false`
-          # and skips the matrix; one that also touches bin/*.sh
-          # flips `non-docs=true` and runs everything.
           filters: |
-            non-docs:
-              - '!**/*.md'
-              - '!docs/**'
+            shell:
+              - 'bin/**'
+              - 'tests/**'
+              - 'gui/package.json'
+              - 'gui/package-lock.json'
+              - 'gui/src-tauri/tauri.conf.json'
+              - 'gui/src-tauri/Cargo.toml'
+              - 'gui/src-tauri/Cargo.lock'
+              - '.github/workflows/**'
+            mcp:
+              - 'mcp/**'
+              - '.github/workflows/**'
+            gui:
+              - 'gui/**'
+              - '.github/workflows/**'
 
   linux:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.shell == 'true'
     runs-on: ubuntu-latest
     # Exposed for the update-test-count-badge aggregator below. Only
     # the linux variant exports a count (not macos) - the two suites
@@ -80,7 +113,7 @@ jobs:
 
   macos:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.shell == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -93,7 +126,7 @@ jobs:
 
   mcp-linux:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     outputs:
       count: ${{ steps.test-suite.outputs.count }}
@@ -128,7 +161,7 @@ jobs:
 
   mcp-macos:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.mcp == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -151,7 +184,7 @@ jobs:
 
   gui-linux:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.gui == 'true'
     runs-on: ubuntu-latest
     outputs:
       ts_count: ${{ steps.ts-tests.outputs.count }}
@@ -252,7 +285,7 @@ jobs:
 
   gui-macos:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.non-docs == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.gui == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
