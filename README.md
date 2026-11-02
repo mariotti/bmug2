@@ -41,7 +41,7 @@ bmug2 starts from bmu's last state, fixes its known issues, and adds a
 regression test suite and CI. See [Releases](../../releases) for the
 version history.
 
-## By a human (granted :) )
+## By a human: ONLY this note! (granted :) )
 
 This is a lift up of the old BMU project. It is fully AI driven, but with a lot of human directions.
 
