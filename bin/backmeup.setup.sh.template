@@ -149,4 +149,12 @@ BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
 BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
 BMU_REPLICATE_PROTON_BIN=""
 BMU_REPLICATE_PROTON_REMOTE=""
+#
+# Exclude .DS_Store from replication (macOS Finder noise). Set to
+# empty if you really want it mirrored - unusual, documented in
+# docs/MANUAL.md. Treated as "on" when unset (i.e. older installs
+# that predate this variable) to match the opt-out default.
+# .locate.dir is NOT excluded by design: a disaster-recovery
+# restore gets instant search instead of rebuilding updatedb first.
+BMU_REPLICATE_EXCLUDE_DS_STORE="yes"
 

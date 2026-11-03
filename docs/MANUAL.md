@@ -21,6 +21,7 @@ excluding files, cron, upgrading an old bmu disk), see
    - [backmeup.unarchive.sh](#backmeupunarchivesh)
    - [backmeup.retrieve.sh](#backmeupretrievesh)
    - [backmeup.replicate.sh](#backmeupreplicatesh)
+   - [backmeup.replicate.status.sh](#backmeupreplicatestatussh)
    - [backmeup.replicate.proton.sh](#backmeupreplicateprotonsh)
    - [backmeup.migrate.sh](#backmeupmigratesh)
    - [bmu](#bmu)
@@ -419,6 +420,18 @@ not a fixed "nightly is enough" default.
 `-n`/`--dry-run` previews what would be copied without changing the
 destination.
 
+`.DS_Store` is excluded from both legs by default (macOS Finder noise;
+zero backup value, non-trivial churn against cross-platform cloud
+targets). Set `BMU_REPLICATE_EXCLUDE_DS_STORE=""` in `backmeup.setup.sh`
+to opt out. `.locate.dir` is **not** excluded — a disaster-recovery
+restore gets instant search instead of having to rebuild the index first.
+
+Writes a live status log to `${BMU_DIRBACKUPS}/.bmureplicate.log`
+(truncated per run — predictable path, no unbounded history) with
+rsync's own `--info=progress2,stats2` output for the `local` backend.
+Query it at any moment, including during an in-flight run, with
+[`backmeup.replicate.status.sh`](#backmeupreplicatestatussh) below.
+
 Refuses to run (exit 1) when:
  - replication hasn't been configured — re-run `backmeup.configure.sh`
    (the `rclone` backend is only offered if `rclone` is installed; the
@@ -428,6 +441,38 @@ For end-to-end encryption to Proton Drive specifically, see the
 separate [`backmeup.replicate.proton.sh`](#backmeupreplicateprotonsh)
 below — a third, Proton-only backend. The three backends (`rclone`,
 `local`, `proton`) are mutually exclusive per install.
+
+### backmeup.replicate.status.sh
+
+```
+backmeup.replicate.status.sh [-j|--json]
+```
+
+Read-only reporter of the most recent (or currently in-flight)
+`backmeup.replicate.sh` invocation, derived from
+`${BMU_DIRBACKUPS}/.bmureplicate.log`. Safe to run concurrently with
+a live replicate.
+
+Four signals rolled into one line each:
+
+- **state** — `in_progress` (latest `--info=progress2` chunk),
+  `complete` (final stats block), `error` (replicate ERROR line), or
+  `not_run_yet` (no log yet).
+- **progress** — the newest rsync progress chunk: bytes transferred,
+  %, rate, ETA.
+- **dst_size** — `du -sh` of the configured target (local backend
+  only; nothing for rclone/proton, since those aren't a local path).
+- **upload_queue** — macOS + `local` backend only: parses
+  `fileproviderctl dump` for the configured CloudStorage provider,
+  surfaces how many items the macOS File Provider still has pending
+  to upload. Opt-in on capability (`fileproviderctl` must exist and
+  the provider name must resolve), not uname-gated.
+
+`-j`/`--json` emits the same fields as a flat JSON object with a
+stable schema (seven keys always present, missing values as empty
+strings) — convenient to parse from the GUI or MCP server.
+Exits `0` in all states, including `not_run_yet` and `error` — this
+script observes, it does not block.
 
 ### backmeup.replicate.proton.sh
 
