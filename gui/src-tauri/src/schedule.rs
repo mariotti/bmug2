@@ -251,6 +251,13 @@ mod platform {
             .join(format!("{}.sh", file_stem(label, hint))))
     }
 
+    // Thin re-export for the module-level reconcile code which needs
+    // to compute the same path without reimplementing the HOME lookup
+    // and file-stem formula.
+    pub(super) fn wrapper_path_for_reconcile(label: &str, hint: &str) -> Result<PathBuf, String> {
+        wrapper_path(label, hint)
+    }
+
     fn log_path(label: &str, hint: &str) -> Result<PathBuf, String> {
         let home = std::env::var("HOME").map_err(|_| "cannot resolve HOME".to_string())?;
         Ok(PathBuf::from(home)
@@ -375,6 +382,13 @@ mod platform {
         Ok(PathBuf::from(home)
             .join(".local/share/io.github.mariotti.bmug2/schedules")
             .join(format!("{}.sh", file_stem(label, hint))))
+    }
+
+    // Thin re-export for the module-level reconcile code which needs
+    // to compute the same path without reimplementing the HOME lookup
+    // and file-stem formula.
+    pub(super) fn wrapper_path_for_reconcile(label: &str, hint: &str) -> Result<PathBuf, String> {
+        wrapper_path(label, hint)
     }
 
     fn unit_name(label: &str, hint: &str) -> String {
@@ -538,6 +552,133 @@ pub fn has_full_disk_access() -> bool {
     true
 }
 
+// Reconcile installed on-disk wrapper scripts against what the
+// current build_*_wrapper() functions would produce. Wrappers are
+// deterministic outputs of config + bin_dir, so they're effectively
+// a cache - same discipline backmeup.setup.sh gets (regenerated
+// from the template on every configure.sh run). This closes the
+// drift window a code change to build_*_wrapper opens: #186 added
+// backmeup.replicate.sh to the housekeeping wrapper, but a user
+// who installed the housekeeping schedule BEFORE #186 kept running
+// the pre-fix wrapper forever, even after upgrading the GUI to the
+// version that would generate the fixed wrapper - launchd/systemd
+// executes the file on disk, not whatever the Rust side would now
+// produce.
+//
+// Data-safety guarantees:
+// - Silent no-op if the schedule config can't be loaded, if a
+//   wrapper doesn't exist on disk yet, or on any IO error. Never
+//   blocks app launch. The old wrapper (or the absence of one)
+//   stays as it was; nothing gets lost.
+// - Atomic rewrite: write-to-tmp + chmod + rename. If launchd
+//   fires the wrapper mid-reconcile, Unix inode semantics keep
+//   the pre-rename version executable for the running invocation.
+// - .plist / systemd .service files are deliberately NOT touched
+//   here: they have a different lifecycle (launchd/systemd cache
+//   them), and rewriting them requires an unload/load dance this
+//   PR isn't signing up for. Wrapper-script regeneration is enough
+//   to fix the known #186-style drift class.
+#[derive(Debug, Default)]
+pub struct ReconcileReport {
+    pub regenerated: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReconcileOutcome {
+    NotInstalled,
+    UpToDate,
+    Regenerated,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn reconcile_installed_wrappers(cfg: &crate::config::Config) -> ReconcileReport {
+    let mut report = ReconcileReport::default();
+
+    if cfg.housekeeping_schedule.is_some() {
+        let expected = build_housekeeping_wrapper(&cfg.bin_dir);
+        reconcile_one(
+            "io.github.mariotti.bmug2.housekeeping",
+            "",
+            &expected,
+            "housekeeping",
+            &mut report,
+        );
+    }
+
+    for source in &cfg.sources {
+        if source.schedule.is_none() {
+            continue;
+        }
+        let label = format!("io.github.mariotti.bmug2.backup.{}", slug(&source.path));
+        let hint = source_file_hint(&source.path);
+        let expected = build_source_wrapper(&cfg.bin_dir, &source.path);
+        reconcile_one(&label, &hint, &expected, &source.name, &mut report);
+    }
+
+    report
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reconcile_one(
+    label: &str,
+    hint: &str,
+    expected: &str,
+    display_name: &str,
+    report: &mut ReconcileReport,
+) {
+    let path = match platform::wrapper_path_for_reconcile(label, hint) {
+        Ok(p) => p,
+        Err(e) => {
+            report.errors.push(format!("{display_name}: {e}"));
+            return;
+        }
+    };
+    match reconcile_wrapper_at(&path, expected) {
+        Ok(ReconcileOutcome::Regenerated) => {
+            report.regenerated.push(display_name.to_string());
+        }
+        Ok(_) => {}
+        Err(e) => {
+            report.errors.push(format!("{display_name}: {e}"));
+        }
+    }
+}
+
+// Pure IO reconcile. No platform-specific path logic: takes the path
+// as an argument so unit tests can hit it against a tempdir directly.
+pub fn reconcile_wrapper_at(path: &Path, expected: &str) -> Result<ReconcileOutcome, String> {
+    if !path.exists() {
+        return Ok(ReconcileOutcome::NotInstalled);
+    }
+    let current = std::fs::read_to_string(path)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    if current == expected {
+        return Ok(ReconcileOutcome::UpToDate);
+    }
+    // Atomic rewrite: tmp sibling + chmod + rename. If launchd/
+    // systemd fires the wrapper right between write+chmod and
+    // rename, the OLD file's inode stays live under the running
+    // invocation; the new file picks up on the NEXT fire. No
+    // window where a half-written wrapper could execute.
+    let tmp = path.with_extension("sh.reconcile.tmp");
+    std::fs::write(&tmp, expected)
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp)
+            .map_err(|e| format!("stat {}: {e}", tmp.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp, perms)
+            .map_err(|e| format!("chmod {}: {e}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, path)
+        .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    Ok(ReconcileOutcome::Regenerated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +794,77 @@ mod tests {
         assert!(script.contains("backmeup.replicate.sh"));
         assert!(!script.contains("backmeup.replicate.proton.sh"));
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    //
+    // reconcile_wrapper_at: pure IO reconcile against a path. These
+    // tests drive it against a tmp dir directly, no HOME mocking or
+    // platform::wrapper_path needed.
+    //
+
+    fn reconcile_tmp_wrapper(name: &str, initial: Option<&str>) -> std::path::PathBuf {
+        let tmp = std::env::temp_dir()
+            .join(format!("bmug2-reconcile-{}-{}", name, std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let wrapper = tmp.join("wrapper.sh");
+        if let Some(contents) = initial {
+            std::fs::write(&wrapper, contents).unwrap();
+        }
+        wrapper
+    }
+
+    #[test]
+    fn reconcile_returns_not_installed_when_file_missing() {
+        let wrapper = reconcile_tmp_wrapper("notinstalled", None);
+        let outcome = reconcile_wrapper_at(&wrapper, "#!/bin/sh\necho hi\n").unwrap();
+        assert_eq!(outcome, ReconcileOutcome::NotInstalled);
+        // Must NOT have created the file - "not installed" means
+        // there's nothing to reconcile, not "fix it up for me".
+        assert!(!wrapper.exists());
+        std::fs::remove_dir_all(wrapper.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn reconcile_leaves_file_untouched_when_content_matches() {
+        let expected = "#!/bin/sh\nset -e\n\"/opt/bmu/bin/backmeup.updatedb.sh\"\n";
+        let wrapper = reconcile_tmp_wrapper("uptodate", Some(expected));
+        let before = std::fs::metadata(&wrapper).unwrap().modified().unwrap();
+        // Tiny gap so a mtime bump would be observable.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let outcome = reconcile_wrapper_at(&wrapper, expected).unwrap();
+        assert_eq!(outcome, ReconcileOutcome::UpToDate);
+        let after = std::fs::metadata(&wrapper).unwrap().modified().unwrap();
+        assert_eq!(before, after, "up-to-date wrapper must not be rewritten");
+        std::fs::remove_dir_all(wrapper.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn reconcile_rewrites_stale_wrapper_atomically() {
+        // Simulates the #186 drift: an on-disk wrapper from BEFORE a
+        // build_*_wrapper code change, whose content now differs from
+        // what the current builder would produce. Reconcile must
+        // regenerate it to the new content.
+        let stale = "#!/bin/sh\nset -e\n\"/opt/bmu/bin/backmeup.updatedb.sh\"\n";
+        let fresh = "#!/bin/sh\nset -e\n\"/opt/bmu/bin/backmeup.updatedb.sh\"\n\"/opt/bmu/bin/backmeup.replicate.sh\"\n";
+        let wrapper = reconcile_tmp_wrapper("stale", Some(stale));
+        let outcome = reconcile_wrapper_at(&wrapper, fresh).unwrap();
+        assert_eq!(outcome, ReconcileOutcome::Regenerated);
+        let after = std::fs::read_to_string(&wrapper).unwrap();
+        assert_eq!(after, fresh, "regenerated wrapper must hold the expected content");
+        // Atomic-write artifact (the .reconcile.tmp sibling) must not
+        // linger - that would be a leak the next reconcile would see.
+        let tmp_sibling = wrapper.with_extension("sh.reconcile.tmp");
+        assert!(!tmp_sibling.exists(), "tmp sibling must be renamed away");
+        // Executable bit still set (must stay runnable by launchd/
+        // systemd after reconcile; a chmod regression here would
+        // silently break scheduled runs).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&wrapper).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode & 0o100, 0o100, "wrapper must stay owner-executable");
+        }
+        std::fs::remove_dir_all(wrapper.parent().unwrap()).ok();
     }
 
     #[test]

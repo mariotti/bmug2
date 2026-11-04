@@ -342,6 +342,21 @@ pub fn run() {
                     let _ = window.center();
                 }
             }
+            // Reconcile installed on-disk wrapper scripts against what
+            // the current build_*_wrapper() functions would produce.
+            // Closes the drift window a code change to build_*_wrapper
+            // opens (e.g. #186 added replicate.sh to the housekeeping
+            // wrapper; a user who installed housekeeping before #186
+            // was otherwise stuck running the pre-fix wrapper forever).
+            // Silent no-op on any error - never blocks app launch, and
+            // leaves the on-disk state as-is if anything goes wrong.
+            // See schedule::reconcile_installed_wrappers for the full
+            // data-safety contract.
+            if let Ok(app_data_dir) = resolve_app_data_dir(app.handle()) {
+                if let Some(cfg) = config::load(&app_data_dir) {
+                    let _ = schedule::reconcile_installed_wrappers(&cfg);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
