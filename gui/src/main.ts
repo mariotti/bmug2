@@ -425,6 +425,70 @@ export function buildUpdateAvailableNotice(info: UpdateInfo, binDir: string): HT
   ]);
 }
 
+// Detects the two "backup is scheduled but off-site replication won't
+// actually run" states and returns one banner per hit. Pure derivation
+// from already-fetched dashboard state - adds zero extra network/IPC.
+//
+// State A (sources scheduled, replication off): user has automated
+// their backups but their data stays on this machine only. The exact
+// footgun that bit us: a fresh reinstall with the sources re-added
+// and scheduled, but the replication step never configured, so
+// DSRframe (and every edit under every other source) stayed local.
+//
+// State B (replication on, no HouseKeeping schedule): the reverse
+// shape. Replication is set up but nothing on a timer invokes
+// backmeup.replicate.sh. User has to run HouseKeeping manually
+// forever, or it just... never happens. Also a confirmed footgun.
+//
+// Both banners click through to the Settings page where the user
+// fixes the gap. No dismiss link: the banner goes away when the
+// state goes away; that's the only "acknowledgment" that matters.
+// If a user deliberately wants local-only (no off-site, no
+// HouseKeeping), they can already configure that - the banner only
+// fires on an INCONSISTENT state, not on a coherent "off" choice.
+export function buildConfigWarnings(
+  sources: BackupSource[],
+  housekeeping: Schedule | null,
+  replicationStatus: ReplicationStatus,
+  binDir: string,
+): HTMLElement[] {
+  const warnings: HTMLElement[] = [];
+  const scheduledCount = sources.filter((s) => s.schedule !== null).length;
+  const replicationOff = replicationStatus.backend === "off";
+  const housekeepingScheduled = housekeeping !== null;
+
+  // State A: backups on timer, nothing pushes off-site.
+  if (scheduledCount > 0 && replicationOff) {
+    const goBtn = el("button", { type: "button" }, ["Configure replication"]);
+    goBtn.addEventListener("click", () => void renderSettings(binDir));
+    const plural = scheduledCount === 1 ? "backup" : "backups";
+    warnings.push(
+      el("div", { class: "untracked-notice config-warning" }, [
+        el("p", {}, [
+          `${scheduledCount} scheduled ${plural} but no off-site replication configured. Your data stays on this machine only. `,
+          goBtn,
+        ]),
+      ]),
+    );
+  }
+
+  // State B: replication set up, nothing triggers it on a timer.
+  if (!replicationOff && !housekeepingScheduled) {
+    const goBtn = el("button", { type: "button" }, ["Schedule HouseKeeping"]);
+    goBtn.addEventListener("click", () => void renderSettings(binDir));
+    warnings.push(
+      el("div", { class: "untracked-notice config-warning" }, [
+        el("p", {}, [
+          "Off-site replication is set up, but HouseKeeping is not scheduled - nothing runs replication automatically. ",
+          goBtn,
+        ]),
+      ]),
+    );
+  }
+
+  return warnings;
+}
+
 async function linkExistingProject(binDir: string, project: StatusProject) {
   const selected = await open({ directory: true });
   if (typeof selected !== "string") return;
@@ -979,6 +1043,14 @@ export async function renderDashboard(binDir: string, banner?: RunBanner) {
   if (cachedUpdateCheck) {
     const notice = buildUpdateAvailableNotice(cachedUpdateCheck, binDir);
     if (notice) children.push(notice);
+  }
+  // Surface inconsistent config states (scheduled backups + no
+  // replication, OR replication + no HouseKeeping schedule) before
+  // anything else on the dashboard - the point is "hard to miss".
+  // See buildConfigWarnings's own comment for which states fire
+  // and why no dismiss link.
+  for (const warning of buildConfigWarnings(sources, housekeeping, replicationStatus, binDir)) {
+    children.push(warning);
   }
   // Global, not per-project - these lived inside the old standalone
   // status section; moved here now that per-project stats live on
