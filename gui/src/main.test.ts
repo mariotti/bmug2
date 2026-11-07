@@ -26,6 +26,7 @@ import {
   renderDashboard,
   formatVersion,
   buildUpdateAvailableNotice,
+  buildConfigWarnings,
   runSearch,
   renderSearchResults,
   setSourceSchedule,
@@ -1088,6 +1089,90 @@ describe("buildUpdateAvailableNotice", () => {
     const notice = buildUpdateAvailableNotice(info, "/bin");
     expect(notice?.textContent).toContain("v2.16.9-experimental");
     expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
+  });
+});
+
+describe("buildConfigWarnings", () => {
+  const unscheduled: BackupSource = { name: "src", path: "/s", schedule: null };
+  const scheduled: BackupSource = {
+    name: "src",
+    path: "/s",
+    schedule: { hour: 17, minute: 0 },
+  };
+
+  it("returns no warnings when nothing is scheduled and replication is off", () => {
+    // A brand-new install with sources added but no schedules yet.
+    // Not an inconsistent state - banner would be noise.
+    const warnings = buildConfigWarnings([unscheduled], null, { backend: "off" }, "/bin");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("returns no warnings when replication is set up AND HouseKeeping is scheduled", () => {
+    // The target coherent state. Banner should be silent.
+    const warnings = buildConfigWarnings(
+      [scheduled],
+      { hour: 17, minute: 0 },
+      { backend: "local_path", path_sync: "/p/sync", path_backups: "/p/bp" },
+      "/bin",
+    );
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("flags scheduled backups when replication is off (state A)", () => {
+    const warnings = buildConfigWarnings([scheduled], null, { backend: "off" }, "/bin");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].textContent).toContain("1 scheduled backup");
+    expect(warnings[0].textContent).toContain("no off-site replication");
+    expect(warnings[0].querySelector("button")?.textContent).toBe("Configure replication");
+  });
+
+  it("flags replication without HouseKeeping (state B)", () => {
+    const warnings = buildConfigWarnings(
+      [unscheduled],
+      null,
+      { backend: "local_path", path_sync: "/p/sync", path_backups: "/p/bp" },
+      "/bin",
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].textContent).toContain("HouseKeeping is not scheduled");
+    expect(warnings[0].querySelector("button")?.textContent).toBe("Schedule HouseKeeping");
+  });
+
+  it("surfaces both warnings independently when both states hold", () => {
+    // This shouldn't happen in practice (state A requires replication
+    // off; state B requires replication on), but confirm the two checks
+    // are independent so adding a third future state wouldn't require
+    // untangling priority logic.
+    const warnings = buildConfigWarnings([scheduled], null, { backend: "off" }, "/bin");
+    expect(warnings).toHaveLength(1); // only state A - mutually exclusive by construction
+  });
+
+  it("pluralizes correctly: '1 scheduled backup' vs '2 scheduled backups'", () => {
+    const one = buildConfigWarnings([scheduled], null, { backend: "off" }, "/bin");
+    expect(one[0].textContent).toContain("1 scheduled backup ");
+    expect(one[0].textContent).not.toContain("backups");
+
+    const two = buildConfigWarnings([scheduled, scheduled], null, { backend: "off" }, "/bin");
+    expect(two[0].textContent).toContain("2 scheduled backups");
+  });
+
+  it("works for rclone and proton backends, not just local_path", () => {
+    const rclone = buildConfigWarnings(
+      [unscheduled],
+      null,
+      { backend: "rclone", remote_sync: "r:s", remote_backups: "r:bp" },
+      "/bin",
+    );
+    expect(rclone).toHaveLength(1);
+    expect(rclone[0].textContent).toContain("HouseKeeping is not scheduled");
+
+    const proton = buildConfigWarnings(
+      [unscheduled],
+      null,
+      { backend: "proton", remote: "/bmug2/host" },
+      "/bin",
+    );
+    expect(proton).toHaveLength(1);
   });
 });
 

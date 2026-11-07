@@ -615,6 +615,20 @@ form button[type="submit"] {
   cursor: pointer;
 }
 
+/* Inconsistent-config warnings (scheduled backups + no replication,
+   or replication + no HouseKeeping schedule). Same layout as the
+   general untracked-notice, amber-tinted so it reads as "attention
+   needed" rather than the neutral blue info-notice. */
+.untracked-notice.config-warning {
+  background-color: #fff4d6;
+  border-left: 3px solid #e0a000;
+}
+
+.untracked-notice.config-warning button {
+  border: 1px solid #a67000;
+  color: #a67000;
+}
+
 .schedule-info button {
   margin-top: 0.4em;
   border-radius: 6px;
@@ -877,6 +891,16 @@ form button[type="submit"] {
     background-color: transparent;
     color: #6fa8ff;
     border-color: #6fa8ff;
+  }
+
+  .untracked-notice.config-warning {
+    background-color: #4d350098;
+    border-left-color: #e0a000;
+  }
+
+  .untracked-notice.config-warning button {
+    color: #ffc04d;
+    border-color: #ffc04d;
   }
 
   .run-banner-ok {
