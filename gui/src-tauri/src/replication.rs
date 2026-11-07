@@ -190,44 +190,159 @@ pub fn set(bin_dir: &Path, request: ReplicationRequest) -> Result<(), String> {
     run_configure(bin_dir, &args)
 }
 
-/// Searches for a locally-mounted Google Drive folder in the locations
-/// the Google Drive for Desktop client creates on macOS and Linux. Returns
-/// the first path that exists as a directory, or None when none is found.
-pub fn find_gdrive_mount() -> Option<String> {
-    let home = env::var("HOME").ok()?;
+/// A locally-mounted cloud-sync desktop folder usable as a `local`-
+/// backend replication target. The `path` is the directory bmug2 can
+/// write its SYNC/BackUp subdirs into - already includes any
+/// provider-specific "My Drive"-style suffix needed to land inside
+/// the real drive root rather than its sidecar metadata dir.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CloudMount {
+    /// Human-readable provider name: "Google Drive", "Proton Drive",
+    /// "Dropbox", "iCloud Drive", "OneDrive", "Box". Stable across
+    /// bmug2 versions so GUI translations can key off it.
+    pub provider: String,
+    /// Account identifier parsed out of the directory name when
+    /// present (e.g. "fab.mariotti@proton.me" for Proton, email for
+    /// GoogleDrive), None when the provider's directory name doesn't
+    /// carry one (Dropbox, iCloudDrive).
+    pub account: Option<String>,
+    /// Absolute path to the drive's root directory.
+    pub path: String,
+}
 
-    // macOS: Drive for Desktop (current) uses a per-account path under
-    // ~/Library/CloudStorage. Glob over all accounts since the email
-    // address embedded in the directory name isn't known ahead of time.
+/// Enumerates every cloud-sync folder recognized under macOS's
+/// File Provider staging dir `~/Library/CloudStorage/`. Returns an
+/// empty vec on Linux, or when the directory doesn't exist /
+/// nothing matches - caller falls back to a manual path input.
+///
+/// Recognized providers (and the classifier for each - see
+/// classify_cloud_mount): Google Drive, Proton Drive, Dropbox,
+/// iCloud Drive, OneDrive, Box. New providers are additive: adding
+/// a match arm there enlarges the result set without breaking any
+/// existing caller.
+///
+/// Stable ordering: sorted by (provider, path) so a GUI pre-fill
+/// picks the same first entry on every launch given the same set
+/// of mounts.
+pub fn find_cloud_storage_mounts() -> Vec<CloudMount> {
+    let Ok(home) = env::var("HOME") else {
+        return Vec::new();
+    };
     let cloud_storage = format!("{home}/Library/CloudStorage");
-    if let Ok(entries) = std::fs::read_dir(&cloud_storage) {
-        let mut candidates: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                if name.starts_with("GoogleDrive-") {
-                    let my_drive = format!("{cloud_storage}/{name}/My Drive");
-                    if std::path::Path::new(&my_drive).is_dir() {
-                        return Some(my_drive);
-                    }
-                }
-                None
-            })
-            .collect();
-        // Sort for determinism: multiple accounts pick the lexically first.
-        candidates.sort();
-        if let Some(path) = candidates.into_iter().next() {
-            return Some(path);
+    let Ok(entries) = std::fs::read_dir(&cloud_storage) else {
+        return Vec::new();
+    };
+    let mut mounts: Vec<CloudMount> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let full = format!("{cloud_storage}/{name}");
+            if !std::path::Path::new(&full).is_dir() {
+                return None;
+            }
+            classify_cloud_mount(&name, &full)
+        })
+        .collect();
+    mounts.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.path.cmp(&b.path)));
+    mounts
+}
+
+/// Maps a `~/Library/CloudStorage/<dir_name>` entry to a CloudMount,
+/// or None if the directory isn't a recognized provider. Pure
+/// function - takes the dir name + full path, inspects only for
+/// the `My Drive` sidecar for Google Drive (where the mount root
+/// lives one level deeper than the provider folder). Everywhere
+/// else, the provider folder itself IS the mount root.
+fn classify_cloud_mount(dir_name: &str, full_path: &str) -> Option<CloudMount> {
+    // Google Drive: "GoogleDrive-<email>-<label>" directory contains
+    // "My Drive" (the actual root) + "Shared drives" etc. as siblings.
+    // Keeping the My-Drive suffix in the returned path matches the
+    // pre-generalization find_gdrive_mount behavior exactly, so any
+    // existing caller that passes the path through to backmeup.
+    // configure.sh's --replicate-remote-sync keeps writing to the
+    // same location.
+    if let Some(rest) = dir_name.strip_prefix("GoogleDrive-") {
+        let my_drive = format!("{full_path}/My Drive");
+        if !std::path::Path::new(&my_drive).is_dir() {
+            return None;
         }
+        return Some(CloudMount {
+            provider: "Google Drive".to_string(),
+            account: Some(rest.to_string()),
+            path: my_drive,
+        });
+    }
+    // Proton Drive: "ProtonDrive-<email>-folder". The `-folder`
+    // suffix is Proton's own convention, not useful for the account
+    // label. Root of the mount is the directory itself.
+    if let Some(rest) = dir_name.strip_prefix("ProtonDrive-") {
+        let account = rest.strip_suffix("-folder").unwrap_or(rest).to_string();
+        return Some(CloudMount {
+            provider: "Proton Drive".to_string(),
+            account: Some(account),
+            path: full_path.to_string(),
+        });
+    }
+    // Dropbox: "Dropbox" or (rare) "Dropbox-<team>".
+    if dir_name == "Dropbox" || dir_name.starts_with("Dropbox-") {
+        return Some(CloudMount {
+            provider: "Dropbox".to_string(),
+            account: dir_name.strip_prefix("Dropbox-").map(str::to_string),
+            path: full_path.to_string(),
+        });
+    }
+    // iCloud Drive: "iCloudDrive" or (very rare, enterprise) prefix
+    // variant. Treat anything starting with "iCloud" as iCloud Drive.
+    if dir_name == "iCloudDrive" || dir_name.starts_with("iCloudDrive-") {
+        return Some(CloudMount {
+            provider: "iCloud Drive".to_string(),
+            account: None,
+            path: full_path.to_string(),
+        });
+    }
+    // OneDrive: "OneDrive-<account>" (personal and business both).
+    if dir_name == "OneDrive" || dir_name.starts_with("OneDrive-") {
+        return Some(CloudMount {
+            provider: "OneDrive".to_string(),
+            account: dir_name.strip_prefix("OneDrive-").map(str::to_string),
+            path: full_path.to_string(),
+        });
+    }
+    // Box: "Box" or "Box-<account>".
+    if dir_name == "Box" || dir_name.starts_with("Box-") {
+        return Some(CloudMount {
+            provider: "Box".to_string(),
+            account: dir_name.strip_prefix("Box-").map(str::to_string),
+            path: full_path.to_string(),
+        });
+    }
+    None
+}
+
+/// Backward-compatible Google-Drive-specific lookup. New callers
+/// should use find_cloud_storage_mounts() and filter by provider;
+/// this stays for the one UI call site that needs just "the first
+/// Google Drive" and for test coverage already pinned against its
+/// exact behavior.
+pub fn find_gdrive_mount() -> Option<String> {
+    if let Some(mount) = find_cloud_storage_mounts()
+        .into_iter()
+        .find(|m| m.provider == "Google Drive")
+    {
+        return Some(mount.path);
     }
 
-    // macOS: Drive for Desktop legacy mount point.
+    // macOS legacy mount + Linux fallbacks: kept inline rather than
+    // folded into find_cloud_storage_mounts, which deliberately
+    // scans only ~/Library/CloudStorage (one well-defined contract)
+    // and returns nothing on Linux. These are historical paths bmug2
+    // has always supported for Google Drive specifically; preserving
+    // them here keeps find_gdrive_mount's contract byte-identical.
+    let home = env::var("HOME").ok()?;
     let legacy_mac = "/Volumes/Google Drive".to_string();
     if std::path::Path::new(&legacy_mac).is_dir() {
         return Some(legacy_mac);
     }
-
-    // Linux: common user-space mount locations, checked in preference order.
     for suffix in &["GoogleDrive", "google-drive", "gdrive"] {
         let path = format!("{home}/{suffix}");
         if std::path::Path::new(&path).is_dir() {
@@ -480,6 +595,152 @@ mod tests {
         // Just confirms it returns Option<String> without panicking in a
         // clean environment where none of the known mount paths exist.
         let _: Option<String> = find_gdrive_mount();
+    }
+
+    //
+    // classify_cloud_mount: pure function, drives the whole
+    // find_cloud_storage_mounts() enumeration below. Tests exercise
+    // each recognized provider shape in isolation + the bare
+    // "unknown directory" miss case.
+    //
+
+    #[test]
+    fn classify_recognizes_proton_drive_with_folder_suffix() {
+        let got = classify_cloud_mount(
+            "ProtonDrive-alice@example.com-folder",
+            "/tmp/cs/ProtonDrive-alice@example.com-folder",
+        )
+        .expect("ProtonDrive-...-folder must be recognized");
+        assert_eq!(got.provider, "Proton Drive");
+        assert_eq!(got.account.as_deref(), Some("alice@example.com"));
+        assert_eq!(got.path, "/tmp/cs/ProtonDrive-alice@example.com-folder");
+    }
+
+    #[test]
+    fn classify_recognizes_dropbox_plain_and_team_variants() {
+        let plain = classify_cloud_mount("Dropbox", "/tmp/cs/Dropbox").expect("plain Dropbox");
+        assert_eq!(plain.provider, "Dropbox");
+        assert_eq!(plain.account, None);
+        let team = classify_cloud_mount("Dropbox-Acme", "/tmp/cs/Dropbox-Acme").expect("team Dropbox");
+        assert_eq!(team.account.as_deref(), Some("Acme"));
+    }
+
+    #[test]
+    fn classify_recognizes_icloud_drive() {
+        let got = classify_cloud_mount("iCloudDrive", "/tmp/cs/iCloudDrive")
+            .expect("iCloudDrive must be recognized");
+        assert_eq!(got.provider, "iCloud Drive");
+        assert_eq!(got.account, None);
+    }
+
+    #[test]
+    fn classify_recognizes_onedrive_personal_and_business() {
+        let personal = classify_cloud_mount("OneDrive", "/tmp/cs/OneDrive").expect("personal");
+        assert_eq!(personal.provider, "OneDrive");
+        assert_eq!(personal.account, None);
+        let biz = classify_cloud_mount("OneDrive-WorkAcct", "/tmp/cs/OneDrive-WorkAcct")
+            .expect("business");
+        assert_eq!(biz.account.as_deref(), Some("WorkAcct"));
+    }
+
+    #[test]
+    fn classify_recognizes_box() {
+        let got = classify_cloud_mount("Box-alice", "/tmp/cs/Box-alice").expect("Box");
+        assert_eq!(got.provider, "Box");
+        assert_eq!(got.account.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn classify_returns_none_for_unknown_provider() {
+        assert!(classify_cloud_mount("SomeRandomFolder", "/tmp/cs/SomeRandomFolder").is_none());
+        assert!(classify_cloud_mount(".DS_Store", "/tmp/cs/.DS_Store").is_none());
+    }
+
+    #[test]
+    fn classify_requires_my_drive_for_google_drive() {
+        // Without the "My Drive" sidecar directory, Google Drive is
+        // returned as None - the pre-generalization gate preserved,
+        // since writing into the provider root instead of "My Drive"
+        // would land outside the actual drive.
+        let dir = std::env::temp_dir().join(format!(
+            "bmug2-classify-gdrive-no-mydrive-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("GoogleDrive-alice@gmail.com")).unwrap();
+        let name = "GoogleDrive-alice@gmail.com";
+        let full = dir.join(name).to_string_lossy().to_string();
+        assert!(classify_cloud_mount(name, &full).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn classify_recognizes_google_drive_when_my_drive_exists() {
+        let dir = std::env::temp_dir().join(format!(
+            "bmug2-classify-gdrive-mydrive-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("GoogleDrive-alice@gmail.com").join("My Drive")).unwrap();
+        let name = "GoogleDrive-alice@gmail.com";
+        let full = dir.join(name).to_string_lossy().to_string();
+        let got = classify_cloud_mount(name, &full).expect("must detect Google Drive");
+        assert_eq!(got.provider, "Google Drive");
+        assert_eq!(got.account.as_deref(), Some("alice@gmail.com"));
+        assert!(got.path.ends_with("/My Drive"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    //
+    // find_cloud_storage_mounts: end-to-end over a synthesized
+    // ~/Library/CloudStorage dir, via HOME override. Confirms the
+    // enumerator finds all providers, sorts by (provider, path),
+    // and skips unrecognized siblings.
+    //
+
+    #[test]
+    fn find_cloud_storage_mounts_enumerates_multiple_providers_in_stable_order() {
+        let fake_home = std::env::temp_dir().join(format!(
+            "bmug2-cloud-mounts-enum-{}",
+            std::process::id()
+        ));
+        let cs = fake_home.join("Library/CloudStorage");
+        std::fs::create_dir_all(&cs).unwrap();
+        // Create a representative mix: three providers + one
+        // unrecognized entry that must be skipped.
+        std::fs::create_dir_all(cs.join("ProtonDrive-alice@example.com-folder")).unwrap();
+        std::fs::create_dir_all(cs.join("Dropbox")).unwrap();
+        std::fs::create_dir_all(cs.join("iCloudDrive")).unwrap();
+        std::fs::create_dir_all(cs.join("SomeRandomFolder")).unwrap();
+
+        let orig_home = env::var("HOME").ok();
+        env::set_var("HOME", &fake_home);
+        let mounts = find_cloud_storage_mounts();
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        }
+
+        // Three recognized providers, no random noise.
+        assert_eq!(mounts.len(), 3, "got {mounts:?}");
+        // Sorted by provider name.
+        let providers: Vec<&str> = mounts.iter().map(|m| m.provider.as_str()).collect();
+        assert_eq!(providers, vec!["Dropbox", "Proton Drive", "iCloud Drive"]);
+        std::fs::remove_dir_all(&fake_home).ok();
+    }
+
+    #[test]
+    fn find_cloud_storage_mounts_empty_when_cloudstorage_dir_missing() {
+        let fake_home = std::env::temp_dir().join(format!(
+            "bmug2-cloud-mounts-missing-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&fake_home).unwrap(); // home exists, no Library/CloudStorage
+        let orig_home = env::var("HOME").ok();
+        env::set_var("HOME", &fake_home);
+        let mounts = find_cloud_storage_mounts();
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        }
+        assert!(mounts.is_empty());
+        std::fs::remove_dir_all(&fake_home).ok();
     }
 
     #[test]
