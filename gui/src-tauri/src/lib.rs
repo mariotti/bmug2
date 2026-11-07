@@ -320,6 +320,17 @@ fn find_gdrive_mount() -> Option<String> {
     replication::find_gdrive_mount()
 }
 
+/// Returns every recognized cloud-sync mount under
+/// ~/Library/CloudStorage/ (macOS) - Google Drive, Proton Drive,
+/// Dropbox, iCloud Drive, OneDrive, Box. Empty vec on Linux or when
+/// nothing is detected; the local-backend UI then just leaves the
+/// path input blank for the user to type. See
+/// replication::find_cloud_storage_mounts for the provider list.
+#[tauri::command]
+fn list_cloud_mounts() -> Vec<replication::CloudMount> {
+    replication::find_cloud_storage_mounts()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -396,7 +407,8 @@ pub fn run() {
             list_rclone_folder,
             create_rclone_folder,
             create_drive_remote,
-            find_gdrive_mount
+            find_gdrive_mount,
+            list_cloud_mounts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

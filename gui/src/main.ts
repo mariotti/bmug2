@@ -1261,20 +1261,40 @@ export function buildReplicationEditor(
   localPathErrorEl.style.display = "none";
 
   // Auto-detect: if both path inputs are empty when the editor opens,
-  // ask the backend for the first Google Drive mount it can find and
-  // pre-fill both paths with the conventional bmug2 subdirectory layout.
-  // Only fires when the backend reports a path - silently a no-op if
-  // nothing is found (avoids a confusing "detecting…" state for users
-  // who don't have Google Drive installed).
-  void invoke<string | null>("find_gdrive_mount")
-    .then((mountPath) => {
-      if (mountPath && !pathSyncInput.value && !pathBackupsInput.value) {
-        pathSyncInput.value = `${mountPath}/bmug2/SYNC`;
-        pathBackupsInput.value = `${mountPath}/bmug2/BackUp`;
+  // ask the backend for every cloud-sync folder it can recognize
+  // under ~/Library/CloudStorage/ (Google Drive, Proton Drive,
+  // Dropbox, iCloud Drive, OneDrive, Box). Pre-fill both paths with
+  // the conventional bmug2 subdirectory layout using the first
+  // alphabetically. If more than one mount exists, show a small
+  // "Detected: Proton Drive, Dropbox" hint under the inputs so the
+  // user knows there are alternatives they can type in. Silently a
+  // no-op when nothing is found (keeps the no-cloud-folder install
+  // experience unchanged).
+  type CloudMount = { provider: string; account: string | null; path: string };
+  const mountsHint = el("p", { class: "settings-check-hint" }, []) as HTMLParagraphElement;
+  mountsHint.style.fontSize = "0.85em";
+  mountsHint.style.opacity = "0.7";
+  mountsHint.style.marginTop = "4px";
+  mountsHint.style.display = "none";
+  localBackupsRow.after(mountsHint);
+  void invoke<CloudMount[]>("list_cloud_mounts")
+    .then((mounts) => {
+      if (!Array.isArray(mounts) || mounts.length === 0) return;
+      if (!pathSyncInput.value && !pathBackupsInput.value) {
+        pathSyncInput.value = `${mounts[0].path}/bmug2/SYNC`;
+        pathBackupsInput.value = `${mounts[0].path}/bmug2/BackUp`;
+      }
+      if (mounts.length > 1) {
+        const labels = mounts
+          .map((m) => (m.account ? `${m.provider} (${m.account})` : m.provider))
+          .join(", ");
+        mountsHint.textContent = `Detected cloud folders: ${labels}. First one pre-filled above; paste a different one to use another.`;
+        mountsHint.style.display = "";
       }
     })
     .catch(() => {
-      // No Tauri bridge (under test) or command failed - leave blank.
+      // No Tauri bridge (under test) or command failed - leave blank
+      // and fall back to manual entry; same UX as before.
     });
 
   const updateVisibility = () => {
