@@ -42,7 +42,10 @@ fn check_existing_install(app: AppHandle) -> Option<String> {
     // one (falls through to the setup screen) rather than proceeding
     // into a dashboard that's guaranteed to fail on its first
     // get_status call.
-    if config::looks_installed(path) && version::check_compatible(path).is_ok() {
+    if config::looks_installed(path)
+        && version::check_compatible(path).is_ok()
+        && version::check_cli_not_newer(path).is_ok()
+    {
         Some(cfg.bin_dir)
     } else {
         None
