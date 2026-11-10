@@ -57,6 +57,7 @@ pub fn use_existing(app_data_dir: &Path, bin_dir: &str) -> Result<InstallOutcome
         ));
     }
     crate::version::check_compatible(path)?;
+    crate::version::check_cli_not_newer(path)?;
     config::save(app_data_dir, bin_dir)?;
     Ok(InstallOutcome {
         bin_dir: bin_dir.to_string(),
