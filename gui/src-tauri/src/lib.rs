@@ -198,6 +198,24 @@ fn clear_source_schedule(app: AppHandle, source_path: String) -> Result<(), Stri
     config::set_source_schedule(&app_data_dir, &source_path, None)
 }
 
+// Per-source off-site replication class: writes the authoritative
+// .bmureplicate-class sidecar (what backmeup.replicate.sh reads at
+// run time) AND mirrors the value into config.json's own
+// UI-convenience field. Both happen or neither - if the sidecar
+// write fails, config.json isn't updated. See config::ReplicateClass
+// for the policy.
+#[tauri::command]
+fn set_source_replicate_class(
+    app: AppHandle,
+    bin_dir: String,
+    source_path: String,
+    class: config::ReplicateClass,
+) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    replication::set_source_class(std::path::Path::new(&bin_dir), &source_path, class)?;
+    config::set_source_replicate_class(&app_data_dir, &source_path, class)
+}
+
 #[tauri::command]
 fn get_housekeeping_schedule() -> Option<Schedule> {
     schedule::status(schedule::HOUSEKEEPING_LABEL, "")
@@ -387,6 +405,7 @@ pub fn run() {
             run_housekeeping_now,
             set_source_schedule,
             clear_source_schedule,
+            set_source_replicate_class,
             get_housekeeping_schedule,
             set_housekeeping_schedule,
             clear_housekeeping_schedule,

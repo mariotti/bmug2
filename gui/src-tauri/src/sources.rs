@@ -6,7 +6,7 @@
 // source path. Run Now (run.rs) and, later, scheduling both need a
 // name->source-path list to operate on, so this is where it lives.
 use crate::config::{self, BackupSource};
-use crate::schedule;
+use crate::{replication, schedule};
 use std::path::Path;
 
 // Reconciles each source's schedule field against the installed
@@ -18,12 +18,25 @@ use std::path::Path;
 // when nothing is actually installed to run it.
 pub fn list(app_data_dir: &Path) -> Vec<BackupSource> {
     let mut sources = config::load(app_data_dir).map(|cfg| cfg.sources).unwrap_or_default();
+    let bin_dir = config::load(app_data_dir).map(|c| c.bin_dir);
     let mut changed = false;
     for source in sources.iter_mut() {
         let actual = schedule::status(&schedule::source_label(&source.path), &schedule::source_file_hint(&source.path));
         if actual != source.schedule {
             source.schedule = actual;
             changed = true;
+        }
+        // Reconcile against the authoritative .bmureplicate-class
+        // sidecar - same self-healing idiom as the schedule check
+        // above. Needs the installed CLI's bin_dir to resolve
+        // BMU_DIRBACKUPS; silently skip reconcile if that isn't
+        // resolvable (e.g. no install configured yet).
+        if let Some(bin_dir) = bin_dir.as_deref() {
+            let actual_class = replication::read_source_class(Path::new(bin_dir), &source.path);
+            if actual_class != source.replicate_class {
+                source.replicate_class = actual_class;
+                changed = true;
+            }
         }
     }
     if changed {
@@ -86,6 +99,7 @@ fn build_source(
         name,
         path: path.to_string(),
         schedule: None,
+        replicate_class: Default::default(),
     })
 }
 
@@ -142,6 +156,7 @@ mod tests {
             name: "already-here".to_string(),
             path: dir.to_str().unwrap().to_string(),
             schedule: None,
+            replicate_class: Default::default(),
         }];
         let err = build_source(&existing, dir.to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("already tracked"), "{err}");

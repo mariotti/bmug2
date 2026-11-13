@@ -42,6 +42,7 @@ import {
   buildProtonFolderBrowser,
   buildGoogleDriveFolderBrowser,
   buildReplicationSection,
+  buildReplicateClassToggle,
   init,
   type Schedule,
   type StatusProject,
@@ -1037,15 +1038,16 @@ describe("renderDashboard shows each source's own status inline", () => {
 
     await renderDashboard("/bin");
 
-    // 8 of the 9 planned icons live on this screen. mockStatus's own
+    // 9 of the 10 planned icons live on this screen. mockStatus's own
     // list_sources stub always returns one source ("proj1") regardless
-    // of the projects argument - that source contributes 2 icons
-    // (Respect .gitignore + Use .bmuignore), and the remaining 6 come
-    // from header tooltips (Backup sources, Schedule column,
-    // Housekeeping, Off-site replication, Search, Last-change column).
-    // The 9th icon (Update now) lives on the Settings screen.
+    // of the projects argument - that source contributes 3 icons
+    // (Respect .gitignore + Use .bmuignore + Off-site replicate-class),
+    // and the remaining 6 come from header tooltips (Backup sources,
+    // Schedule column, Housekeeping, Off-site replication, Search,
+    // Last-change column). The 10th icon (Update now) lives on the
+    // Settings screen.
     const icons = document.querySelectorAll<HTMLElement>(".help-icon");
-    expect(icons).toHaveLength(8);
+    expect(icons).toHaveLength(9);
     icons.forEach((icon) => {
       expect(icon.textContent).toBe("?");
       expect(icon.getAttribute("title")).toBeTruthy();
@@ -1089,6 +1091,35 @@ describe("buildUpdateAvailableNotice", () => {
     const notice = buildUpdateAvailableNotice(info, "/bin");
     expect(notice?.textContent).toContain("v2.16.9-experimental");
     expect(notice?.querySelector("button")?.textContent).toBe("Go to Settings");
+  });
+});
+
+describe("buildReplicateClassToggle", () => {
+  it("defaults the select to 'default' when the source has no stored class", () => {
+    const toggle = buildReplicateClassToggle(undefined, () => {});
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("default");
+  });
+
+  it("reflects a stored 'none' class in the select", () => {
+    const toggle = buildReplicateClassToggle("none", () => {});
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("none");
+  });
+
+  it("fires onChange with the new value when the user flips the select", () => {
+    const seen: string[] = [];
+    const toggle = buildReplicateClassToggle("default", (cls) => seen.push(cls));
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    select.value = "none";
+    select.dispatchEvent(new Event("change"));
+    expect(seen).toEqual(["none"]);
+  });
+
+  it("offers both expected options", () => {
+    const toggle = buildReplicateClassToggle("default", () => {});
+    const opts = Array.from(toggle.querySelectorAll("option")).map((o) => o.value);
+    expect(opts).toEqual(["default", "none"]);
   });
 });
 

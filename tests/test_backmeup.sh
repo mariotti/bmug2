@@ -2385,6 +2385,98 @@ testReplicateSyncsSyncAndHistoryToLocalStandInRemote() {
     assertEquals "doomed file" "`cat \"${l_bkfile}\" 2>/dev/null`"
 }
 
+testReplicateSkipsSourceWithReplicateClassNone() {
+    # Per-source replication class: a project with
+    # .bmureplicate-class=none in its HISTORY dir must be excluded
+    # from BOTH legs (SYNC + BackUp) of backmeup.replicate.sh.
+    # Use case: a 44 GB video subtree kept in local SYNC but
+    # deliberately NOT pushed off-site on every HouseKeeping run.
+    command -v rclone > /dev/null 2>&1 || startSkipping
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-class"
+    l_src_sync="${SHUNIT_TMPDIR}/bmu-replicate-class-sync"
+    l_src_bp="${SHUNIT_TMPDIR}/bmu-replicate-class-sync-BP"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-class-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-class-remote-bp"
+    rm -rf "${l_dir}" "${l_src_sync}" "${l_src_bp}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    # Two projects in SYNC + BackUp: "keepproj" (default class) and
+    # "skipproj" (class=none). Both have content on both sides.
+    mkdir -p "${l_src_sync}/keepproj" "${l_src_sync}/skipproj"
+    mkdir -p "${l_src_bp}/keepproj/B-20261101-000000" "${l_src_bp}/skipproj/B-20261101-000000"
+    echo "keep live" > "${l_src_sync}/keepproj/live.txt"
+    echo "skip live" > "${l_src_sync}/skipproj/live.txt"
+    echo "keep snap" > "${l_src_bp}/keepproj/B-20261101-000000/snap.txt"
+    echo "skip snap" > "${l_src_bp}/skipproj/B-20261101-000000/snap.txt"
+    touch "${l_src_sync}/.bmumeta" "${l_src_bp}/.bmumeta"
+    # The GUI would normally write this sidecar via
+    # replication::set_source_class; simulate that write directly.
+    echo "none" > "${l_src_bp}/skipproj/.bmureplicate-class"
+
+    sed -i.bak \
+        -e "s|^BMU_DIRRSYNC=.*|BMU_DIRRSYNC=\"${l_src_sync}\"|" \
+        -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${l_src_bp}\"|" \
+        "${l_dir}/backmeup.setup.sh"
+    {
+        echo "BMU_CMDREPLICATE=\"rclone sync\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "replicate failed, see run.log" 0 $?
+    grep -q "Skipping /skipproj/ (per-source replicate-class=none)" "${l_dir}/run.log"
+    assertTrue "expected the per-source-skip announcement for skipproj" $?
+
+    # keepproj should be on both remotes (default class).
+    assertTrue "keepproj/live.txt must reach the remote SYNC" \
+        "[ -f '${l_remotesync}/keepproj/live.txt' ]"
+    assertTrue "keepproj/B-.../snap.txt must reach the remote BackUp" \
+        "[ -f '${l_remotebp}/keepproj/B-20261101-000000/snap.txt' ]"
+    # skipproj must NOT be on either remote (class=none).
+    assertFalse "skipproj/live.txt must NOT reach the remote SYNC" \
+        "[ -e '${l_remotesync}/skipproj' ]"
+    assertFalse "skipproj/B-.../snap.txt must NOT reach the remote BackUp" \
+        "[ -e '${l_remotebp}/skipproj' ]"
+}
+
+testReplicateDefaultClassIsStillReplicatedWhenSidecarSaysDefault() {
+    # Explicit opposite of the test above: a sidecar with content
+    # "default" must be treated the same as no sidecar at all - the
+    # project replicates normally.
+    command -v rclone > /dev/null 2>&1 || startSkipping
+    l_dir="${SHUNIT_TMPDIR}/bmu-replicate-class-default"
+    l_src_sync="${SHUNIT_TMPDIR}/bmu-replicate-class-default-sync"
+    l_src_bp="${SHUNIT_TMPDIR}/bmu-replicate-class-default-sync-BP"
+    l_remotesync="${SHUNIT_TMPDIR}/bmu-replicate-class-default-remote-sync"
+    l_remotebp="${SHUNIT_TMPDIR}/bmu-replicate-class-default-remote-bp"
+    rm -rf "${l_dir}" "${l_src_sync}" "${l_src_bp}" "${l_remotesync}" "${l_remotebp}"
+    cp -R "${SB}/bin" "${l_dir}"
+    mkdir -p "${l_remotesync}" "${l_remotebp}"
+    mkdir -p "${l_src_sync}/proj" "${l_src_bp}/proj/B-20261101-000000"
+    echo "live" > "${l_src_sync}/proj/live.txt"
+    echo "snap" > "${l_src_bp}/proj/B-20261101-000000/snap.txt"
+    touch "${l_src_sync}/.bmumeta" "${l_src_bp}/.bmumeta"
+    echo "default" > "${l_src_bp}/proj/.bmureplicate-class"
+
+    sed -i.bak \
+        -e "s|^BMU_DIRRSYNC=.*|BMU_DIRRSYNC=\"${l_src_sync}\"|" \
+        -e "s|^BMU_DIRBACKUPS=.*|BMU_DIRBACKUPS=\"${l_src_bp}\"|" \
+        "${l_dir}/backmeup.setup.sh"
+    {
+        echo "BMU_CMDREPLICATE=\"rclone sync\""
+        echo "BMU_REPLICATE_REMOTE_SYNC=\"${l_remotesync}\""
+        echo "BMU_REPLICATE_REMOTE_BACKUPS=\"${l_remotebp}\""
+    } >> "${l_dir}/backmeup.setup.sh"
+
+    "${l_dir}/backmeup.replicate.sh" > "${l_dir}/run.log" 2>&1
+    assertEquals "replicate failed, see run.log" 0 $?
+    grep -q "Skipping /proj/" "${l_dir}/run.log"
+    assertFalse "default-class project must not trigger the skip announcement" $?
+    assertTrue "proj/live.txt must reach the remote SYNC with class=default" \
+        "[ -f '${l_remotesync}/proj/live.txt' ]"
+}
+
 testReplicateDryRunChangesNothing() {
     command -v rclone > /dev/null 2>&1 || startSkipping
     l_dir="${SHUNIT_TMPDIR}/bmu-replicate-dry"

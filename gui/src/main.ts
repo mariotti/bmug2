@@ -75,10 +75,18 @@ export function isDaily(schedule: Schedule): schedule is DailySchedule {
   return "hour" in schedule;
 }
 
+// Mirrors config::ReplicateClass (snake_case for serde). Default is
+// "default" (replicate normally as part of backmeup.replicate.sh);
+// "none" skips the source entirely for the off-site push.
+export type ReplicateClass = "default" | "none";
+
 export interface BackupSource {
   name: string;
   path: string;
   schedule: Schedule | null;
+  // Optional in older serialized configs (#[serde(default)] on the
+  // Rust side) - treat undefined as "default" everywhere.
+  replicate_class?: ReplicateClass;
 }
 
 // Mirrors ignore.rs's IgnoreSettings/IgnoreSettingsInput exactly -
@@ -268,6 +276,35 @@ export function buildScheduleEditor(
 // not something you save. onToggle receives the one field that
 // changed; the caller merges it with the source's other current
 // settings before persisting.
+// Per-source off-site replication control. Sits next to the ignore
+// toggles on the source's always-visible row - same pattern, same
+// visual home. "Default" = replicate normally; "Local-only" (the
+// "none" class on the backend) = this source skips
+// backmeup.replicate.sh entirely. Use case: a large-media source
+// (videos, raw photo archives) you want in local SYNC+HISTORY but
+// don't want eating off-site bandwidth / quota every HouseKeeping
+// run. See docs/MANUAL.md for the "stale remote copy" caveat.
+export function buildReplicateClassToggle(
+  current: ReplicateClass | undefined,
+  onChange: (value: ReplicateClass) => void,
+): HTMLElement {
+  const select = el("select", {}, [
+    el("option", { value: "default" }, ["Default (replicate off-site)"]),
+    el("option", { value: "none" }, ["Local-only (skip off-site)"]),
+  ]) as HTMLSelectElement;
+  select.value = current ?? "default";
+  select.addEventListener("change", () => onChange(select.value as ReplicateClass));
+  return el("label", { class: "replicate-class-toggle" }, [
+    "Off-site: ",
+    select,
+    " ",
+    helpIcon(
+      "Skips just this source in backmeup.replicate.sh. Local backup still runs.",
+      'echo "none" > HISTORY/<project>/.bmureplicate-class',
+    ),
+  ]);
+}
+
 export function buildIgnoreToggles(
   current: IgnoreSettings,
   onToggle: (field: "gitignore" | "bmuignore", value: boolean) => void,
@@ -626,7 +663,12 @@ function buildSourcesSection(
       const toggles = buildIgnoreToggles(settings, (field, value) =>
         void saveIgnoreSettings(binDir, source, { ...settings, [field]: value }),
       );
-      togglesRow.replaceChildren(el("td", { colspan: "8" }, [toggles]));
+      const classToggle = buildReplicateClassToggle(source.replicate_class, (cls) =>
+        void saveReplicateClass(binDir, source, cls),
+      );
+      togglesRow.replaceChildren(
+        el("td", { colspan: "8" }, [toggles, classToggle]),
+      );
     }
 
     // A tracked source whose underlying project still has the old
@@ -720,6 +762,23 @@ export async function setSourceSchedule(binDir: string, source: BackupSource, sc
 export async function clearSourceSchedule(binDir: string, source: BackupSource) {
   try {
     await invoke("clear_source_schedule", { sourcePath: source.path });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+export async function saveReplicateClass(
+  binDir: string,
+  source: BackupSource,
+  cls: ReplicateClass,
+) {
+  try {
+    await invoke("set_source_replicate_class", {
+      binDir,
+      sourcePath: source.path,
+      class: cls,
+    });
     void renderDashboard(binDir);
   } catch (err) {
     void renderDashboard(binDir, { ok: false, message: String(err) });
