@@ -2897,6 +2897,70 @@ testUnarchiveRefusesExistingDir() {
         "[ -f '${l_bp}/B-20200101-000000.tar.gz' ]"
 }
 
+testArchiveMediaKindSkipsGzipAndNamesPlainTar() {
+    # Per-source kind=media: ${BMU_DIRBACKUPS}/<project>/.bmukind
+    # with content "media" switches archive.sh from `tar -czf
+    # <name>.tar.gz` to `tar -cf <name>.tar`. Verify: resulting
+    # file is a plain tar not a gzipped tar, filename ends in .tar
+    # (not .tar.gz), and the entries are intact so unarchive works.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/mediaproj"
+    mkdir -p "${l_src}"
+    echo "media v1" > "${l_src}/photo.jpg"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "media v2" > "${l_src}/photo.jpg"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    l_bk=`ls -d "${SB}/sync-BP/mediaproj"/B-*/ 2>/dev/null | head -1`
+    l_bk="${l_bk%/}"
+    assertNotNull "test setup: no snapshot for mediaproj" "${l_bk}"
+    l_name=`basename "${l_bk}"`
+    echo "media" > "${SB}/sync-BP/mediaproj/.bmukind"
+    sleep 1
+
+    "${SB}/bin/backmeup.archive.sh" mediaproj 0 > "${SB}/archive-media.log" 2>&1
+    assertEquals "archive on media-kind source must succeed" 0 $?
+    assertTrue "media-kind archive must land as .tar" \
+        "[ -f '${SB}/sync-BP/mediaproj/${l_name}.tar' ]"
+    assertFalse "media-kind archive must NOT be gzipped" \
+        "[ -f '${SB}/sync-BP/mediaproj/${l_name}.tar.gz' ]"
+    # file(1) sanity: plain .tar must not report gzip magic.
+    file "${SB}/sync-BP/mediaproj/${l_name}.tar" 2>/dev/null | grep -qi "gzip"
+    assertFalse "media .tar must not be gzip-compressed" $?
+    # Unarchive round-trip: should transparently handle the .tar.
+    "${SB}/bin/backmeup.unarchive.sh" mediaproj "${l_name}" \
+        > "${SB}/unarchive-media.log" 2>&1
+    assertEquals "unarchive of media .tar must succeed" 0 $?
+    assertTrue "media snapshot dir restored by unarchive" "[ -d '${l_bk}' ]"
+    assertFalse "the .tar must be removed after successful unarchive" \
+        "[ -f '${SB}/sync-BP/mediaproj/${l_name}.tar' ]"
+}
+
+testArchiveGenericKindStillProducesTarGz() {
+    # Explicit opposite: an explicit "generic" sidecar (and the
+    # no-sidecar case too) must behave as today - .tar.gz with
+    # gzip. Zero-regression contract.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/genericproj"
+    mkdir -p "${l_src}"
+    echo "generic v1" > "${l_src}/doc.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    sleep 1
+    echo "generic v2" > "${l_src}/doc.txt"
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    l_bk=`ls -d "${SB}/sync-BP/genericproj"/B-*/ 2>/dev/null | head -1`
+    l_bk="${l_bk%/}"
+    assertNotNull "test setup: no snapshot for genericproj" "${l_bk}"
+    l_name=`basename "${l_bk}"`
+    echo "generic" > "${SB}/sync-BP/genericproj/.bmukind"
+    sleep 1
+
+    "${SB}/bin/backmeup.archive.sh" genericproj 0 > "${SB}/archive-generic.log" 2>&1
+    assertEquals "archive on generic-kind source must succeed" 0 $?
+    assertTrue "generic-kind archive must land as .tar.gz" \
+        "[ -f '${SB}/sync-BP/genericproj/${l_name}.tar.gz' ]"
+    assertFalse "generic-kind archive must NOT produce a plain .tar" \
+        "[ -f '${SB}/sync-BP/genericproj/${l_name}.tar' ]"
+}
+
 testArchiveRefusesWhenLockHeld() {
     # A concurrent backmeup.sh and backmeup.archive.sh on the same
     # project race on the same B-<stamp> dir: archive would tar a

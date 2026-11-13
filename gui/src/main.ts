@@ -80,6 +80,12 @@ export function isDaily(schedule: Schedule): schedule is DailySchedule {
 // "none" skips the source entirely for the off-site push.
 export type ReplicateClass = "default" | "none";
 
+// Mirrors config::SourceKind (snake_case for serde). "generic" is
+// the default and matches today's behavior (archive.sh runs
+// tar -czf). "media" tells archive.sh to skip gzip - saves CPU
+// on already-compressed media files.
+export type SourceKind = "generic" | "media";
+
 export interface BackupSource {
   name: string;
   path: string;
@@ -87,6 +93,7 @@ export interface BackupSource {
   // Optional in older serialized configs (#[serde(default)] on the
   // Rust side) - treat undefined as "default" everywhere.
   replicate_class?: ReplicateClass;
+  kind?: SourceKind;
 }
 
 // Mirrors ignore.rs's IgnoreSettings/IgnoreSettingsInput exactly -
@@ -301,6 +308,32 @@ export function buildReplicateClassToggle(
     helpIcon(
       "Skips just this source in backmeup.replicate.sh. Local backup still runs.",
       'echo "none" > HISTORY/<project>/.bmureplicate-class',
+    ),
+  ]);
+}
+
+// Per-source archive kind. "Generic" is the default (tar -czf, gzip
+// on - what every source used before this toggle existed). "Media"
+// switches archive.sh to tar -cf (no gzip): already-compressed
+// content (.jpg/.mp4/.heic) doesn't compress, so gzipping it just
+// burns CPU for no size win. See docs/MANUAL.md for the full tradeoff.
+export function buildSourceKindToggle(
+  current: SourceKind | undefined,
+  onChange: (value: SourceKind) => void,
+): HTMLElement {
+  const select = el("select", {}, [
+    el("option", { value: "generic" }, ["Generic (gzip archives)"]),
+    el("option", { value: "media" }, ["Media (skip gzip)"]),
+  ]) as HTMLSelectElement;
+  select.value = current ?? "generic";
+  select.addEventListener("change", () => onChange(select.value as SourceKind));
+  return el("label", { class: "source-kind-toggle" }, [
+    "Content: ",
+    select,
+    " ",
+    helpIcon(
+      "Media kind writes plain .tar archives (no gzip) - saves CPU on already-compressed photos/videos.",
+      'echo "media" > HISTORY/<project>/.bmukind',
     ),
   ]);
 }
@@ -666,8 +699,11 @@ function buildSourcesSection(
       const classToggle = buildReplicateClassToggle(source.replicate_class, (cls) =>
         void saveReplicateClass(binDir, source, cls),
       );
+      const kindToggle = buildSourceKindToggle(source.kind, (kind) =>
+        void saveSourceKind(binDir, source, kind),
+      );
       togglesRow.replaceChildren(
-        el("td", { colspan: "8" }, [toggles, classToggle]),
+        el("td", { colspan: "8" }, [toggles, classToggle, kindToggle]),
       );
     }
 
@@ -778,6 +814,23 @@ export async function saveReplicateClass(
       binDir,
       sourcePath: source.path,
       class: cls,
+    });
+    void renderDashboard(binDir);
+  } catch (err) {
+    void renderDashboard(binDir, { ok: false, message: String(err) });
+  }
+}
+
+export async function saveSourceKind(
+  binDir: string,
+  source: BackupSource,
+  kind: SourceKind,
+) {
+  try {
+    await invoke("set_source_kind", {
+      binDir,
+      sourcePath: source.path,
+      kind,
     });
     void renderDashboard(binDir);
   } catch (err) {

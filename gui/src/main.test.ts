@@ -43,6 +43,7 @@ import {
   buildGoogleDriveFolderBrowser,
   buildReplicationSection,
   buildReplicateClassToggle,
+  buildSourceKindToggle,
   init,
   type Schedule,
   type StatusProject,
@@ -1038,16 +1039,16 @@ describe("renderDashboard shows each source's own status inline", () => {
 
     await renderDashboard("/bin");
 
-    // 9 of the 10 planned icons live on this screen. mockStatus's own
+    // 10 of the 11 planned icons live on this screen. mockStatus's own
     // list_sources stub always returns one source ("proj1") regardless
-    // of the projects argument - that source contributes 3 icons
-    // (Respect .gitignore + Use .bmuignore + Off-site replicate-class),
-    // and the remaining 6 come from header tooltips (Backup sources,
-    // Schedule column, Housekeeping, Off-site replication, Search,
-    // Last-change column). The 10th icon (Update now) lives on the
-    // Settings screen.
+    // of the projects argument - that source contributes 4 icons
+    // (Respect .gitignore + Use .bmuignore + Off-site replicate-class +
+    // Content kind), and the remaining 6 come from header tooltips
+    // (Backup sources, Schedule column, Housekeeping, Off-site
+    // replication, Search, Last-change column). The 11th icon (Update
+    // now) lives on the Settings screen.
     const icons = document.querySelectorAll<HTMLElement>(".help-icon");
-    expect(icons).toHaveLength(9);
+    expect(icons).toHaveLength(10);
     icons.forEach((icon) => {
       expect(icon.textContent).toBe("?");
       expect(icon.getAttribute("title")).toBeTruthy();
@@ -1120,6 +1121,35 @@ describe("buildReplicateClassToggle", () => {
     const toggle = buildReplicateClassToggle("default", () => {});
     const opts = Array.from(toggle.querySelectorAll("option")).map((o) => o.value);
     expect(opts).toEqual(["default", "none"]);
+  });
+});
+
+describe("buildSourceKindToggle", () => {
+  it("defaults the select to 'generic' when the source has no stored kind", () => {
+    const toggle = buildSourceKindToggle(undefined, () => {});
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("generic");
+  });
+
+  it("reflects a stored 'media' kind in the select", () => {
+    const toggle = buildSourceKindToggle("media", () => {});
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("media");
+  });
+
+  it("fires onChange with the new value when the user flips the select", () => {
+    const seen: string[] = [];
+    const toggle = buildSourceKindToggle("generic", (kind) => seen.push(kind));
+    const select = toggle.querySelector("select") as HTMLSelectElement;
+    select.value = "media";
+    select.dispatchEvent(new Event("change"));
+    expect(seen).toEqual(["media"]);
+  });
+
+  it("offers both expected options", () => {
+    const toggle = buildSourceKindToggle("generic", () => {});
+    const opts = Array.from(toggle.querySelectorAll("option")).map((o) => o.value);
+    expect(opts).toEqual(["generic", "media"]);
   });
 });
 

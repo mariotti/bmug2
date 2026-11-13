@@ -6,7 +6,7 @@
 // source path. Run Now (run.rs) and, later, scheduling both need a
 // name->source-path list to operate on, so this is where it lives.
 use crate::config::{self, BackupSource};
-use crate::{replication, schedule};
+use crate::{replication, schedule, source_kind};
 use std::path::Path;
 
 // Reconciles each source's schedule field against the installed
@@ -26,15 +26,20 @@ pub fn list(app_data_dir: &Path) -> Vec<BackupSource> {
             source.schedule = actual;
             changed = true;
         }
-        // Reconcile against the authoritative .bmureplicate-class
-        // sidecar - same self-healing idiom as the schedule check
+        // Reconcile replicate_class + kind against their on-disk
+        // sidecars - same self-healing idiom as the schedule check
         // above. Needs the installed CLI's bin_dir to resolve
-        // BMU_DIRBACKUPS; silently skip reconcile if that isn't
-        // resolvable (e.g. no install configured yet).
+        // BMU_DIRBACKUPS; silently skip reconcile if unresolvable.
         if let Some(bin_dir) = bin_dir.as_deref() {
-            let actual_class = replication::read_source_class(Path::new(bin_dir), &source.path);
+            let bin = Path::new(bin_dir);
+            let actual_class = replication::read_source_class(bin, &source.path);
             if actual_class != source.replicate_class {
                 source.replicate_class = actual_class;
+                changed = true;
+            }
+            let actual_kind = source_kind::read(bin, &source.path);
+            if actual_kind != source.kind {
+                source.kind = actual_kind;
                 changed = true;
             }
         }
@@ -100,6 +105,7 @@ fn build_source(
         path: path.to_string(),
         schedule: None,
         replicate_class: Default::default(),
+        kind: Default::default(),
     })
 }
 
@@ -157,6 +163,7 @@ mod tests {
             path: dir.to_str().unwrap().to_string(),
             schedule: None,
             replicate_class: Default::default(),
+            kind: Default::default(),
         }];
         let err = build_source(&existing, dir.to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("already tracked"), "{err}");

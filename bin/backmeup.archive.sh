@@ -78,7 +78,34 @@ if [ -z "${l_BMU_CUTOFF}" ]; then
     exit 1
 fi;
 #
-echo "Archiving ${l_BMU_PRJDIR} snapshots older than ${l_BMU_DAYS} days (before ${l_BMU_CUTOFF})"
+# Per-source `kind` dispatches the tar flags for this project:
+#   generic -> `tar -czf <name>.tar.gz` (current behavior, text-ish
+#              content compresses usefully)
+#   media   -> `tar -cf  <name>.tar`    (already-compressed content:
+#              .jpg/.mp4/.heic/etc - gzip wastes CPU for no gain
+#              and the .gz filename is actively misleading)
+# Sidecar authoritative state: ${BMU_DIRBACKUPS}/<project>/.bmukind
+# (plain-text one-liner, GUI-written via source_kind::set). Any
+# content other than literal "media" (after trim) is treated as
+# generic - mistyped sidecars don't fail archive at run time.
+l_BMU_KIND="generic"
+if [ -f "${l_BMU_BP}/.bmukind" ]; then
+    l_bmu_kind_raw=`head -1 "${l_BMU_BP}/.bmukind" 2>/dev/null | tr -d '[:space:]'`
+    if [ "${l_bmu_kind_raw}" = "media" ]; then
+        l_BMU_KIND="media"
+    fi
+fi
+if [ "${l_BMU_KIND}" = "media" ]; then
+    l_BMU_TAR_CFLAGS="-cf"
+    l_BMU_TAR_TFLAGS="-tf"
+    l_BMU_ARCH_EXT="tar"
+else
+    l_BMU_TAR_CFLAGS="-czf"
+    l_BMU_TAR_TFLAGS="-tzf"
+    l_BMU_ARCH_EXT="tar.gz"
+fi
+#
+echo "Archiving ${l_BMU_PRJDIR} snapshots older than ${l_BMU_DAYS} days (before ${l_BMU_CUTOFF}, kind=${l_BMU_KIND})"
 l_BMU_COUNT=0
 for l_dir in "${l_BMU_BP}"/B-*/; do
     [ -d "${l_dir}" ] || continue
@@ -98,28 +125,28 @@ for l_dir in "${l_BMU_BP}"/B-*/; do
     #
     if [ -n "${l_BMU_DRYRUN}" ]; then
         l_size=`du -sh "${l_dir}" 2>/dev/null | awk '{print $1}'`
-        echo "would archive ${l_name} (${l_size})"
+        echo "would archive ${l_name} (${l_size}) -> ${l_name}.${l_BMU_ARCH_EXT}"
         l_BMU_COUNT=`expr ${l_BMU_COUNT} + 1`
         continue
     fi;
     #
     # tar to a .part file, verify, then commit and remove the directory
-    if ! ( cd "${l_BMU_BP}" && tar -czf "${l_name}.tar.gz.part" "${l_name}" ); then
+    if ! ( cd "${l_BMU_BP}" && tar ${l_BMU_TAR_CFLAGS} "${l_name}.${l_BMU_ARCH_EXT}.part" "${l_name}" ); then
         echo "ERROR: tar failed for ${l_name}, snapshot left untouched."
-        rm -f "${l_BMU_BP}/${l_name}.tar.gz.part"
+        rm -f "${l_BMU_BP}/${l_name}.${l_BMU_ARCH_EXT}.part"
         exit 1
     fi;
-    l_ntar=`tar -tzf "${l_BMU_BP}/${l_name}.tar.gz.part" | wc -l | tr -d ' '`
+    l_ntar=`tar ${l_BMU_TAR_TFLAGS} "${l_BMU_BP}/${l_name}.${l_BMU_ARCH_EXT}.part" | wc -l | tr -d ' '`
     l_ndir=`find "${l_dir%/}" | wc -l | tr -d ' '`
     if [ "${l_ntar}" != "${l_ndir}" ]; then
         echo "ERROR: verification failed for ${l_name} (tar ${l_ntar} entries, dir ${l_ndir}),"
         echo "snapshot left untouched."
-        rm -f "${l_BMU_BP}/${l_name}.tar.gz.part"
+        rm -f "${l_BMU_BP}/${l_name}.${l_BMU_ARCH_EXT}.part"
         exit 1
     fi;
-    mv "${l_BMU_BP}/${l_name}.tar.gz.part" "${l_BMU_BP}/${l_name}.tar.gz" && \
+    mv "${l_BMU_BP}/${l_name}.${l_BMU_ARCH_EXT}.part" "${l_BMU_BP}/${l_name}.${l_BMU_ARCH_EXT}" && \
         rm -rf "${l_dir%/}"
-    echo "archived ${l_name} -> ${l_name}.tar.gz (${l_ntar} entries verified)"
+    echo "archived ${l_name} -> ${l_name}.${l_BMU_ARCH_EXT} (${l_ntar} entries verified)"
     l_BMU_COUNT=`expr ${l_BMU_COUNT} + 1`
 done
 if [ ${l_BMU_COUNT} -eq 0 ]; then
