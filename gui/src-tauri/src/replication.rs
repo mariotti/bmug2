@@ -221,6 +221,13 @@ pub struct CloudMount {
 /// a match arm there enlarges the result set without breaking any
 /// existing caller.
 ///
+/// pcloud is handled separately below: its native Drive client does
+/// NOT use macOS's File Provider framework (never showed up under
+/// ~/Library/CloudStorage/), it mounts straight at ~/pCloudDrive/
+/// on both macOS and Linux. So the enumerator does one extra
+/// explicit probe for that single well-known path rather than
+/// trying to extend the generic ~/Library/CloudStorage scan to it.
+///
 /// Stable ordering: sorted by (provider, path) so a GUI pre-fill
 /// picks the same first entry on every launch given the same set
 /// of mounts.
@@ -229,20 +236,31 @@ pub fn find_cloud_storage_mounts() -> Vec<CloudMount> {
         return Vec::new();
     };
     let cloud_storage = format!("{home}/Library/CloudStorage");
-    let Ok(entries) = std::fs::read_dir(&cloud_storage) else {
-        return Vec::new();
+    let mut mounts: Vec<CloudMount> = match std::fs::read_dir(&cloud_storage) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                let full = format!("{cloud_storage}/{name}");
+                if !std::path::Path::new(&full).is_dir() {
+                    return None;
+                }
+                classify_cloud_mount(&name, &full)
+            })
+            .collect(),
+        // No ~/Library/CloudStorage at all (fresh macOS install
+        // that's never run a File-Provider-backed cloud client, or
+        // any Linux box) - skip, but still check pcloud below.
+        Err(_) => Vec::new(),
     };
-    let mut mounts: Vec<CloudMount> = entries
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let full = format!("{cloud_storage}/{name}");
-            if !std::path::Path::new(&full).is_dir() {
-                return None;
-            }
-            classify_cloud_mount(&name, &full)
-        })
-        .collect();
+    let pcloud_drive = format!("{home}/pCloudDrive");
+    if std::path::Path::new(&pcloud_drive).is_dir() {
+        mounts.push(CloudMount {
+            provider: "pCloud".to_string(),
+            account: None,
+            path: pcloud_drive,
+        });
+    }
     mounts.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.path.cmp(&b.path)));
     mounts
 }
@@ -798,6 +816,80 @@ mod tests {
             env::set_var("HOME", h);
         }
         assert!(mounts.is_empty());
+        std::fs::remove_dir_all(&fake_home).ok();
+    }
+
+    #[test]
+    fn find_cloud_storage_mounts_picks_up_pcloud_drive_at_home_root() {
+        // pcloud's native Drive client doesn't use the File Provider
+        // framework - it mounts straight at ~/pCloudDrive, both on
+        // macOS and Linux - so the enumerator has to probe that path
+        // explicitly even when ~/Library/CloudStorage doesn't exist.
+        let fake_home = std::env::temp_dir().join(format!(
+            "bmug2-cloud-mounts-pcloud-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(fake_home.join("pCloudDrive")).unwrap();
+        let orig_home = env::var("HOME").ok();
+        env::set_var("HOME", &fake_home);
+        let mounts = find_cloud_storage_mounts();
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        }
+        assert_eq!(mounts.len(), 1, "got {mounts:?}");
+        assert_eq!(mounts[0].provider, "pCloud");
+        assert!(mounts[0].path.ends_with("/pCloudDrive"));
+        assert!(mounts[0].account.is_none());
+        std::fs::remove_dir_all(&fake_home).ok();
+    }
+
+    #[test]
+    fn find_cloud_storage_mounts_lists_pcloud_alongside_other_providers() {
+        // pcloud enumeration doesn't shadow the ~/Library/CloudStorage
+        // scan - both must surface, and the result must stay sorted
+        // by (provider, path) so a GUI pre-fill is deterministic.
+        let fake_home = std::env::temp_dir().join(format!(
+            "bmug2-cloud-mounts-pcloud-mix-{}",
+            std::process::id()
+        ));
+        let cs = fake_home.join("Library/CloudStorage");
+        std::fs::create_dir_all(&cs).unwrap();
+        std::fs::create_dir_all(cs.join("Dropbox")).unwrap();
+        std::fs::create_dir_all(cs.join("iCloudDrive")).unwrap();
+        std::fs::create_dir_all(fake_home.join("pCloudDrive")).unwrap();
+
+        let orig_home = env::var("HOME").ok();
+        env::set_var("HOME", &fake_home);
+        let mounts = find_cloud_storage_mounts();
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        }
+
+        let providers: Vec<&str> = mounts.iter().map(|m| m.provider.as_str()).collect();
+        assert_eq!(providers, vec!["Dropbox", "iCloud Drive", "pCloud"]);
+        std::fs::remove_dir_all(&fake_home).ok();
+    }
+
+    #[test]
+    fn find_cloud_storage_mounts_skips_pcloud_when_not_a_directory() {
+        // Regular file named pCloudDrive at ~/ (e.g. a stale lockfile
+        // or a leftover from an aborted install) must not get
+        // misreported as a mount point - is_dir() returns false, we
+        // move on.
+        let fake_home = std::env::temp_dir().join(format!(
+            "bmug2-cloud-mounts-pcloud-notdir-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&fake_home).unwrap();
+        std::fs::write(fake_home.join("pCloudDrive"), b"not a mount").unwrap();
+
+        let orig_home = env::var("HOME").ok();
+        env::set_var("HOME", &fake_home);
+        let mounts = find_cloud_storage_mounts();
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        }
+        assert!(mounts.is_empty(), "got {mounts:?}");
         std::fs::remove_dir_all(&fake_home).ok();
     }
 
