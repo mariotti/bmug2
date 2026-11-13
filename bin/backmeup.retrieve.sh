@@ -79,13 +79,23 @@ esac
 #
 l_BMU_BP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
 l_BMU_SNAPDIR="${l_BMU_BP}/${l_BMU_SNAP}"
+# Prefer `.tar.gz` (generic-kind; historical format), fall back to
+# `.tar` (media-kind, written by archive.sh when the source's
+# .bmukind sidecar says "media"). Dispatches `tar -xzf` vs `tar -xf`
+# accordingly below. Finding either = archive found; neither + no
+# live dir = error.
 l_BMU_TGZ="${l_BMU_BP}/${l_BMU_SNAP}.tar.gz"
+l_BMU_TAR_XFLAGS="-xzf"
+if [ ! -f "${l_BMU_TGZ}" ] && [ -f "${l_BMU_BP}/${l_BMU_SNAP}.tar" ]; then
+    l_BMU_TGZ="${l_BMU_BP}/${l_BMU_SNAP}.tar"
+    l_BMU_TAR_XFLAGS="-xf"
+fi
 #
 l_BMU_ISLIVE=""
 if [ -d "${l_BMU_SNAPDIR}" ]; then
     l_BMU_ISLIVE="yes"
 elif [ ! -f "${l_BMU_TGZ}" ]; then
-    echo "ERROR: no snapshot found: ${l_BMU_SNAP} (checked ${l_BMU_SNAPDIR} and ${l_BMU_TGZ})"
+    echo "ERROR: no snapshot found: ${l_BMU_SNAP} (checked ${l_BMU_SNAPDIR}, ${l_BMU_BP}/${l_BMU_SNAP}.tar.gz, and ${l_BMU_BP}/${l_BMU_SNAP}.tar)"
     exit 1
 fi;
 #
@@ -121,15 +131,19 @@ if [ -n "${l_BMU_ISLIVE}" ]; then
         cp -R "${l_BMU_SNAPDIR}" "${l_BMU_DEST}/"
     fi;
 else
+    # Flags were resolved above based on which extension we found.
+    # `-O ... > file` writes a single entry to stdout then redirects;
+    # `-C <dir>` extracts the whole archive into dir. Both work the
+    # same for `tar -xf` (plain) and `tar -xzf` (gzip).
     if [ -n "${l_BMU_RELPATH}" ]; then
-        if ! tar -xzf "${l_BMU_TGZ}" -O "${l_BMU_SNAP}/${l_BMU_RELPATH}" > "${l_BMU_TARGET}.part" 2>/dev/null; then
+        if ! tar ${l_BMU_TAR_XFLAGS} "${l_BMU_TGZ}" -O "${l_BMU_SNAP}/${l_BMU_RELPATH}" > "${l_BMU_TARGET}.part" 2>/dev/null; then
             echo "ERROR: ${l_BMU_RELPATH} not found in ${l_BMU_SNAP}"
             rm -f "${l_BMU_TARGET}.part"
             exit 1
         fi;
         mv "${l_BMU_TARGET}.part" "${l_BMU_TARGET}"
     else
-        tar -xzf "${l_BMU_TGZ}" -C "${l_BMU_DEST}"
+        tar ${l_BMU_TAR_XFLAGS} "${l_BMU_TGZ}" -C "${l_BMU_DEST}"
     fi;
 fi;
 #

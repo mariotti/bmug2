@@ -28,7 +28,7 @@ BMU_PATH=${MY_PATH}
 #
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "usage: backmeup.unarchive.sh <project> <snapshot>"
-    echo "  Extracts <snapshot>.tar.gz back into the project history."
+    echo "  Extracts <snapshot>.tar.gz (or .tar for media-kind sources) back into the project history."
     exit 1;
 fi;
 l_BMU_PRJDIR=`basename "${1}"`
@@ -37,10 +37,23 @@ case "${2}" in
     *)   l_BMU_SNAP="B-${2}";;
 esac
 l_BMU_BP="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
+# Prefer `.tar.gz` (generic-kind archive, the historical shape) and
+# fall back to `.tar` (media-kind archive: tar -cf, no gzip). Flags
+# are dispatched accordingly. Checking in this order means an archive
+# produced BEFORE kind=media was introduced still restores correctly
+# (no sidecar => archive.sh wrote .tar.gz), AND a post-feature
+# .tar is found even without a .bmukind sidecar to consult.
 l_BMU_TGZ="${l_BMU_BP}/${l_BMU_SNAP}.tar.gz"
+l_BMU_TAR_XFLAGS="-xzf"
+l_BMU_ARCH_LABEL="tar.gz"
+if [ ! -f "${l_BMU_TGZ}" ] && [ -f "${l_BMU_BP}/${l_BMU_SNAP}.tar" ]; then
+    l_BMU_TGZ="${l_BMU_BP}/${l_BMU_SNAP}.tar"
+    l_BMU_TAR_XFLAGS="-xf"
+    l_BMU_ARCH_LABEL="tar"
+fi
 #
 if [ ! -f "${l_BMU_TGZ}" ]; then
-    echo "ERROR: no archive found: ${l_BMU_TGZ}"
+    echo "ERROR: no archive found: ${l_BMU_BP}/${l_BMU_SNAP}.tar.gz (or .tar)"
     exit 1
 fi;
 if [ -d "${l_BMU_BP}/${l_BMU_SNAP}" ]; then
@@ -58,9 +71,9 @@ if ! bmuAcquireLock "${l_BMU_LOCKDIR}"; then
 fi
 trap 'bmuReleaseLock "${l_BMU_LOCKDIR}"' EXIT
 #
-if ( cd "${l_BMU_BP}" && tar -xzf "${l_BMU_SNAP}.tar.gz" ); then
+if ( cd "${l_BMU_BP}" && tar ${l_BMU_TAR_XFLAGS} "`basename "${l_BMU_TGZ}"`" ); then
     rm "${l_BMU_TGZ}"
-    echo "restored ${l_BMU_SNAP} (archive removed)"
+    echo "restored ${l_BMU_SNAP} (${l_BMU_ARCH_LABEL} archive removed)"
 else
     echo "ERROR: extraction failed, archive kept: ${l_BMU_TGZ}"
     exit 1

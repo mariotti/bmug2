@@ -7,6 +7,7 @@ mod rclone_browse;
 mod replication;
 mod run;
 mod schedule;
+mod source_kind;
 mod sources;
 mod version;
 
@@ -216,6 +217,23 @@ fn set_source_replicate_class(
     config::set_source_replicate_class(&app_data_dir, &source_path, class)
 }
 
+// Per-source backup kind: writes the authoritative .bmukind sidecar
+// (what backmeup.archive.sh reads at run time to switch between
+// `tar -czf` for generic and `tar -cf` for media) AND mirrors the
+// value into config.json. Both happen or neither - sidecar-first so
+// a config.json write failure leaves authoritative state intact.
+#[tauri::command]
+fn set_source_kind(
+    app: AppHandle,
+    bin_dir: String,
+    source_path: String,
+    kind: config::SourceKind,
+) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    source_kind::set(std::path::Path::new(&bin_dir), &source_path, kind)?;
+    config::set_source_kind(&app_data_dir, &source_path, kind)
+}
+
 #[tauri::command]
 fn get_housekeeping_schedule() -> Option<Schedule> {
     schedule::status(schedule::HOUSEKEEPING_LABEL, "")
@@ -406,6 +424,7 @@ pub fn run() {
             set_source_schedule,
             clear_source_schedule,
             set_source_replicate_class,
+            set_source_kind,
             get_housekeeping_schedule,
             set_housekeeping_schedule,
             clear_housekeeping_schedule,

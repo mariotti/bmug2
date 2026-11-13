@@ -39,6 +39,31 @@ pub enum ReplicateClass {
     None,
 }
 
+// Per-source backup "kind" - lightweight policy hint for backmeup.
+// archive.sh that lets it skip the gzip pass on already-compressed
+// media (.jpg/.mp4/.heic/etc). Same sidecar pattern as
+// ReplicateClass above: UI field is a mirror; authoritative state is
+// `${BMU_DIRBACKUPS}/<project>/.bmukind`, a plain-text one-liner
+// read by archive.sh at run time.
+//
+// The use case: your typical media source (photos, videos, raw
+// camera files) is dominated by already-compressed formats where
+// tar -czf wastes CPU for essentially no size reduction - and the
+// `.tar.gz` filename becomes actively misleading (a gzip wrapper
+// around uncompressible content). Setting kind=media switches
+// archive to plain `tar -cf <name>.tar <name>`; unarchive handles
+// either filename on restore.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    /// archive.sh uses `tar -czf <name>.tar.gz` (current behavior).
+    #[default]
+    Generic,
+    /// archive.sh uses `tar -cf <name>.tar` - skip gzip on content
+    /// that doesn't compress (photos, videos, raw camera files, etc).
+    Media,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupSource {
     pub name: String,
@@ -58,6 +83,12 @@ pub struct BackupSource {
     // parseable - old installs see every source as Default.
     #[serde(default)]
     pub replicate_class: ReplicateClass,
+    // Per-source backup kind - see SourceKind above. UI-convenience
+    // mirror of the authoritative on-disk `.bmukind` sidecar; kept
+    // in sync by the source_kind::read / set helpers. Same
+    // #[serde(default)] discipline as replicate_class.
+    #[serde(default)]
+    pub kind: SourceKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +197,24 @@ pub fn set_source_replicate_class(
     write(app_data_dir, &cfg)
 }
 
+/// Mirrors the per-source kind the GUI just wrote to the `.bmukind`
+/// sidecar (authoritative) into config.json's UI-convenience field.
+/// Same pattern as set_source_replicate_class above.
+pub fn set_source_kind(
+    app_data_dir: &Path,
+    source_path: &str,
+    kind: SourceKind,
+) -> Result<(), String> {
+    let mut cfg = load(app_data_dir).ok_or("no bmug2 install configured yet")?;
+    let source = cfg
+        .sources
+        .iter_mut()
+        .find(|s| s.path == source_path)
+        .ok_or_else(|| format!("no backup source tracked at {source_path}"))?;
+    source.kind = kind;
+    write(app_data_dir, &cfg)
+}
+
 fn write(app_data_dir: &Path, cfg: &Config) -> Result<(), String> {
     let path = config_path(app_data_dir)?;
     let data = serde_json::to_string_pretty(cfg)
@@ -216,7 +265,7 @@ mod tests {
     fn save_preserves_already_saved_sources_and_schedule() {
         let dir = tmp_app_data_dir("save-preserves");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default() };
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default(), kind: Default::default() };
         save_sources(&dir, std::slice::from_ref(&source)).unwrap();
         set_housekeeping_schedule(&dir, Some(Schedule::Daily { hour: 3, minute: 0 })).unwrap();
 
@@ -240,8 +289,8 @@ mod tests {
     fn set_source_schedule_updates_only_the_matching_source() {
         let dir = tmp_app_data_dir("set-source-schedule");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let a = BackupSource { name: "a".into(), path: "/home/a".into(), schedule: None, replicate_class: Default::default() };
-        let b = BackupSource { name: "b".into(), path: "/home/b".into(), schedule: None, replicate_class: Default::default() };
+        let a = BackupSource { name: "a".into(), path: "/home/a".into(), schedule: None, replicate_class: Default::default(), kind: Default::default() };
+        let b = BackupSource { name: "b".into(), path: "/home/b".into(), schedule: None, replicate_class: Default::default(), kind: Default::default() };
         save_sources(&dir, &[a, b]).unwrap();
 
         set_source_schedule(&dir, "/home/b", Some(Schedule::Interval { minutes: 30 })).unwrap();
@@ -264,7 +313,7 @@ mod tests {
     fn a_real_multi_step_journey_through_this_files_whole_surface() {
         let dir = tmp_app_data_dir("journey");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default() };
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default(), kind: Default::default() };
         save_sources(&dir, &[source]).unwrap();
         set_source_schedule(&dir, "/home/proj", Some(Schedule::Daily { hour: 4, minute: 30 })).unwrap();
         set_housekeeping_schedule(&dir, Some(Schedule::Interval { minutes: 60 })).unwrap();
