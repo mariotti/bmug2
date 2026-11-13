@@ -190,6 +190,40 @@ if [ -z "${BMU_REPLICATE_EXCLUDE_DS_STORE+set}" ] || [ -n "${BMU_REPLICATE_EXCLU
     l_BMU_EXCLUDE_FLAGS="--exclude=.DS_Store"
 fi
 #
+# Per-source off-site replication class: a plain-text
+# `${BMU_DIRBACKUPS}/<project>/.bmureplicate-class` sidecar (written
+# by the GUI, see replication::set_source_class in Rust) carries
+# either "default" (replicate normally) or "none" (skip entirely).
+# For every "none" project found, add --exclude=/<project>/ and
+# --exclude=/<project>/** so neither leg (SYNC or BackUp) carries
+# that source's content off-site. The use case: a large-media
+# source (videos, raw photo archives) kept in local SYNC + HISTORY
+# but kept out of Proton Drive / rclone bandwidth - a 44 GB cello-
+# video subtree would otherwise be pushed every HouseKeeping run.
+#
+# Honest caveat: if a source was PREVIOUSLY replicated and later
+# gets marked "none", the --exclude only skips future transfers.
+# rsync --delete acts on the OTHER files it's syncing, not on the
+# excluded ones - so the existing copy at the remote is NOT purged.
+# Clean-up is a manual remote-side delete for now (documented in
+# docs/MANUAL.md); a follow-up --purge-excluded flag could automate
+# it but the safe default is "never delete anything the user didn't
+# explicitly opt into deleting".
+for l_bmu_class_sidecar in "${BMU_DIRBACKUPS}"/*/.bmureplicate-class; do
+    case "${l_bmu_class_sidecar}" in
+        *'*') continue ;;  # unmatched glob when no sidecars exist yet
+    esac
+    [ -f "${l_bmu_class_sidecar}" ] || continue
+    l_bmu_class_val=`head -1 "${l_bmu_class_sidecar}" 2>/dev/null | tr -d '[:space:]'`
+    if [ "${l_bmu_class_val}" = "none" ]; then
+        # The project name is the parent-dir basename of the sidecar.
+        l_bmu_proj_dir=`dirname "${l_bmu_class_sidecar}"`
+        l_bmu_proj_name=`basename "${l_bmu_proj_dir}"`
+        l_BMU_EXCLUDE_FLAGS="${l_BMU_EXCLUDE_FLAGS} --exclude=/${l_bmu_proj_name}/ --exclude=/${l_bmu_proj_name}/**"
+        echo "Skipping /${l_bmu_proj_name}/ (per-source replicate-class=none)"
+    fi
+done
+#
 # Per-backend flag dispatch. Named `case` instead of a two-arm
 # if/else so a BMU_REPLICATE_BACKEND="" legacy install (which still
 # exists in the wild - BMU_REPLICATE_BACKEND was added later than

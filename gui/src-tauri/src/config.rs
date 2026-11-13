@@ -16,6 +16,29 @@ pub enum Schedule {
     Interval { minutes: u32 },
 }
 
+// Per-source off-site replication class. Controls whether
+// backmeup.replicate.sh pushes this source's content to the
+// configured remote, or leaves it local-only. The use case is a
+// source dominated by large binary media (videos, photo archives,
+// raw camera files) that you want in your local SYNC + HISTORY but
+// NOT eating off-site bandwidth / quota every HouseKeeping run -
+// confirmed in the wild with a 44 GB cello-video source that
+// dominated a 36-minute Proton Drive push.
+//
+// This field is a UI-convenience mirror; the authoritative state
+// is the per-project `.bmureplicate-class` plain-text file under
+// `${BMU_DIRBACKUPS}/<project>/`, read by backmeup.replicate.sh
+// to build its rsync --exclude list.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplicateClass {
+    /// Replicate as part of the normal backmeup.replicate.sh pass.
+    #[default]
+    Default,
+    /// Skip this source entirely in replicate.sh - local-only.
+    None,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupSource {
     pub name: String,
@@ -27,6 +50,14 @@ pub struct BackupSource {
     // install/uninstall calls, not authoritative on its own.
     #[serde(default)]
     pub schedule: Option<Schedule>,
+    // Per-source off-site replication class - see ReplicateClass
+    // above. UI-convenience mirror of the authoritative on-disk
+    // `.bmureplicate-class` sidecar; kept in sync by the
+    // replication::set_source_class / read_source_class helpers.
+    // #[serde(default)] keeps every pre-this-field config.json
+    // parseable - old installs see every source as Default.
+    #[serde(default)]
+    pub replicate_class: ReplicateClass,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +145,27 @@ pub fn set_housekeeping_schedule(app_data_dir: &Path, schedule: Option<Schedule>
     write(app_data_dir, &cfg)
 }
 
+/// Mirrors the per-source replication class the GUI just wrote to the
+/// `.bmureplicate-class` sidecar (authoritative) into config.json's
+/// own UI-convenience `replicate_class` field. Same pattern as
+/// set_source_schedule above - the real source of truth is the on-
+/// disk sidecar that backmeup.replicate.sh actually reads at run
+/// time; this call keeps the GUI's in-memory view consistent.
+pub fn set_source_replicate_class(
+    app_data_dir: &Path,
+    source_path: &str,
+    class: ReplicateClass,
+) -> Result<(), String> {
+    let mut cfg = load(app_data_dir).ok_or("no bmug2 install configured yet")?;
+    let source = cfg
+        .sources
+        .iter_mut()
+        .find(|s| s.path == source_path)
+        .ok_or_else(|| format!("no backup source tracked at {source_path}"))?;
+    source.replicate_class = class;
+    write(app_data_dir, &cfg)
+}
+
 fn write(app_data_dir: &Path, cfg: &Config) -> Result<(), String> {
     let path = config_path(app_data_dir)?;
     let data = serde_json::to_string_pretty(cfg)
@@ -164,7 +216,7 @@ mod tests {
     fn save_preserves_already_saved_sources_and_schedule() {
         let dir = tmp_app_data_dir("save-preserves");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None };
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default() };
         save_sources(&dir, std::slice::from_ref(&source)).unwrap();
         set_housekeeping_schedule(&dir, Some(Schedule::Daily { hour: 3, minute: 0 })).unwrap();
 
@@ -188,8 +240,8 @@ mod tests {
     fn set_source_schedule_updates_only_the_matching_source() {
         let dir = tmp_app_data_dir("set-source-schedule");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let a = BackupSource { name: "a".into(), path: "/home/a".into(), schedule: None };
-        let b = BackupSource { name: "b".into(), path: "/home/b".into(), schedule: None };
+        let a = BackupSource { name: "a".into(), path: "/home/a".into(), schedule: None, replicate_class: Default::default() };
+        let b = BackupSource { name: "b".into(), path: "/home/b".into(), schedule: None, replicate_class: Default::default() };
         save_sources(&dir, &[a, b]).unwrap();
 
         set_source_schedule(&dir, "/home/b", Some(Schedule::Interval { minutes: 30 })).unwrap();
@@ -212,7 +264,7 @@ mod tests {
     fn a_real_multi_step_journey_through_this_files_whole_surface() {
         let dir = tmp_app_data_dir("journey");
         save(&dir, "/usr/bmu/bin").unwrap();
-        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None };
+        let source = BackupSource { name: "proj".into(), path: "/home/proj".into(), schedule: None, replicate_class: Default::default() };
         save_sources(&dir, &[source]).unwrap();
         set_source_schedule(&dir, "/home/proj", Some(Schedule::Daily { hour: 4, minute: 30 })).unwrap();
         set_housekeeping_schedule(&dir, Some(Schedule::Interval { minutes: 60 })).unwrap();

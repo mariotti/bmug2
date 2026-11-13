@@ -358,6 +358,64 @@ pub fn clear(bin_dir: &Path) -> Result<(), String> {
     run_configure(bin_dir, &["--replicate-backend=none".to_string()])
 }
 
+/// Per-source replication class, read from the project's
+/// `${BMU_DIRBACKUPS}/<project>/.bmureplicate-class` sidecar - a
+/// plain-text one-liner ("default" or "none"). Returns Default when
+/// the sidecar is missing or unreadable (every pre-this-feature
+/// install falls into that case and gets the current behavior
+/// unchanged). See the ReplicateClass doc in config.rs for why
+/// this sidecar exists and when backmeup.replicate.sh honors it.
+pub fn read_source_class(bin_dir: &Path, source_path: &str) -> crate::config::ReplicateClass {
+    let Some(sidecar) = source_class_sidecar(bin_dir, source_path) else {
+        return crate::config::ReplicateClass::Default;
+    };
+    match std::fs::read_to_string(&sidecar) {
+        Ok(contents) => match contents.trim() {
+            "none" => crate::config::ReplicateClass::None,
+            _ => crate::config::ReplicateClass::Default,
+        },
+        Err(_) => crate::config::ReplicateClass::Default,
+    }
+}
+
+pub fn set_source_class(
+    bin_dir: &Path,
+    source_path: &str,
+    class: crate::config::ReplicateClass,
+) -> Result<(), String> {
+    let sidecar = source_class_sidecar(bin_dir, source_path).ok_or_else(|| {
+        format!(
+            "cannot resolve BMU_DIRBACKUPS from {} - reinstall or re-run configure.sh",
+            bin_dir.display()
+        )
+    })?;
+    let parent = sidecar
+        .parent()
+        .ok_or_else(|| format!("cannot determine parent of {}", sidecar.display()))?;
+    // The project may never have been backed up yet, so
+    // HISTORY/<project>/ might not exist - settings must still be
+    // persistable ahead of the first backmeup.sh run, same discipline
+    // ignore.rs::set already follows.
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    let contents = match class {
+        crate::config::ReplicateClass::Default => "default\n",
+        crate::config::ReplicateClass::None => "none\n",
+    };
+    std::fs::write(&sidecar, contents)
+        .map_err(|e| format!("cannot write {}: {e}", sidecar.display()))
+}
+
+fn source_class_sidecar(bin_dir: &Path, source_path: &str) -> Option<std::path::PathBuf> {
+    let history_dir = read_setup_var(bin_dir, "BMU_DIRBACKUPS")?;
+    let project = std::path::Path::new(source_path).file_name()?.to_string_lossy().to_string();
+    Some(
+        std::path::PathBuf::from(history_dir)
+            .join(project)
+            .join(".bmureplicate-class"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,6 +799,106 @@ mod tests {
         }
         assert!(mounts.is_empty());
         std::fs::remove_dir_all(&fake_home).ok();
+    }
+
+    //
+    // Per-source replication class: reads/writes the authoritative
+    // `.bmureplicate-class` sidecar under BMU_DIRBACKUPS. Pure IO,
+    // drives directly off a sandbox with its own backmeup.setup.sh
+    // pointing at a tempdir BMU_DIRBACKUPS.
+    //
+
+    fn class_sandbox(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let bin_dir = std::env::temp_dir().join(format!(
+            "bmug2-replicate-class-bin-{name}-{}",
+            std::process::id()
+        ));
+        let bp_dir = std::env::temp_dir().join(format!(
+            "bmug2-replicate-class-bp-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&bin_dir).ok();
+        std::fs::remove_dir_all(&bp_dir).ok();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::create_dir_all(&bp_dir).unwrap();
+        std::fs::write(
+            bin_dir.join("backmeup.setup.sh"),
+            format!("BMU_DIRBACKUPS=\"{}\"\n", bp_dir.display()),
+        )
+        .unwrap();
+        (bin_dir, bp_dir)
+    }
+
+    #[test]
+    fn read_source_class_defaults_when_sidecar_missing() {
+        // Pre-this-feature install (and freshly-added source) has no
+        // sidecar. Current behavior = Default; anything else would be
+        // a silent regression.
+        let (bin_dir, _bp) = class_sandbox("read-missing");
+        let got = read_source_class(&bin_dir, "/src/myproj");
+        assert_eq!(got, crate::config::ReplicateClass::Default);
+    }
+
+    #[test]
+    fn read_source_class_returns_none_when_sidecar_says_none() {
+        let (bin_dir, bp) = class_sandbox("read-none");
+        let proj_dir = bp.join("myproj");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        std::fs::write(proj_dir.join(".bmureplicate-class"), "none\n").unwrap();
+        let got = read_source_class(&bin_dir, "/src/myproj");
+        assert_eq!(got, crate::config::ReplicateClass::None);
+    }
+
+    #[test]
+    fn read_source_class_treats_typo_as_default_not_error() {
+        // Any content that isn't literally "none" (after trim) falls
+        // back to Default. A garbage sidecar is better handled as
+        // "current behavior" than as a hard error - a mistyped value
+        // shouldn't break replicate.sh at run time.
+        let (bin_dir, bp) = class_sandbox("read-typo");
+        let proj_dir = bp.join("myproj");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        std::fs::write(proj_dir.join(".bmureplicate-class"), "ngone\n").unwrap();
+        let got = read_source_class(&bin_dir, "/src/myproj");
+        assert_eq!(got, crate::config::ReplicateClass::Default);
+    }
+
+    #[test]
+    fn set_source_class_writes_the_sidecar_and_round_trips() {
+        let (bin_dir, bp) = class_sandbox("set-none");
+        set_source_class(&bin_dir, "/src/myproj", crate::config::ReplicateClass::None).unwrap();
+        let sidecar = bp.join("myproj").join(".bmureplicate-class");
+        assert!(sidecar.exists(), "sidecar must be created on set");
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), "none");
+        // Round-trip
+        assert_eq!(
+            read_source_class(&bin_dir, "/src/myproj"),
+            crate::config::ReplicateClass::None
+        );
+    }
+
+    #[test]
+    fn set_source_class_default_writes_default_explicitly() {
+        // Setting back to Default must write "default" (not delete
+        // the sidecar) so a subsequent list() reconcile reads a
+        // concrete value, not fall through to "no sidecar".
+        let (bin_dir, bp) = class_sandbox("set-default");
+        set_source_class(&bin_dir, "/src/p", crate::config::ReplicateClass::Default).unwrap();
+        let sidecar = bp.join("p").join(".bmureplicate-class");
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), "default");
+    }
+
+    #[test]
+    fn set_source_class_creates_the_project_history_dir_if_missing() {
+        // A source may be added in the GUI before its first
+        // backmeup.sh run - BMU_DIRBACKUPS/<project>/ wouldn't exist
+        // yet. Replication class must still be persistable
+        // pre-first-backup, same discipline ignore.rs::set follows.
+        let (bin_dir, bp) = class_sandbox("set-no-proj-dir");
+        let proj_dir = bp.join("fresh");
+        assert!(!proj_dir.exists(), "test setup: proj dir must not exist yet");
+        set_source_class(&bin_dir, "/src/fresh", crate::config::ReplicateClass::None).unwrap();
+        assert!(proj_dir.join(".bmureplicate-class").exists());
     }
 
     #[test]
