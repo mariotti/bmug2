@@ -119,11 +119,13 @@ export interface IgnoreSettingsInput {
 export type ReplicationStatus =
   | { backend: "off" }
   | { backend: "rclone"; remote_sync: string; remote_backups: string }
+  | { backend: "pcloud"; remote_sync: string; remote_backups: string }
   | { backend: "proton"; remote: string }
   | { backend: "local_path"; path_sync: string; path_backups: string };
 
 export type ReplicationRequest =
   | { backend: "rclone"; remote_sync: string; remote_backups: string }
+  | { backend: "pcloud"; remote_sync: string; remote_backups: string }
   | { backend: "proton"; remote: string | null }
   | { backend: "local_path"; path_sync: string; path_backups: string };
 
@@ -1283,6 +1285,7 @@ export function buildReplicationEditor(
   const backendSelect = el("select", {}) as HTMLSelectElement;
   backendSelect.append(
     new Option("rclone (SYNC + HISTORY)", "rclone", startBackend === "rclone", startBackend === "rclone"),
+    new Option("pCloud via rclone (SYNC + HISTORY)", "pcloud", startBackend === "pcloud", startBackend === "pcloud"),
     new Option("Proton Drive (HISTORY only)", "proton", startBackend === "proton", startBackend === "proton"),
     localOption,
   );
@@ -1354,6 +1357,62 @@ export function buildReplicationEditor(
   };
   const gdriveSync = makeGdriveBrowseRow(remoteSyncInput);
   const gdriveBackups = makeGdriveBrowseRow(remoteBackupsInput);
+
+  // pcloud remote-path inputs: same "remote:bucket/path" shape as the
+  // rclone fields above, kept as their own pair so the Browse button
+  // can open the pcloud-scoped picker (list_pcloud_remotes) instead of
+  // the Google-Drive-scoped one, and so switching the backend dropdown
+  // doesn't silently swap the inputs' meaning under the user.
+  const pcloudSyncInput = el("input", {
+    type: "text",
+    placeholder: "pcloudremote:bmug2/SYNC",
+  }) as HTMLInputElement;
+  pcloudSyncInput.value = current.backend === "pcloud" ? current.remote_sync : "";
+
+  const pcloudBackupsInput = el("input", {
+    type: "text",
+    placeholder: "pcloudremote:bmug2/HISTORY",
+  }) as HTMLInputElement;
+  pcloudBackupsInput.value = current.backend === "pcloud" ? current.remote_backups : "";
+
+  const makePcloudBrowseRow = (input: HTMLInputElement): { row: HTMLElement; panel: HTMLElement } => {
+    const pcloudBrowseBtn = el("button", { type: "button", class: "browse-btn" }, ["Browse…"]);
+    const pcloudPanel = el("div", {}, []);
+    pcloudPanel.style.display = "none";
+    pcloudBrowseBtn.addEventListener("click", () => {
+      if (pcloudPanel.style.display === "none") {
+        pcloudPanel.replaceChildren(
+          buildPcloudFolderBrowser(
+            input.value,
+            (chosen) => {
+              input.value = chosen;
+              pcloudPanel.style.display = "none";
+            },
+            () => {
+              pcloudPanel.style.display = "none";
+            },
+          ),
+        );
+        pcloudPanel.style.display = "";
+      } else {
+        pcloudPanel.style.display = "none";
+      }
+    });
+    void invoke<boolean>("rclone_available")
+      .then((available) => {
+        if (!available) {
+          pcloudBrowseBtn.disabled = true;
+          pcloudBrowseBtn.title = "rclone is not installed on this machine";
+        }
+      })
+      .catch(() => {
+        // No Tauri bridge (under test) or the command itself failed -
+        // leave the button enabled; a real click surfaces its own error.
+      });
+    return { row: el("div", { class: "field-row" }, [input, pcloudBrowseBtn]), panel: pcloudPanel };
+  };
+  const pcloudSync = makePcloudBrowseRow(pcloudSyncInput);
+  const pcloudBackups = makePcloudBrowseRow(pcloudBackupsInput);
 
   const protonRemoteInput = el("input", {
     type: "text",
@@ -1484,10 +1543,13 @@ export function buildReplicationEditor(
   const updateVisibility = () => {
     const backend = backendSelect.value;
     const rclone = backend === "rclone";
+    const pcloud = backend === "pcloud";
     const proton = backend === "proton";
     const local = backend === "local_path";
     gdriveSync.row.style.display = rclone ? "" : "none";
     gdriveBackups.row.style.display = rclone ? "" : "none";
+    pcloudSync.row.style.display = pcloud ? "" : "none";
+    pcloudBackups.row.style.display = pcloud ? "" : "none";
     protonRemoteRow.style.display = proton ? "" : "none";
     localSyncLabel.style.display = local ? "" : "none";
     localSyncRow.style.display = local ? "" : "none";
@@ -1497,6 +1559,10 @@ export function buildReplicationEditor(
     if (!rclone) {
       gdriveSync.panel.style.display = "none";
       gdriveBackups.panel.style.display = "none";
+    }
+    if (!pcloud) {
+      pcloudSync.panel.style.display = "none";
+      pcloudBackups.panel.style.display = "none";
     }
     if (!proton) {
       browserPanel.style.display = "none";
@@ -1515,6 +1581,13 @@ export function buildReplicationEditor(
         backend: "rclone",
         remote_sync: remoteSyncInput.value,
         remote_backups: remoteBackupsInput.value,
+      });
+    } else if (backend === "pcloud") {
+      if (!pcloudSyncInput.value || !pcloudBackupsInput.value) return;
+      onSave({
+        backend: "pcloud",
+        remote_sync: pcloudSyncInput.value,
+        remote_backups: pcloudBackupsInput.value,
       });
     } else if (backend === "local_path") {
       if (!pathSyncInput.value || !pathBackupsInput.value) return;
@@ -1542,6 +1615,10 @@ export function buildReplicationEditor(
     gdriveSync.panel,
     gdriveBackups.row,
     gdriveBackups.panel,
+    pcloudSync.row,
+    pcloudSync.panel,
+    pcloudBackups.row,
+    pcloudBackups.panel,
     protonRemoteRow,
     browserPanel,
     localSyncLabel,
@@ -1845,6 +1922,169 @@ export function buildGoogleDriveFolderBrowser(
   return container;
 }
 
+// Folder browser for a pcloud rclone remote. Shares idioms with
+// buildGoogleDriveFolderBrowser (same remote picker + breadcrumb +
+// Use/Create pattern) but scoped to "pcloud"-type remotes
+// (list_pcloud_remotes). The "no remote configured" state is
+// deliberately an inert "run rclone config first" hint rather than
+// an automated Connect flow - pcloud's rclone OAuth state machine
+// differs from Google's and hasn't been calibrated live; adding a
+// half-working Connect button would be worse UX than an honest "do
+// this one thing in your terminal".
+export function buildPcloudFolderBrowser(
+  startValue: string,
+  onChoose: (path: string) => void,
+  onCancel: () => void,
+): HTMLElement {
+  const container = el("div", { class: "remote-browser" }, []);
+  let currentRemote: string | null = null;
+  let currentPath = "";
+
+  const cancelRow = () => {
+    const cancelBtn = el("button", { type: "button" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", onCancel);
+    return cancelBtn;
+  };
+
+  const showError = (err: unknown) => {
+    container.replaceChildren(el("p", { class: "settings-check-error" }, [String(err)]), cancelRow());
+  };
+
+  const renderRemotePicker = (remotes: string[]) => {
+    const list = el(
+      "ul",
+      { class: "remote-folder-list" },
+      remotes.map((name) => {
+        const pickBtn = el("button", { type: "button" }, [name]);
+        pickBtn.addEventListener("click", () => {
+          currentRemote = name;
+          currentPath = "";
+          renderFolder();
+        });
+        return el("li", {}, [pickBtn]);
+      }),
+    );
+    container.replaceChildren(el("p", {}, ["Choose a pCloud remote:"]), list, cancelRow());
+  };
+
+  const renderFolder = () => {
+    const remote = currentRemote;
+    if (remote === null) return;
+    container.replaceChildren(el("p", {}, ["Loading…"]));
+    const fullPath = currentPath ? `${remote}:${currentPath}` : `${remote}:`;
+    // list_rclone_folder is backend-agnostic (lsjson on any rclone
+    // path), so the pcloud picker reuses it exactly - only the
+    // remote-name enumeration above is pcloud-scoped.
+    void invoke<RemoteEntry[]>("list_rclone_folder", { path: fullPath })
+      .then((entries) => renderLoaded(remote, entries))
+      .catch(showError);
+  };
+
+  const renderLoaded = (remote: string, entries: RemoteEntry[]) => {
+    const segments = currentPath.split("/").filter(Boolean);
+    const breadcrumb = el("p", { class: "remote-breadcrumb" }, []);
+    const rootBtn = el("button", { type: "button" }, [`${remote}:`]);
+    rootBtn.addEventListener("click", () => {
+      currentPath = "";
+      renderFolder();
+    });
+    breadcrumb.append(rootBtn, segments.length > 0 ? " / " : "");
+    segments.forEach((segment, i) => {
+      const segPath = segments.slice(0, i + 1).join("/");
+      const btn = el("button", { type: "button" }, [segment]);
+      btn.addEventListener("click", () => {
+        currentPath = segPath;
+        renderFolder();
+      });
+      breadcrumb.append(btn, i < segments.length - 1 ? " / " : "");
+    });
+
+    const folders = entries.filter((e) => e.is_folder);
+    const list = el(
+      "ul",
+      { class: "remote-folder-list" },
+      folders.length === 0
+        ? [el("li", {}, ["(no subfolders)"])]
+        : folders.map((folder) => {
+            const descendBtn = el("button", { type: "button" }, [folder.name]);
+            descendBtn.addEventListener("click", () => {
+              currentPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
+              renderFolder();
+            });
+            return el("li", {}, [descendBtn]);
+          }),
+    );
+
+    const fullPath = currentPath ? `${remote}:${currentPath}` : `${remote}:`;
+    const useBtn = el("button", { type: "button" }, [`Use "${fullPath}"`]);
+    useBtn.addEventListener("click", () => onChoose(fullPath));
+
+    const newFolderInput = el("input", { type: "text", placeholder: "New folder name" }) as HTMLInputElement;
+    const createBtn = el("button", { type: "button", class: "browse-btn" }, ["Create"]);
+    createBtn.addEventListener("click", () => {
+      const name = newFolderInput.value.trim();
+      if (!name) return;
+      const newPath = currentPath ? `${remote}:${currentPath}/${name}` : `${remote}:${name}`;
+      void invoke("create_rclone_folder", { path: newPath })
+        .then(() => renderFolder())
+        .catch(showError);
+    });
+
+    container.replaceChildren(
+      breadcrumb,
+      list,
+      el("div", { class: "field-row" }, [newFolderInput, createBtn]),
+      useBtn,
+      cancelRow(),
+    );
+  };
+
+  // No pcloud remote configured yet - point the user at `rclone config`
+  // rather than driving the OAuth state machine from here. Scope kept
+  // intentionally narrow for this PR (see module-level comment).
+  const renderSetupHint = () => {
+    container.replaceChildren(
+      el("p", {}, ["No pCloud remote configured in rclone yet."]),
+      el("p", {}, [
+        "Create one from a terminal first:",
+      ]),
+      el("pre", { class: "log" }, ["rclone config"]),
+      el("p", {}, [
+        'Pick "pcloud" as the backend type; name it whatever you like (e.g. "mypcloud"). Come back here when it finishes.',
+      ]),
+      cancelRow(),
+    );
+  };
+
+  const loadRemotes = () => {
+    container.replaceChildren(el("p", {}, ["Loading…"]));
+    void invoke<string[]>("list_pcloud_remotes")
+      .then((remotes) => {
+        if (remotes.length === 0) {
+          renderSetupHint();
+          return;
+        }
+        const colonIndex = startValue.indexOf(":");
+        const startRemote = colonIndex >= 0 ? startValue.slice(0, colonIndex) : "";
+        if (startRemote && remotes.includes(startRemote)) {
+          currentRemote = startRemote;
+          currentPath = startValue.slice(colonIndex + 1).replace(/^\/+|\/+$/g, "");
+          renderFolder();
+        } else if (remotes.length === 1) {
+          currentRemote = remotes[0];
+          currentPath = "";
+          renderFolder();
+        } else {
+          renderRemotePicker(remotes);
+        }
+      })
+      .catch(showError);
+  };
+
+  loadRemotes();
+  return container;
+}
+
 // Mirrors buildHousekeepingSection's structure - another global,
 // opt-in capability, not per-source. See docs/DESTINATIONS.md for the
 // two backends' own tradeoffs (rclone mirrors SYNC+HISTORY to any
@@ -1898,6 +2138,8 @@ export function buildReplicationSection(
     let label: string;
     if (status.backend === "rclone") {
       label = `rclone -> ${status.remote_sync} / ${status.remote_backups}`;
+    } else if (status.backend === "pcloud") {
+      label = `pCloud -> ${status.remote_sync} / ${status.remote_backups}`;
     } else if (status.backend === "proton") {
       label = `Proton Drive (HISTORY only) -> ${status.remote}`;
     } else {
