@@ -229,25 +229,31 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             BMU_REPLICATE_PROTON_REMOTE=""
             echo "Off-site replication disabled (--replicate-backend=none)."
             ;;
-        rclone)
+        rclone|pcloud)
             if [ -z "${BMU_CMDRCLONE}" ]; then
-                echo "ERROR: --replicate-backend=rclone given but no rclone was detected on this machine." >&2
+                echo "ERROR: --replicate-backend=${BMU_CLI_REPLICATE_BACKEND} given but no rclone was detected on this machine." >&2
                 echo "  Install it (e.g. brew/apt install rclone) and re-run." >&2
                 exit 1
             fi
             if [ -z "${BMU_CLI_REPLICATE_REMOTE_SYNC}" ] || [ -z "${BMU_CLI_REPLICATE_REMOTE_BACKUPS}" ]; then
-                echo "ERROR: --replicate-backend=rclone requires both --replicate-remote-sync= and --replicate-remote-backups=." >&2
+                echo "ERROR: --replicate-backend=${BMU_CLI_REPLICATE_BACKEND} requires both --replicate-remote-sync= and --replicate-remote-backups=." >&2
                 exit 1
             fi
             BMU_REPLICATE_PROTON_BIN=""
             BMU_REPLICATE_PROTON_REMOTE=""
-            BMU_REPLICATE_BACKEND="rclone"
+            # Shell-side pcloud is a sibling of rclone: same binary, same sync
+            # semantics, same required flags. The split exists purely so the
+            # GUI can tell "I picked pcloud" apart from "I picked a generic
+            # rclone remote" after a save+reload (otherwise both would read
+            # back as rclone and lose the distinction). backmeup.replicate.sh
+            # routes both to the same `rclone sync` invocation.
+            BMU_REPLICATE_BACKEND="${BMU_CLI_REPLICATE_BACKEND}"
             BMU_CMDREPLICATE="${BMU_CMDRCLONE} sync"
             BMU_REPLICATE_REMOTE_SYNC="${BMU_CLI_REPLICATE_REMOTE_SYNC}"
             BMU_REPLICATE_REMOTE_BACKUPS="${BMU_CLI_REPLICATE_REMOTE_BACKUPS}"
             BMU_REPLICATE_REMOTE_SYNC_MOUNT=""
             BMU_REPLICATE_REMOTE_BACKUPS_MOUNT=""
-            echo "Off-site replication configured (rclone, non-interactive)."
+            echo "Off-site replication configured (${BMU_REPLICATE_BACKEND}, non-interactive)."
             ;;
         proton)
             if [ -z "${BMU_CMDPROTON}" ]; then
@@ -281,7 +287,7 @@ if [ -n "${BMU_CLI_REPLICATE_FLAGGED}" ]; then
             echo "Off-site replication configured (local path, non-interactive)."
             ;;
         *)
-            echo "ERROR: --replicate-backend= must be rclone, proton, local, or none (got: ${BMU_CLI_REPLICATE_BACKEND})" >&2
+            echo "ERROR: --replicate-backend= must be rclone, pcloud, proton, local, or none (got: ${BMU_CLI_REPLICATE_BACKEND})" >&2
             exit 1
             ;;
     esac

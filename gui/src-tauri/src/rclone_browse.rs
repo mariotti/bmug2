@@ -100,14 +100,34 @@ fn fetch_remotes(bin: &str) -> Result<Vec<RawRemote>, String> {
 }
 
 /// Names (without the trailing ':') of every configured remote whose
-/// type is "drive".
-pub fn list_drive_remotes() -> Result<Vec<String>, String> {
+/// type matches `kind`. Shared impl used by list_drive_remotes and
+/// list_pcloud_remotes - rclone's type strings are the authoritative
+/// backend discriminator ("drive" = Google Drive, "pcloud" = pCloud,
+/// etc.), picked over heuristics on the remote name.
+pub fn list_remotes_of_type(kind: &str) -> Result<Vec<String>, String> {
     let bin = detect_rclone()
         .ok_or("rclone was not found on this machine - install it from rclone.org/install")?;
     let raw = fetch_remotes(&bin)?;
-    let mut names: Vec<String> = raw.into_iter().filter(|r| r.kind == "drive").map(|r| r.name).collect();
+    let mut names: Vec<String> = raw
+        .into_iter()
+        .filter(|r| r.kind == kind)
+        .map(|r| r.name)
+        .collect();
     names.sort();
     Ok(names)
+}
+
+pub fn list_drive_remotes() -> Result<Vec<String>, String> {
+    list_remotes_of_type("drive")
+}
+
+/// Same contract as list_drive_remotes, scoped to pCloud remotes
+/// (rclone type "pcloud"). pcloud's native Drive client is handled
+/// separately by replication::find_cloud_storage_mounts (the mounted-
+/// folder backend); this is the rclone path for users who don't run
+/// the native client or want pcloud without a persistent mount.
+pub fn list_pcloud_remotes() -> Result<Vec<String>, String> {
+    list_remotes_of_type("pcloud")
 }
 
 fn parse_entries(json: &str) -> Result<Vec<RemoteEntry>, String> {
@@ -436,6 +456,17 @@ exit 1
 {"name":"mys3","type":"s3","source":"file","description":""}
 ]"#;
 
+    // Same shape, with one pcloud remote added. Used by the
+    // list_pcloud_remotes test to confirm rclone's own `type` field
+    // is the backend discriminator - any pcloud-type remote shows up
+    // for list_pcloud_remotes and only there, never leaking into
+    // list_drive_remotes.
+    const FAKE_REMOTES_JSON_WITH_PCLOUD: &str = r#"[
+{"name":"mydrive","type":"drive","source":"file","description":""},
+{"name":"mypcloud","type":"pcloud","source":"file","description":""},
+{"name":"mys3","type":"s3","source":"file","description":""}
+]"#;
+
     #[test]
     fn detect_and_available_are_true_when_a_working_binary_is_on_path() {
         let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
@@ -447,6 +478,24 @@ exit 1
         let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
         std::env::set_var("FAKE_RCLONE_REMOTES_JSON", FAKE_REMOTES_JSON);
         assert_eq!(list_drive_remotes().unwrap(), vec!["mydrive".to_string()]);
+    }
+
+    #[test]
+    fn list_pcloud_remotes_filters_to_pcloud_type_via_the_real_function() {
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_REMOTES_JSON", FAKE_REMOTES_JSON_WITH_PCLOUD);
+        assert_eq!(list_pcloud_remotes().unwrap(), vec!["mypcloud".to_string()]);
+    }
+
+    #[test]
+    fn list_drive_remotes_does_not_see_pcloud_remotes_and_vice_versa() {
+        // Regression guard for the shared list_remotes_of_type impl:
+        // a mixed listremotes response must partition by type, never
+        // leak a pcloud remote into the drive list or the other way.
+        let _fake = FakeRclone::new(FAKE_RCLONE_SCRIPT);
+        std::env::set_var("FAKE_RCLONE_REMOTES_JSON", FAKE_REMOTES_JSON_WITH_PCLOUD);
+        assert_eq!(list_drive_remotes().unwrap(), vec!["mydrive".to_string()]);
+        assert_eq!(list_pcloud_remotes().unwrap(), vec!["mypcloud".to_string()]);
     }
 
     #[test]

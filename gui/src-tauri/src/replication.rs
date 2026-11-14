@@ -41,6 +41,17 @@ pub enum ReplicationStatus {
         remote_sync: String,
         remote_backups: String,
     },
+    // pcloud over rclone: same shape as Rclone (two remote paths, both
+    // hosted on an rclone remote whose type==pcloud). Kept as its own
+    // variant so the GUI can show pcloud-specific Browse UX without
+    // having to probe rclone every render to tell "I picked a pcloud
+    // remote" apart from "I picked a Google Drive remote". The shell
+    // side treats pcloud as a sibling of rclone (see
+    // backmeup.replicate.sh's rclone|pcloud) case arm).
+    Pcloud {
+        remote_sync: String,
+        remote_backups: String,
+    },
     Proton {
         remote: String,
     },
@@ -56,6 +67,10 @@ pub enum ReplicationStatus {
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum ReplicationRequest {
     Rclone {
+        remote_sync: String,
+        remote_backups: String,
+    },
+    Pcloud {
         remote_sync: String,
         remote_backups: String,
     },
@@ -93,6 +108,11 @@ fn read_setup_var(bin_dir: &Path, key: &str) -> Option<String> {
 pub fn get_status(bin_dir: &Path) -> ReplicationStatus {
     match read_setup_var(bin_dir, "BMU_REPLICATE_BACKEND").as_deref() {
         Some("rclone") => ReplicationStatus::Rclone {
+            remote_sync: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_SYNC").unwrap_or_default(),
+            remote_backups: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_BACKUPS")
+                .unwrap_or_default(),
+        },
+        Some("pcloud") => ReplicationStatus::Pcloud {
             remote_sync: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_SYNC").unwrap_or_default(),
             remote_backups: read_setup_var(bin_dir, "BMU_REPLICATE_REMOTE_BACKUPS")
                 .unwrap_or_default(),
@@ -163,6 +183,14 @@ pub fn set(bin_dir: &Path, request: ReplicationRequest) -> Result<(), String> {
             remote_backups,
         } => vec![
             "--replicate-backend=rclone".to_string(),
+            format!("--replicate-remote-sync={remote_sync}"),
+            format!("--replicate-remote-backups={remote_backups}"),
+        ],
+        ReplicationRequest::Pcloud {
+            remote_sync,
+            remote_backups,
+        } => vec![
+            "--replicate-backend=pcloud".to_string(),
             format!("--replicate-remote-sync={remote_sync}"),
             format!("--replicate-remote-backups={remote_backups}"),
         ],
@@ -479,6 +507,28 @@ mod tests {
     }
 
     #[test]
+    fn status_reads_pcloud_remotes_as_its_own_variant_not_rclone() {
+        // Shell writes BMU_REPLICATE_BACKEND="pcloud" literally - the
+        // status has to come back as Pcloud, not Rclone, so the GUI
+        // can round-trip the backend choice across reloads. A
+        // regression here (collapsing pcloud -> Rclone) would silently
+        // swap the pcloud editor for the generic rclone editor on
+        // reopen.
+        let dir = sandbox(
+            "pcloud",
+            "BMU_REPLICATE_BACKEND=\"pcloud\"\nBMU_REPLICATE_REMOTE_SYNC=\"mypcloud:bmug2/SYNC\"\nBMU_REPLICATE_REMOTE_BACKUPS=\"mypcloud:bmug2/HISTORY\"\n",
+        );
+        assert_eq!(
+            get_status(&dir),
+            ReplicationStatus::Pcloud {
+                remote_sync: "mypcloud:bmug2/SYNC".to_string(),
+                remote_backups: "mypcloud:bmug2/HISTORY".to_string(),
+            }
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn status_reads_proton_remote() {
         let dir = sandbox(
             "proton",
@@ -555,6 +605,33 @@ mod tests {
         assert!(logged.contains("--replicate-backend=rclone"));
         assert!(logged.contains("--replicate-remote-sync=remote:a"));
         assert!(logged.contains("--replicate-remote-backups=remote:b"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_pcloud_calls_configure_with_pcloud_backend_not_rclone() {
+        // Honesty: pcloud writes --replicate-backend=pcloud, not
+        // rclone. The shell layer's rclone|pcloud) case arm handles
+        // both the same way at run time, but what gets persisted
+        // into BMU_REPLICATE_BACKEND is the literal backend the user
+        // picked - so a reload round-trips to the same editor shape.
+        let dir = sandbox("set-pcloud", "BMU_VERSION=\"2.14.0\"\n");
+        let log = dir.join("call.log");
+        fake_configure_script(&dir, &log, 0);
+
+        let result = set(
+            &dir,
+            ReplicationRequest::Pcloud {
+                remote_sync: "mypcloud:bmug2/SYNC".to_string(),
+                remote_backups: "mypcloud:bmug2/HISTORY".to_string(),
+            },
+        );
+        assert!(result.is_ok(), "set failed: {result:?}");
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(logged.contains("--replicate-backend=pcloud"), "log: {logged}");
+        assert!(!logged.contains("--replicate-backend=rclone"), "log: {logged}");
+        assert!(logged.contains("--replicate-remote-sync=mypcloud:bmug2/SYNC"));
+        assert!(logged.contains("--replicate-remote-backups=mypcloud:bmug2/HISTORY"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

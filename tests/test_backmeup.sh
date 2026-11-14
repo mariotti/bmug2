@@ -1020,6 +1020,46 @@ testConfigureNonInteractiveRcloneReplicationSucceeds() {
     assertTrue "rclone flag run leaked a proton value" $?
 }
 
+testConfigureNonInteractivePcloudReplicationPersistsBackendDistinctly() {
+    # pcloud is a sibling of the rclone backend at the shell layer:
+    # same binary, same sync semantics, same remote-path flags - but
+    # BMU_REPLICATE_BACKEND must round-trip as "pcloud" (not "rclone")
+    # so the GUI can tell which editor shape to re-open on reload.
+    # Regression here would make a saved pcloud install look like
+    # rclone to the GUI and offer the generic Google-Drive-scoped
+    # Browse button on a pcloud-configured source.
+    if ! command -v rclone > /dev/null 2>&1; then
+        startSkipping
+    fi
+    l_home="${SHUNIT_TMPDIR}/pcloudflaghome"
+    l_checkout="${SHUNIT_TMPDIR}/pcloudflagcheckout"
+    mkdir -p "${l_checkout}"
+    cp -R "${BMU_BIN_SRC}/." "${l_checkout}"
+
+    "${l_checkout}/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        --replicate-backend=pcloud \
+        --replicate-remote-sync=mypcloud:bmug2/SYNC \
+        --replicate-remote-backups=mypcloud:bmug2/HISTORY \
+        < /dev/null > "${SHUNIT_TMPDIR}/pcloudflag-install.log" 2>&1
+    assertEquals "install failed, see pcloudflag-install.log" 0 $?
+
+    l_setup="${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    grep -q 'BMU_REPLICATE_BACKEND="pcloud"' "${l_setup}"
+    assertTrue "pcloud backend not persisted as its own value" $?
+    grep -q 'BMU_REPLICATE_BACKEND="rclone"' "${l_setup}"
+    assertFalse "pcloud setup must not persist as rclone" $?
+    grep -q 'BMU_REPLICATE_REMOTE_SYNC="mypcloud:bmug2/SYNC"' "${l_setup}"
+    assertTrue "remote sync not persisted" $?
+    grep -q 'BMU_REPLICATE_REMOTE_BACKUPS="mypcloud:bmug2/HISTORY"' "${l_setup}"
+    assertTrue "remote backups not persisted" $?
+    # pcloud uses rclone under the hood, so the replicate command must
+    # dispatch to rclone - not left blank, not proton.
+    grep -q 'BMU_CMDREPLICATE=".*rclone sync"' "${l_setup}"
+    assertTrue "pcloud backend must still dispatch to rclone sync" $?
+}
+
 testConfigureNonInteractiveProtonReplicationDefaultsRemote() {
     l_home="${SHUNIT_TMPDIR}/protonflaghome"
     l_checkout="${SHUNIT_TMPDIR}/protonflagcheckout"
@@ -1064,7 +1104,12 @@ testConfigureNonInteractiveReplicateBackendInvalidValueErrors() {
         --replicate-backend=bogus \
         < /dev/null > "${SHUNIT_TMPDIR}/badbackend.log" 2>&1
     assertEquals "must reject an unrecognized --replicate-backend= value" 1 $?
-    grep -q "must be rclone, proton" "${SHUNIT_TMPDIR}/badbackend.log"
+    # Looser than the earlier "must be rclone, proton" to stay robust
+    # against the valid-values list growing (pcloud got added between
+    # rclone and proton) - the regression this guards is "silent
+    # accept of an unknown value", which the exit code already catches
+    # above, not the exact punctuation of the error string.
+    grep -q "must be rclone" "${SHUNIT_TMPDIR}/badbackend.log"
     assertTrue "no clear message rejecting the invalid backend value" $?
 }
 

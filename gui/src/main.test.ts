@@ -41,6 +41,7 @@ import {
   renderSettings,
   buildProtonFolderBrowser,
   buildGoogleDriveFolderBrowser,
+  buildPcloudFolderBrowser,
   buildReplicationSection,
   buildReplicateClassToggle,
   buildSourceKindToggle,
@@ -438,7 +439,13 @@ describe("buildReplicationEditor", () => {
     const current: ReplicationStatus = { backend: "proton", remote: "/bmug2/host" };
     const editor = buildReplicationEditor(current, vi.fn(), vi.fn());
     const select = editor.querySelector("select") as HTMLSelectElement;
-    const [, , protonRemote] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    // Look up by placeholder rather than positional index: pcloud
+    // and future backends add their own inputs between rclone and
+    // proton, and positional access ("[, , protonRemote]") silently
+    // drifts into a different field without the test failing.
+    const protonRemote = editor.querySelector<HTMLInputElement>(
+      'input[placeholder^="/bmug2/<hostname>"]',
+    )!;
     expect(select.value).toBe("proton");
     expect(protonRemote.value).toBe("/bmug2/host");
   });
@@ -485,7 +492,9 @@ describe("buildReplicationEditor", () => {
     const select = editor.querySelector("select") as HTMLSelectElement;
     select.value = "proton";
     select.dispatchEvent(new Event("change"));
-    const [, , protonRemote] = editor.querySelectorAll("input") as NodeListOf<HTMLInputElement>;
+    const protonRemote = editor.querySelector<HTMLInputElement>(
+      'input[placeholder^="/bmug2/<hostname>"]',
+    )!;
     protonRemote.value = "/bmug2/custom";
     const saveBtn = buttonLabeled(editor, "Save");
     saveBtn.dispatchEvent(new Event("click"));
@@ -598,6 +607,66 @@ describe("buildReplicationEditor", () => {
     select.value = "local_path";
     select.dispatchEvent(new Event("change"));
     expect(editor.textContent).toContain("BackUp destination");
+  });
+
+  it("has a pcloud option in the backend select", () => {
+    const editor = buildReplicationEditor(off, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => o.value);
+    expect(options).toContain("pcloud");
+  });
+
+  it("starts on pcloud pre-filled when currently configured for pcloud", () => {
+    const current: ReplicationStatus = {
+      backend: "pcloud",
+      remote_sync: "mypcloud:bmug2/SYNC",
+      remote_backups: "mypcloud:bmug2/HISTORY",
+    };
+    const editor = buildReplicationEditor(current, vi.fn(), vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("pcloud");
+    const inputs = Array.from(editor.querySelectorAll<HTMLInputElement>("input[type=text]"));
+    const syncInput = inputs.find((i) => i.value === "mypcloud:bmug2/SYNC");
+    const backupsInput = inputs.find((i) => i.value === "mypcloud:bmug2/HISTORY");
+    expect(syncInput).not.toBeUndefined();
+    expect(backupsInput).not.toBeUndefined();
+  });
+
+  it("Save emits a pcloud request with both remotes when pcloud is selected and both filled", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "pcloud";
+    select.dispatchEvent(new Event("change"));
+    const pcloudSync = editor.querySelector<HTMLInputElement>(
+      'input[placeholder="pcloudremote:bmug2/SYNC"]',
+    )!;
+    const pcloudBackups = editor.querySelector<HTMLInputElement>(
+      'input[placeholder="pcloudremote:bmug2/HISTORY"]',
+    )!;
+    pcloudSync.value = "mypcloud:bmug2/SYNC";
+    pcloudBackups.value = "mypcloud:bmug2/HISTORY";
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).toHaveBeenCalledWith({
+      backend: "pcloud",
+      remote_sync: "mypcloud:bmug2/SYNC",
+      remote_backups: "mypcloud:bmug2/HISTORY",
+    });
+  });
+
+  it("Save does not call onSave for pcloud when a remote is missing", () => {
+    const onSave = vi.fn();
+    const editor = buildReplicationEditor(off, onSave, vi.fn());
+    const select = editor.querySelector("select") as HTMLSelectElement;
+    select.value = "pcloud";
+    select.dispatchEvent(new Event("change"));
+    const pcloudSync = editor.querySelector<HTMLInputElement>(
+      'input[placeholder="pcloudremote:bmug2/SYNC"]',
+    )!;
+    pcloudSync.value = "mypcloud:bmug2/SYNC";
+    // pcloudBackups left blank
+    buttonLabeled(editor, "Save").dispatchEvent(new Event("click"));
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("Mounted folder option is disabled with tooltip when get_replication_local_supported returns false", async () => {
@@ -2220,5 +2289,102 @@ describe("buildGoogleDriveFolderBrowser", () => {
     expect(browser.textContent).toContain("rpc timeout");
     buttonLabeled(browser, "Cancel").dispatchEvent(new Event("click"));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildPcloudFolderBrowser", () => {
+  // Same shape as the GoogleDrive block above - the pcloud browser
+  // intentionally mirrors it, minus the automated Connect flow.
+
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  function mockPcloud(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const value = overrides[cmd];
+        if (value instanceof Error) throw value;
+        return value;
+      }
+      switch (cmd) {
+        case "list_pcloud_remotes":
+          return [] as string[];
+        case "list_rclone_folder":
+          return [] as RemoteEntry[];
+        default:
+          throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("no remotes: points the user at `rclone config`, no automated Connect flow", async () => {
+    mockPcloud({ list_pcloud_remotes: [] as string[] });
+    const browser = buildPcloudFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() => browser.textContent!.includes("No pCloud remote configured in rclone yet."));
+    expect(browser.textContent).toContain("rclone config");
+    // No create-pcloud-remote call should ever be made from this screen.
+    expect(vi.mocked(invoke).mock.calls.every(([cmd]) => cmd !== "create_pcloud_remote")).toBe(true);
+  });
+
+  it("exactly one pcloud remote: auto-selected, no picker shown", async () => {
+    mockPcloud({ list_pcloud_remotes: ["mypcloud"] as string[] });
+    const browser = buildPcloudFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "mypcloud:",
+      ),
+    );
+    expect(browser.textContent).not.toContain("Choose a pCloud remote");
+  });
+
+  it("multiple pcloud remotes with no matching startValue: shows a picker, picking one loads its folder", async () => {
+    mockPcloud({ list_pcloud_remotes: ["work", "personal"] as string[] });
+    const browser = buildPcloudFolderBrowser("", vi.fn(), vi.fn());
+    await waitFor(() => browser.textContent!.includes("Choose a pCloud remote"));
+
+    mockPcloud({ list_rclone_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "personal").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "personal:",
+      ),
+    );
+  });
+
+  it(`Use returns the full remote:path, Create targets the selected remote`, async () => {
+    mockPcloud({
+      list_pcloud_remotes: ["mypcloud"] as string[],
+      list_rclone_folder: [{ name: "bmug2", is_folder: true }] satisfies RemoteEntry[],
+    });
+    const onChoose = vi.fn();
+    const browser = buildPcloudFolderBrowser("", onChoose, vi.fn());
+    await waitFor(() => browser.querySelector(".remote-folder-list") !== null);
+
+    mockPcloud({ list_rclone_folder: [] as RemoteEntry[] });
+    buttonLabeled(browser, "bmug2").dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.some(
+        ([cmd, args]) => cmd === "list_rclone_folder" && (args as { path: string }).path === "mypcloud:bmug2",
+      ),
+    );
+
+    buttonLabeled(browser, 'Use "mypcloud:bmug2"').dispatchEvent(new Event("click"));
+    expect(onChoose).toHaveBeenCalledWith("mypcloud:bmug2");
+
+    mockPcloud({ create_rclone_folder: undefined, list_rclone_folder: [] as RemoteEntry[] });
+    browser.querySelector<HTMLInputElement>('input[placeholder="New folder name"]')!.value = "SYNC";
+    buttonLabeled(browser, "Create").dispatchEvent(new Event("click"));
+    await waitFor(() => vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "create_rclone_folder"));
+    const [, args] = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "create_rclone_folder")!;
+    expect(args).toEqual({ path: "mypcloud:bmug2/SYNC" });
   });
 });

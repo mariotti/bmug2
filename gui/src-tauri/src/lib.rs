@@ -339,6 +339,15 @@ fn list_drive_remotes() -> Result<Vec<String>, String> {
     rclone_browse::list_drive_remotes()
 }
 
+// Scoped to rclone remotes of type "pcloud". list_rclone_folder /
+// create_rclone_folder above are already backend-agnostic and work
+// unchanged for the pcloud picker; only the remote-name enumeration
+// needs a pcloud-specific entry point.
+#[tauri::command]
+fn list_pcloud_remotes() -> Result<Vec<String>, String> {
+    rclone_browse::list_pcloud_remotes()
+}
+
 #[tauri::command]
 fn list_rclone_folder(path: String) -> Result<Vec<RcloneRemoteEntry>, String> {
     rclone_browse::list_folder(&path)
@@ -445,6 +454,7 @@ pub fn run() {
             proton_drive_login,
             rclone_available,
             list_drive_remotes,
+            list_pcloud_remotes,
             list_rclone_folder,
             create_rclone_folder,
             create_drive_remote,

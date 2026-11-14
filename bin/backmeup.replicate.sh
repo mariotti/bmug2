@@ -244,7 +244,12 @@ done
 # on rsync mirrors contents rather than nesting the directory name;
 # rclone wants the bare source.
 case "${BMU_REPLICATE_BACKEND}" in
-    rclone)
+    rclone|pcloud)
+        # pcloud is a sibling of rclone (same binary, same sync semantics) -
+        # kept distinct here only so BMU_REPLICATE_BACKEND round-trips
+        # losslessly for the GUI (which otherwise couldn't tell a saved
+        # "I picked pcloud" apart from "I picked a generic rclone remote"
+        # across reload). Both route to the same rclone sync invocation.
         l_BMU_REPLICATE_FLAGS="-v --stats=10s --stats-one-line --fast-list ${l_BMU_EXCLUDE_FLAGS}"
         l_BMU_SYNC_SRC="${BMU_DIRRSYNC}"
         l_BMU_BKUP_SRC="${BMU_DIRBACKUPS}"
