@@ -110,3 +110,29 @@ Smoke-tests the install path (`sudo rpm --import` → `sudo rpm
 Lima VM is headless, so verifying the Tauri window actually opens
 stays a manual pre-release step. Needs Lima (`brew install lima`)
 and an authenticated `gh` CLI.
+
+### Dependency audits
+
+We run `npm audit` manually (not gated in CI) and act on every real
+finding. Rust side: `cargo build` / `cargo clippy --all-targets --
+-D warnings` are already gated in CI, so warnings there fail the
+build at PR time; that's the entire Rust audit surface we care about.
+
+One finding is parked as **known-upstream-pending**, not ignored:
+
+- **picomatch ReDoS** (GHSA-fc5q-39xc-vjpf) — advertised `range: *`,
+  affects every published version through at least `4.0.7` (the
+  current latest on npm). Reaches us only via `vite`/`vitest`'s
+  transitive tree (`picomatch` → `fdir`/`tinyglobby` → `vite` →
+  `vitest` → `@vitest/coverage-v8`), i.e. **dev-only tooling** that
+  processes our own test file patterns at bundle/test time, never
+  user input. npm's suggested "fix" (downgrade vite to 6.2.7) is a
+  detection-window dodge, not a code patch. Re-check on each
+  picomatch release; a 4.0.8 / 5.x publication is the trigger to
+  bump and re-audit.
+
+The discipline for any OTHER audit finding stays "fix in the same PR,
+not later" — see the "Fix every warning in the same PR" paragraph in
+CLAUDE.md. Known-upstream-pending is a narrow carve-out for
+"advisory with no published patched version anywhere", not a general
+"it's inconvenient so we'll ignore it" escape.
