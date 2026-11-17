@@ -136,3 +136,44 @@ not later" — see the "Fix every warning in the same PR" paragraph in
 CLAUDE.md. Known-upstream-pending is a narrow carve-out for
 "advisory with no published patched version anywhere", not a general
 "it's inconvenient so we'll ignore it" escape.
+
+`docs/DEPENDENCIES.md` carries the live, row-by-row list of direct
+and transitive advisories with their status tags; this file owns the
+*policy*, that one owns the *catalog*.
+
+#### Expected CI redness: `Dependabot Updates`
+
+GitHub's Dependabot Updates workflow runs on every push to `main`
+and tries to open auto-fix PRs for alerts that have a patched
+version available. It reports **`security_update_not_possible`**
+and exits non-zero whenever a fix exists upstream but it can't
+resolve any version satisfying the current dependency tree —
+exactly what happens when a transitive we care about is pinned by
+a parent we can't bump yet. That's a **permanent red X on `main`**
+for as long as any such row stays `known-upstream-pending` in
+`docs/DEPENDENCIES.md`.
+
+This is the one documented exception to the project's "no red CI"
+rule. The redness is honest — it's Dependabot telling us "I can't
+auto-fix this" — but it's not actionable on our side until the
+upstream pin moves. The alert itself stays open in the repo's
+Security tab, and the workflow re-runs on every push; when upstream
+publishes a release that frees the pin (e.g. a Tauri 2.x minor that
+bumps gtk/muda/glib), Dependabot will succeed on the next push and
+auto-open the fix PR.
+
+What NOT to do in response to this failure:
+
+- **Don't dismiss the alert** as "won't fix" — that silences the
+  retry signal we actually want when upstream unpins.
+- **Don't disable the workflow** — losing Dependabot would lose the
+  always-on signal for *new* advisories too, not just this one.
+- **Don't rerun it hoping for a different outcome** — the state
+  machine is deterministic; `security_update_not_possible` will
+  persist until the tree changes.
+
+A real new failure class from this workflow (any error type other
+than `security_update_not_possible`, or a `security_update_not_
+possible` for a row NOT listed in `docs/DEPENDENCIES.md`) is an
+actionable red that follows the regular "fix in the same PR"
+discipline.
