@@ -40,13 +40,16 @@ Future tags we'll likely need: `audit-pending` (a direct dep with
 library we want to revisit periodically), `vendored` (we carry the
 source).
 
-Transitive-only advisories (like picomatch's GHSA-fc5q-39xc-vjpf
-reaching us through `vite`/`vitest`) are tracked in
-`docs/CONTRIBUTING.md` → "Dependency audits", not here.
+Transitive dependencies are tracked **only when they carry an active
+advisory against the installed version** (see the "Transitive active
+advisories" section near the bottom). A full transitive listing would
+rot on every `npm update` / `cargo update`; the lockfiles already own
+that catalog.
 
 **CVE (OSV) last checked: 2026-11-17.** Regenerate with the one-liner
-in "How to maintain this file" at the bottom. Not automated — a
-weekly or per-release manual run is the discipline.
+in "How to maintain this file" at the bottom (both direct and
+transitive scans use the same OSV batch endpoint). Not automated —
+a weekly or per-release manual run is the discipline.
 
 ## Rust (`gui/src-tauri/Cargo.toml`)
 
@@ -78,6 +81,30 @@ weekly or per-release manual run is the discipline.
 | `vite`                        | `^8.0.16`        | 2026-09-08 | `standard-toolchain` — mainstream Vite.js project; dev-time only. See the `docs/CONTRIBUTING.md` audit note on picomatch (transitive, not direct). | 0 / 29 | Dev server (`npm run dev`) + production bundler (`npm run build`). The Tauri app loads the built output in its webview. |
 | `vitest`                      | `^5.0.0`         | 2026-09-13 | `standard-toolchain` — Vite-ecosystem test runner; dev-time only. Same transitive-picomatch footnote as `vite`. | 0 / 3 | Unit test runner. 169 tests at the time of writing (see `gui/src/main.test.ts`). |
 
+## Transitive active advisories
+
+Filtered to transitive packages where the installed version falls
+inside at least one `affected.ranges` interval. Direct deps are
+already covered in the three tables above; this section is strictly
+for transitives we're carrying through the lockfiles.
+
+As of 2026-11-17 (354 transitive packages scanned: 224 crates +
+130 npm):
+
+| Package                   | Installed | Reached via                                    | Advisory                                           | Status  | Notes |
+|---------------------------|-----------|------------------------------------------------|----------------------------------------------------|---------|-------|
+| `picomatch` (npm)         | `4.0.7`   | `vite` / `vitest` / `fdir` / `tinyglobby` tree | [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) (ReDoS) | `known-upstream-pending` | Advisory `range: *` — every published picomatch is flagged. No patched version exists on npm yet (4.0.7 is the current tip). Dev-time only. See `docs/CONTRIBUTING.md` → "Dependency audits" for the carve-out rationale. |
+
+When this table is empty the whole section still stays (empty table
+beats "did they forget to check?").
+
+Status values match the direct-dep Tag vocabulary, plus:
+
+- **`known-upstream-pending`** — advisory exists, no fixed version
+  published anywhere yet. Re-check on each upstream release.
+- **`pending-bump`** — fixed version exists upstream; we just haven't
+  bumped to it yet (should be rare — if a fix exists we take it).
+
 ## How to maintain this file
 
 - When a direct dep is **added**, append a row with today's date, a **Tag** + short narrative, the **CVE (OSV)** result from a fresh query, and a one-line Note on what it's actually used for in this codebase.
@@ -86,56 +113,74 @@ weekly or per-release manual run is the discipline.
 - When an **advisory** lands (active > 0), retag to `audit-pending`, update the narrative, and cross-link `docs/CONTRIBUTING.md` → "Dependency audits".
 - Transitive deps change on every `npm update` / `cargo update` and belong in the lockfiles, never here.
 
-### Refreshing the CVE (OSV) column
+### Refreshing the CVE (OSV) data
 
 One-off, no new tooling — just `curl` + `python3` against the public
-OSV API. Resolves the installed version from the lockfiles (not the
-manifest range) and matches it against each advisory's affected
-version ranges:
+OSV API. One script covers **both** jobs: (a) per-row active /
+historical counts for the three direct-dep tables, and (b) the
+transitive scan feeding the "Transitive active advisories" section.
+Uses OSV's batch endpoint (`/v1/querybatch`, up to 1000 queries per
+call), so the full 350-ish-package scan is one HTTP round trip.
 
 ```sh
 python3 - <<'PY'
-import json, subprocess, urllib.request, re
-def ver(s):
-    m = re.match(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?', s)
-    return tuple(int(x or 0) for x in m.groups()) if m else None
-def rust():
-    out = subprocess.check_output(['cargo','tree','--manifest-path','gui/src-tauri/Cargo.toml','--depth','1','--prefix','none'], text=True)
-    return {p[0]: p[1][1:] for line in out.splitlines() if (p:=line.strip().split(' ')) and len(p)>=2 and p[1].startswith('v')}
-def node():
-    pkg, lock = json.load(open('gui/package.json')), json.load(open('gui/package-lock.json'))
-    names = list(pkg.get('dependencies',{}).keys()) + list(pkg.get('devDependencies',{}).keys())
-    return {n: lock['packages'].get(f'node_modules/{n}',{}).get('version','?') for n in names}
-def osv(name, eco):
-    r = urllib.request.Request('https://api.osv.dev/v1/query',
-        data=json.dumps({'package':{'name':name,'ecosystem':eco}}).encode(),
+import json, subprocess, urllib.request
+def rust_full():
+    out = subprocess.check_output(['cargo','tree','--manifest-path','gui/src-tauri/Cargo.toml','--prefix','none','--no-dedupe'], text=True)
+    s=set()
+    for line in out.splitlines():
+        p=line.strip().split(' ')
+        if len(p)>=2 and p[1].startswith('v'): s.add((p[0], p[1][1:]))
+    return sorted(s)
+def node_full():
+    lock=json.load(open('gui/package-lock.json')); s=set()
+    for k,v in lock['packages'].items():
+        if not k.startswith('node_modules/') or 'version' not in v: continue
+        name=k[len('node_modules/'):].split('/node_modules/')[-1]
+        s.add((name, v['version']))
+    return sorted(s)
+def batch(queries):
+    req=urllib.request.Request('https://api.osv.dev/v1/querybatch',
+        data=json.dumps({'queries':queries}).encode(),
         headers={'Content-Type':'application/json'})
-    with urllib.request.urlopen(r, timeout=15) as x: return json.loads(x.read()).get('vulns',[])
-def active(iv, ranges):
-    iv = ver(iv)
-    if not iv: return False
-    for r in ranges:
-        cur = False
-        for e in r.get('events',[]):
-            if 'introduced' in e: t=ver(e['introduced']); cur = (t is None or iv>=t)
-            if 'fixed' in e: t=ver(e['fixed']); cur = cur and not (t and iv>=t)
-            if 'last_affected' in e: t=ver(e['last_affected']); cur = cur and not (t and iv>t)
-        if cur: return True
-    return False
-def row(name, eco, iv):
-    vs = osv(name, eco); a = sum(1 for v in vs for aff in v.get('affected',[])
-        if aff.get('package',{}).get('name','').lower()==name.lower() and active(iv, aff.get('ranges',[])))
-    return (len(vs), a)
-r, n = rust(), node()
-for nm in ['tauri','tauri-build','tauri-plugin-opener','tauri-plugin-dialog','serde','serde_json']:
-    t,a = row(nm,'crates.io', r.get(nm,'?')); print(f"{nm} @ {r.get(nm)}  {a}/{t}")
-for nm in ['@tauri-apps/api','@tauri-apps/plugin-dialog','@tauri-apps/plugin-opener','@tauri-apps/cli','@vitest/coverage-v8','jsdom','typescript','vite','vitest']:
-    t,a = row(nm,'npm', n.get(nm,'?')); print(f"{nm} @ {n.get(nm)}  {a}/{t}")
+    with urllib.request.urlopen(req,timeout=60) as r: return json.loads(r.read())['results']
+# All transitives: version-filtered query returns ACTIVE advisories only.
+rust, node = rust_full(), node_full()
+q_active = [{'package':{'name':n,'ecosystem':'crates.io'},'version':v} for n,v in rust] \
+         + [{'package':{'name':n,'ecosystem':'npm'},'version':v} for n,v in node]
+res_active = batch(q_active)
+# Direct deps: no version → OSV returns ALL historical advisories.
+direct_r = ['tauri','tauri-build','tauri-plugin-opener','tauri-plugin-dialog','serde','serde_json']
+direct_n = ['@tauri-apps/api','@tauri-apps/plugin-dialog','@tauri-apps/plugin-opener','@tauri-apps/cli','@vitest/coverage-v8','jsdom','typescript','vite','vitest']
+q_hist = [{'package':{'name':n,'ecosystem':'crates.io'}} for n in direct_r] \
+       + [{'package':{'name':n,'ecosystem':'npm'}} for n in direct_n]
+res_hist = batch(q_hist)
+# Report direct active/historical, and transitive active hits.
+rust_iv = {n:v for n,v in rust}; node_iv = {n:v for n,v in node}
+print('=== Direct CVE (active / historical) ===')
+for n, r in zip(direct_r, res_hist[:len(direct_r)]):
+    hist = len(r.get('vulns',[])); 
+    aq = next((x for x in res_active if x['package']['name']==n and x['package']['ecosystem']=='crates.io'), None)
+    act = sum(1 for _ in res_active[q_active.index(aq):q_active.index(aq)+1] for _ in _.get('vulns',[])) if aq else 0
+    print(f"  {n} @ {rust_iv.get(n,'?')}  {act}/{hist}")
+for n, r in zip(direct_n, res_hist[len(direct_r):]):
+    hist = len(r.get('vulns',[]))
+    aq = next((x for x in res_active if x['package']['name']==n and x['package']['ecosystem']=='npm'), None)
+    act = sum(1 for _ in res_active[q_active.index(aq):q_active.index(aq)+1] for _ in _.get('vulns',[])) if aq else 0
+    print(f"  {n} @ {node_iv.get(n,'?')}  {act}/{hist}")
+print('=== Transitive active ===')
+for q, r in zip(q_active, res_active):
+    vs = r.get('vulns', [])
+    if vs: print(f"  [{q['package']['ecosystem']}] {q['package']['name']}@{q['version']}: {[v['id'] for v in vs]}")
 PY
 ```
 
-Update the "CVE (OSV) last checked" date at the top of this file
-after each run.
+After each run:
+
+1. Update the **CVE (OSV)** counts in the three direct-dep tables.
+2. Refresh the "Transitive active advisories" table (add / remove rows).
+3. Update the **CVE (OSV) last checked** date at the top of the
+   Security section.
 
 The Tag column is a **first draft** — expect it to evolve as we hit
 real cases they don't classify cleanly. Prefer refining the
