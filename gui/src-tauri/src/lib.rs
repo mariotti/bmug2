@@ -111,6 +111,27 @@ fn get_status(bin_dir: String) -> Result<StatusResult, String> {
     dashboard::get_status(&bin_dir)
 }
 
+// Same spawn_blocking pattern as `search` below: `du -sk` on a large
+// SYNC/HISTORY tree can take a few seconds, long enough to stall the
+// Tauri main thread and freeze the whole app.
+#[tauri::command]
+async fn get_disk_usage(bin_dir: String) -> Result<dashboard::DiskUsageReport, String> {
+    tauri::async_runtime::spawn_blocking(move || dashboard::get_disk_usage(&bin_dir))
+        .await
+        .map_err(|e| format!("background task panicked: {e}"))?
+}
+
+// Walks every tracked source folder on disk for the Disk usage view's
+// "how much are we backing UP" number. Backgrounded for the same
+// reason as get_disk_usage - source folders can be large.
+#[tauri::command]
+async fn get_sources_sizes(app: AppHandle) -> Result<Vec<sources::SourceSize>, String> {
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || sources::sizes(&app_data_dir))
+        .await
+        .map_err(|e| format!("background task panicked: {e}"))
+}
+
 // Same bug class already fixed for run_backup_now/run_housekeeping_now
 // above: a plain (non-async) command runs on Tauri's main thread, so a
 // slow backmeup.locate.sh call (an unselective single-letter pattern
@@ -424,6 +445,8 @@ pub fn run() {
             find_existing_installs,
             install_bmug2,
             get_status,
+            get_disk_usage,
+            get_sources_sizes,
             search,
             list_sources,
             add_source,

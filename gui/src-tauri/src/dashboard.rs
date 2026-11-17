@@ -28,6 +28,35 @@ pub struct StatusResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiskUsageProject {
+    pub name: String,
+    pub sync_kb: u64,
+    pub history_kb: u64,
+    /// "default" or "none" - matches the sidecar backmeup.replicate.sh
+    /// reads. Kept as a plain string rather than mirroring the
+    /// config::ReplicateClass enum to decouple the CLI JSON shape from
+    /// internal Rust enum variants (backward compat if either side
+    /// evolves independently).
+    pub replicate_class: String,
+}
+
+/// Phase 1 of the disk-size project: aggregated SYNC/HISTORY totals
+/// plus a local-proxy estimate of what off-site replication would
+/// push. No remote call today - replicate_estimate_kb is the sum of
+/// (sync_kb + history_kb) over projects whose replicate_class is NOT
+/// "none" (per-source opt-out). A later phase can call `rclone size`
+/// when the configured backend is rclone/pcloud.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiskUsageReport {
+    pub sync_dir: String,
+    pub history_dir: String,
+    pub sync_total_kb: u64,
+    pub history_total_kb: u64,
+    pub replicate_estimate_kb: u64,
+    pub projects: Vec<DiskUsageProject>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocateCounts {
     pub index: u64,
     pub live: u64,
@@ -77,6 +106,13 @@ pub fn get_status(bin_dir: &str) -> Result<StatusResult, String> {
     )
 }
 
+pub fn get_disk_usage(bin_dir: &str) -> Result<DiskUsageReport, String> {
+    run_json(
+        Command::new(Path::new(bin_dir).join("backmeup.disk.sh")).arg("--json"),
+        "backmeup.disk.sh --json",
+    )
+}
+
 pub fn search(bin_dir: &str, patterns: &[String]) -> Result<LocateResult, String> {
     run_json(
         Command::new(Path::new(bin_dir).join("backmeup.locate.sh"))
@@ -95,6 +131,12 @@ mod tests {
     const REAL_STATUS_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","projects":[{"name":"proj1","last_run":"2026-09-10 21:35:44","last_change":"20260910-213544","snapshot_count":1,"mirror_size_kb":4,"history_size_kb":12,"old_layout":false}]}"#;
     const REAL_LOCATE_JSON: &str = r#"{"patterns":["file1"],"indexed":true,"counts":{"index":2,"archived_filelist":0,"live":1},"results":[{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync-BP/proj1/B-20260910-213544/file1.txt","source":"index"},{"path":"/tmp/bmudashboard_fixtures/sync/proj1/file1.txt","source":"live"}]}"#;
 
+    // Captured from a real `backmeup.disk.sh --json` run against the
+    // same fixtures as the status JSON above: one project (proj1)
+    // with a .bmureplicate-class sidecar that says "default", plus a
+    // second project (lea) excluded from the estimate via "none".
+    const REAL_DISK_JSON: &str = r#"{"sync_dir":"/tmp/bmudashboard_fixtures/sync","history_dir":"/tmp/bmudashboard_fixtures/sync-BP","sync_total_kb":44,"history_total_kb":12,"replicate_estimate_kb":16,"projects":[{"name":"proj1","sync_kb":4,"history_kb":12,"replicate_class":"default"},{"name":"lea","sync_kb":40,"history_kb":0,"replicate_class":"none"}]}"#;
+
     #[test]
     fn parses_real_status_json() {
         let parsed: StatusResult = serde_json::from_str(REAL_STATUS_JSON).unwrap();
@@ -105,6 +147,20 @@ mod tests {
         assert_eq!(p.mirror_size_kb, 4);
         assert_eq!(p.history_size_kb, Some(12));
         assert!(!p.old_layout);
+    }
+
+    #[test]
+    fn parses_real_disk_json() {
+        let parsed: DiskUsageReport = serde_json::from_str(REAL_DISK_JSON).unwrap();
+        assert_eq!(parsed.sync_total_kb, 44);
+        assert_eq!(parsed.history_total_kb, 12);
+        // Estimate drops the lea project (replicate_class=none) but
+        // keeps proj1 (default). 4 + 12 = 16, not 56.
+        assert_eq!(parsed.replicate_estimate_kb, 16);
+        assert_eq!(parsed.projects.len(), 2);
+        let lea = parsed.projects.iter().find(|p| p.name == "lea").unwrap();
+        assert_eq!(lea.replicate_class, "none");
+        assert_eq!(lea.sync_kb, 40);
     }
 
     #[test]

@@ -2219,6 +2219,83 @@ testStatusJsonMatchesTextReport() {
         "[ '${l_msizekb}' -gt 0 ]"
 }
 
+testDiskReportProducesAggregateTotals() {
+    # Phase 1 of the disk-size project: backmeup.disk.sh rolls up
+    # SYNC/HISTORY across every project in one report, plus an
+    # honest estimate of what off-site replication would push.
+    l_out=`"${SB}/bin/backmeup.disk.sh" 2>&1`
+    assertEquals "disk report failed" 0 $?
+    echo "${l_out}" | grep -q "BMU disk usage"
+    assertTrue "disk report missing its heading" $?
+    echo "${l_out}" | grep -q "SYNC total:"
+    assertTrue "disk report missing SYNC total row" $?
+    echo "${l_out}" | grep -q "HISTORY total:"
+    assertTrue "disk report missing HISTORY total row" $?
+    echo "${l_out}" | grep -q "Replicate estimate:"
+    assertTrue "disk report missing replicate estimate row" $?
+    echo "${l_out}" | grep -q "estimate"
+    assertTrue "report must call out that the remote number is an estimate, not a measurement" $?
+}
+
+testDiskReportJsonIsStructurallyValid() {
+    l_json=`"${SB}/bin/backmeup.disk.sh" --json 2>&1`
+    assertEquals "disk --json failed" 0 $?
+    echo "${l_json}" | python3 -c "import json,sys; json.load(sys.stdin)"
+    assertTrue "disk --json is not valid JSON" $?
+    for l_key in sync_total_kb history_total_kb replicate_estimate_kb projects sync_dir history_dir; do
+        echo "${l_json}" | python3 -c \
+            "import json,sys; d=json.load(sys.stdin); assert '${l_key}' in d, 'missing ${l_key}'"
+        assertTrue "disk --json missing top-level key: ${l_key}" $?
+    done
+    # Per-project row exists for the real project the suite set up
+    echo "${l_json}" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); assert any(p['name']=='myproject' for p in d['projects']), d"
+    assertTrue "disk --json missing the myproject row" $?
+    # Sums are nonnegative integers
+    for l_key in sync_total_kb history_total_kb replicate_estimate_kb; do
+        l_v=`echo "${l_json}" | python3 -c \
+            "import json,sys; print(json.load(sys.stdin)['${l_key}'])"`
+        assertTrue "disk --json ${l_key} should be numeric, got: ${l_v}" \
+            "[ '${l_v}' -ge 0 ]"
+    done
+}
+
+testDiskReportHonorsReplicateClassNoneSidecar() {
+    # Mirrors how backmeup.replicate.sh reads the same sidecar: a
+    # project marked replicate_class=none should still contribute to
+    # SYNC/HISTORY totals (it's still backed up locally), but drop
+    # out of the replicate_estimate_kb total (it's never pushed).
+    l_src="${SHUNIT_TMPDIR}/bmu/src/noreplproj"
+    mkdir -p "${l_src}"
+    dd if=/dev/zero of="${l_src}/filler" bs=1024 count=128 > /dev/null 2>&1
+    "${SB}/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    assertEquals "setup backup failed" 0 $?
+    # The class sidecar goes in HISTORY/<project>/.bmureplicate-class
+    echo "none" > "${SB}/sync-BP/noreplproj/.bmureplicate-class"
+
+    l_json=`"${SB}/bin/backmeup.disk.sh" --json 2>&1`
+    assertEquals "disk --json failed" 0 $?
+    # Project row reports the class
+    l_class=`echo "${l_json}" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); print([p for p in d['projects'] if p['name']=='noreplproj'][0]['replicate_class'])"`
+    assertEquals "replicate_class not read back as 'none'" "none" "${l_class}"
+
+    # Estimate must NOT include this project's sync_kb + history_kb
+    python3 -c "
+import json,sys
+d=json.loads('''${l_json}''')
+excluded = sum(p['sync_kb']+p['history_kb'] for p in d['projects'] if p['replicate_class']=='none')
+included = sum(p['sync_kb']+p['history_kb'] for p in d['projects'] if p['replicate_class']!='none')
+assert excluded > 0, 'test setup: no excluded bytes - check the dd filler'
+assert d['replicate_estimate_kb'] == included, \
+    f\"estimate {d['replicate_estimate_kb']} should equal included {included}, not total {included+excluded}\"
+"
+    assertTrue "replicate_estimate_kb includes a class=none project" $?
+    # Cleanup so later tests aren't polluted by the sidecar
+    rm -f "${SB}/sync-BP/noreplproj/.bmureplicate-class"
+    rm -rf "${l_src}" "${SB}/sync/noreplproj" "${SB}/sync-BP/noreplproj"
+}
+
 testLocateJsonMatchesTextResults() {
     [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
     "${SB}/bin/backmeup.updatedb.sh" > "${SB}/jsonlocate-updatedb.log" 2>&1
