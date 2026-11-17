@@ -51,6 +51,11 @@ in "How to maintain this file" at the bottom (both direct and
 transitive scans use the same OSV batch endpoint). Not automated —
 a weekly or per-release manual run is the discipline.
 
+GitHub's Dependabot alerts + security updates (L1 + L2) are also
+enabled as the always-on signal; Dependabot's RustSec feed caught
+`glib` in the transitive table below that an earlier macOS-only OSV
+pass missed. The two scanners are complementary, not redundant.
+
 ## Rust (`gui/src-tauri/Cargo.toml`)
 
 | Crate                   | Manifest version | First seen | Tag | CVE (OSV) | Notes |
@@ -88,12 +93,18 @@ inside at least one `affected.ranges` interval. Direct deps are
 already covered in the three tables above; this section is strictly
 for transitives we're carrying through the lockfiles.
 
-As of 2026-11-17 (354 transitive packages scanned: 224 crates +
-130 npm):
+As of 2026-11-17 (full cross-target scan — see the refresh snippet
+for the exact command; the `--target all` flag matters on macOS,
+where without it the Linux-only subtree would be invisible).
 
-| Package                   | Installed | Reached via                                    | Advisory                                           | Status  | Notes |
-|---------------------------|-----------|------------------------------------------------|----------------------------------------------------|---------|-------|
-| `picomatch` (npm)         | `4.0.7`   | `vite` / `vitest` / `fdir` / `tinyglobby` tree | [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) (ReDoS) | `known-upstream-pending` | Advisory `range: *` — every published picomatch is flagged. No patched version exists on npm yet (4.0.7 is the current tip). Dev-time only. See `docs/CONTRIBUTING.md` → "Dependency audits" for the carve-out rationale. |
+| Package                            | Installed | Reached via                                    | Advisory                                           | Status  | Notes |
+|------------------------------------|-----------|------------------------------------------------|----------------------------------------------------|---------|-------|
+| `picomatch` (npm)                  | `4.0.7`   | `vite` / `vitest` / `fdir` / `tinyglobby` tree | [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) (ReDoS) | `known-upstream-pending` | Advisory `range: *` — every published picomatch is flagged. No patched version exists on npm yet (4.0.7 is the current tip). Dev-time only. See `docs/CONTRIBUTING.md` → "Dependency audits" for the carve-out rationale. |
+| `glib` (crates.io)                 | `0.18.5`  | `tauri` → `muda` → `gtk` 0.18 (Linux build only) | [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g) / [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429) (unsoundness in `VariantStrIter` iterator impl) | `known-upstream-pending` | Patched upstream in `glib` 0.20.0, but the 0.18 line is pinned by Tauri 2.x's muda/gtk-rs transitive. Latest stable `tauri` is 2.12.5 (what we're on); only `3.0.0-alpha.6` is newer, so no stable bump path exists today. Linux-only. Re-check when Tauri 2.x updates muda/gtk, or when Tauri 3 ships stable. |
+| `proc-macro-error` (crates.io)     | `1.0.4`   | `tauri` → `muda` → `gtk` → `glib-macros` (Linux-only) | [RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370) (unmaintained) | `unmaintained-upstream` | Informational advisory: no active maintainer. No fix version by design. Reaches us via the same Linux GTK subtree as `glib`; moves with it. |
+| `zbus_names` (crates.io)           | `4.3.5`   | `tauri-plugin-opener` → `zbus` (Linux only)    | [RUSTSEC-2026-0371](https://rustsec.org/advisories/RUSTSEC-2026-0371) (unmaintained) | `unmaintained-upstream` | Informational. Part of the `zbus` 5.x transitive carried by `tauri-plugin-opener` on Linux (D-Bus for `xdg-open`-style dispatch). `zbus` ecosystem split between maintained and unmaintained sub-crates; the opener plugin would need to switch to a maintained alternative, or absorb its own. |
+| `zvariant` (crates.io)             | `5.15.1`  | `tauri-plugin-opener` → `zbus` (Linux only)    | [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370) (unmaintained) | `unmaintained-upstream` | Same chain / same rationale as `zbus_names`. |
+| `zvariant_derive` (crates.io)      | `5.15.1`  | `tauri-plugin-opener` → `zbus` (Linux only)    | [RUSTSEC-2026-0372](https://rustsec.org/advisories/RUSTSEC-2026-0372) (unmaintained) | `unmaintained-upstream` | Same chain / same rationale as `zvariant`. |
 
 When this table is empty the whole section still stays (empty table
 beats "did they forget to check?").
@@ -104,6 +115,11 @@ Status values match the direct-dep Tag vocabulary, plus:
   published anywhere yet. Re-check on each upstream release.
 - **`pending-bump`** — fixed version exists upstream; we just haven't
   bumped to it yet (should be rare — if a fix exists we take it).
+- **`unmaintained-upstream`** — informational advisory (e.g. RUSTSEC
+  publishes these to flag crates with no active maintainer); no fix
+  version by design. Treated as "aware, not blocking" — not a known
+  code-level vuln, just a maintenance signal. Clears when the chain
+  switches to a maintained alternative or the dep absorbs its own.
 
 ## How to maintain this file
 
@@ -125,8 +141,13 @@ call), so the full 350-ish-package scan is one HTTP round trip.
 ```sh
 python3 - <<'PY'
 import json, subprocess, urllib.request
+# --target all matters: without it, `cargo tree` on macOS silently
+# omits the Linux-only subtree (gtk-rs / muda / glib etc. under
+# tauri). An earlier pass without this flag reported "zero active
+# advisories" while Dependabot's RustSec feed was flagging glib the
+# whole time.
 def rust_full():
-    out = subprocess.check_output(['cargo','tree','--manifest-path','gui/src-tauri/Cargo.toml','--prefix','none','--no-dedupe'], text=True)
+    out = subprocess.check_output(['cargo','tree','--manifest-path','gui/src-tauri/Cargo.toml','--prefix','none','--no-dedupe','--target','all'], text=True)
     s=set()
     for line in out.splitlines():
         p=line.strip().split(' ')
