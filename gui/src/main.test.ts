@@ -39,6 +39,7 @@ import {
   clearReplication,
   renderSetup,
   renderSettings,
+  renderDiskUsage,
   buildProtonFolderBrowser,
   buildGoogleDriveFolderBrowser,
   buildPcloudFolderBrowser,
@@ -59,6 +60,8 @@ import {
   type UpdateInfo,
   type LocateResult,
   type LocateHit,
+  type DiskUsageReport,
+  type SourceSize,
   type DefaultPaths,
   type InstallOutcome,
   type RemoteEntry,
@@ -1962,6 +1965,123 @@ describe("user journeys (Settings/update)", () => {
       .mock.calls.find(([cmd]) => cmd === "apply_update");
     expect(applyCall).toBeDefined();
     expect(applyCall![1]).toEqual({ binDir: "/bin", tag: "v2.15.9-experimental" });
+  });
+});
+
+describe("renderDiskUsage", () => {
+  afterEach(() => {
+    document.querySelector("#app")!.innerHTML = "";
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(pendingForever);
+  });
+
+  async function waitFor(predicate: () => boolean, maxTicks = 50) {
+    for (let i = 0; i < maxTicks && !predicate(); i++) {
+      await Promise.resolve();
+    }
+    expect(predicate()).toBe(true);
+  }
+
+  const sampleReport: DiskUsageReport = {
+    sync_dir: "/sync",
+    history_dir: "/sync-BP",
+    sync_total_kb: 2048,
+    history_total_kb: 1024,
+    replicate_estimate_kb: 1024,
+    projects: [
+      { name: "docs", sync_kb: 512, history_kb: 1024, replicate_class: "default" },
+      { name: "lea", sync_kb: 1536, history_kb: 0, replicate_class: "none" },
+    ],
+  };
+  const sampleSizes: SourceSize[] = [
+    { name: "docs", path: "/me/Documents", size_kb: 512 },
+    { name: "lea", path: "/me/Lea", size_kb: 1536 },
+  ];
+
+  function mockDisk(overrides: Record<string, unknown> = {}) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) {
+        const v = overrides[cmd];
+        if (v instanceof Error) throw v;
+        return v;
+      }
+      switch (cmd) {
+        case "get_disk_usage": return sampleReport;
+        case "get_sources_sizes": return sampleSizes;
+        default: throw new Error(`unmocked invoke command in test: ${cmd}`);
+      }
+    });
+  }
+
+  it("renders all four headline numbers", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const text = document.querySelector("#app")!.textContent ?? "";
+    expect(text).toContain("Sources total:");
+    expect(text).toContain("SYNC total:");
+    expect(text).toContain("HISTORY total:");
+    expect(text).toContain("Replicate estimate:");
+  });
+
+  it("surfaces Replicate estimate as a LOCAL PROXY, not a real remote number", async () => {
+    // The #211 FDA-banner lesson again: the help-icon copy has to be
+    // honest about what IS and ISN'T measured. A future reader
+    // shouldn't mistake this number for a real remote size.
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const estIcon = Array.from(document.querySelectorAll<HTMLElement>(".help-icon"))
+      .find((i) => (i.getAttribute("title") ?? "").includes("Local proxy"));
+    expect(estIcon).not.toBeUndefined();
+  });
+
+  it("renders per-source and per-project tables with the right row counts", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const tables = document.querySelectorAll("table.sources-table");
+    expect(tables.length).toBe(2);
+    // First table = sources (2 rows), second = projects (2 rows)
+    expect(tables[0].querySelectorAll("tbody tr").length).toBe(2);
+    expect(tables[1].querySelectorAll("tbody tr").length).toBe(2);
+  });
+
+  it("marks a replicate_class=none project as Local-only in the per-project table", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const projRows = Array.from(document.querySelectorAll("table.sources-table")[1].querySelectorAll("tbody tr"));
+    const leaRow = projRows.find((r) => r.textContent!.includes("lea"));
+    expect(leaRow?.textContent).toContain("Local-only");
+    const docsRow = projRows.find((r) => r.textContent!.includes("docs"));
+    expect(docsRow?.textContent).toContain("Replicated");
+    expect(docsRow?.textContent).not.toContain("Local-only");
+  });
+
+  it("shows an em-dash + a hint for a source whose size is null (path gone / no permission)", async () => {
+    mockDisk({ get_sources_sizes: [
+      { name: "missing", path: "/no/such/path", size_kb: null },
+    ] as SourceSize[] });
+    await renderDiskUsage("/bin");
+    const text = document.querySelector("#app")!.textContent ?? "";
+    expect(text).toContain("—");
+    expect(text).toContain("excludes rows where size is unavailable");
+  });
+
+  it("falls back to a visible error when get_disk_usage rejects", async () => {
+    mockDisk({ get_disk_usage: new Error("backmeup.disk.sh: not found") });
+    await renderDiskUsage("/bin");
+    const text = document.querySelector("#app")!.textContent ?? "";
+    expect(text).toContain("Couldn't measure disk usage");
+    expect(text).toContain("backmeup.disk.sh");
+  });
+
+  it("Back button renders the dashboard", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    // Hand off to a dashboard-friendly mock before clicking Back
+    vi.mocked(invoke).mockImplementation(pendingForever);
+    const backBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent?.includes("Back to dashboard"))!;
+    backBtn.dispatchEvent(new Event("click"));
+    await waitFor(() => (document.querySelector("#app")!.textContent ?? "").includes("Loading status"));
   });
 });
 

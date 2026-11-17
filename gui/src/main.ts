@@ -46,6 +46,36 @@ export interface StatusResult {
   projects: StatusProject[];
 }
 
+// Mirrors dashboard::DiskUsageProject and ::DiskUsageReport in Rust,
+// which in turn mirror backmeup.disk.sh --json. `replicate_class`
+// stays a plain string (not the TS ReplicateClass union) so the CLI
+// JSON shape can evolve on its own timeline.
+export interface DiskUsageProject {
+  name: string;
+  sync_kb: number;
+  history_kb: number;
+  replicate_class: string;
+}
+
+export interface DiskUsageReport {
+  sync_dir: string;
+  history_dir: string;
+  sync_total_kb: number;
+  history_total_kb: number;
+  replicate_estimate_kb: number;
+  projects: DiskUsageProject[];
+}
+
+// Mirrors sources::SourceSize in Rust. `size_kb` is null when the
+// underlying path can't be `du`'d (permission denied, no longer
+// exists, etc.) - the Disk usage view renders that as "—" rather
+// than failing the whole page.
+export interface SourceSize {
+  name: string;
+  path: string;
+  size_kb: number | null;
+}
+
 export interface LocateHit {
   path: string;
   source: string;
@@ -1147,9 +1177,11 @@ export async function renderDashboard(binDir: string, banner?: RunBanner) {
   // hide a real gotcha.
   const hasFullDiskAccess = await invoke<boolean>("has_full_disk_access").catch(() => false);
   const children: (Node | string)[] = [el("h1", {}, ["bmug2"])];
+  const diskBtn = el("button", { type: "button" }, ["Disk usage"]);
+  diskBtn.addEventListener("click", () => void renderDiskUsage(binDir));
   const settingsBtn = el("button", { type: "button" }, ["Settings"]);
   settingsBtn.addEventListener("click", () => void renderSettings(binDir));
-  children.push(el("div", { class: "dashboard-top-bar" }, [settingsBtn]));
+  children.push(el("div", { class: "dashboard-top-bar" }, [diskBtn, settingsBtn]));
 
   if (banner) children.push(buildRunBanner(banner));
   // Reads the session cache populated once in init() - never a fresh
@@ -2284,6 +2316,145 @@ function renderError(message: string, retry: () => void) {
 
 function renderInstalling(message: string) {
   app.replaceChildren(el("h1", {}, ["bmug2"]), el("p", {}, [message]));
+}
+
+// Phase 1 of the disk-size project: a dedicated "how much are we
+// costing on this machine?" screen. Four numbers at the top:
+//   - Sources total: sum of `du -sk` over every tracked source
+//     folder (only the GUI knows this - CLI has no record of them)
+//   - SYNC total:    live-mirror size across every project
+//   - HISTORY total: versioned-history size across every project
+//   - Replicate est: SYNC+HISTORY minus any source with
+//     replicate_class="none". LOCAL PROXY, no remote call today.
+// Plus two tables: per-source (name/path/size), per-project (name/
+// sync/history/class). Same Settings-style full-screen pattern.
+export async function renderDiskUsage(binDir: string) {
+  app.replaceChildren(el("h1", {}, ["Disk usage"]), el("p", {}, ["Measuring…"]));
+
+  let report: DiskUsageReport | null = null;
+  let sourceSizes: SourceSize[] = [];
+  let reportError: string | null = null;
+  try {
+    [report, sourceSizes] = await Promise.all([
+      invoke<DiskUsageReport>("get_disk_usage", { binDir }),
+      invoke<SourceSize[]>("get_sources_sizes"),
+    ]);
+  } catch (err) {
+    reportError = String(err);
+  }
+
+  const backBtn = el("button", { type: "button", class: "settings-back-btn" }, ["← Back to dashboard"]);
+  backBtn.addEventListener("click", () => void renderDashboard(binDir));
+
+  const children: (Node | string)[] = [el("h1", {}, ["Disk usage"]), backBtn];
+  if (reportError) {
+    children.push(el("p", { class: "settings-check-error" }, [`Couldn't measure disk usage: ${reportError}`]));
+    app.replaceChildren(...children);
+    return;
+  }
+  if (!report) {
+    children.push(el("p", {}, ["No measurement available."]));
+    app.replaceChildren(...children);
+    return;
+  }
+
+  const sourcesTotalKb = sourceSizes.reduce((sum, s) => sum + (s.size_kb ?? 0), 0);
+  const anySourceMissing = sourceSizes.some((s) => s.size_kb === null);
+
+  const totalsBox = el("div", { class: "settings-version" }, [
+    el("p", {}, [
+      el("strong", {}, ["Sources total: "]),
+      formatKb(sourcesTotalKb),
+      anySourceMissing ? " (excludes rows where size is unavailable — see table below)" : "",
+      " ",
+      helpIcon(
+        "Sum of `du -sk` across every tracked source folder in the GUI. The CLI doesn't know this list.",
+      ),
+    ]),
+    el("p", {}, [
+      el("strong", {}, ["SYNC total: "]),
+      formatKb(report.sync_total_kb),
+      " ",
+      helpIcon(
+        "Live mirror across every project under HISTORY's sibling SYNC directory.",
+        "backmeup.disk.sh",
+      ),
+    ]),
+    el("p", {}, [
+      el("strong", {}, ["HISTORY total: "]),
+      formatKb(report.history_total_kb),
+      " ",
+      helpIcon(
+        "Versioned-history across every project — includes all B-<date> snapshots and any .tar.gz/.tar archives.",
+        "backmeup.disk.sh",
+      ),
+    ]),
+    el("p", {}, [
+      el("strong", {}, ["Replicate estimate: "]),
+      formatKb(report.replicate_estimate_kb),
+      " ",
+      helpIcon(
+        "Local proxy of what off-site replication would push: SYNC + HISTORY, minus any project marked replicate_class=none. No remote call — the real number may differ.",
+      ),
+    ]),
+  ]);
+
+  const sourcesSection = el("section", { class: "disk-usage-section" }, [
+    el("h2", {}, ["Per source (what we back up)"]),
+    sourceSizes.length === 0
+      ? el("p", {}, ["No tracked sources yet."])
+      : el("table", { class: "sources-table" }, [
+          el("thead", {}, [
+            el("tr", {}, [
+              el("th", {}, ["Name"]),
+              el("th", {}, ["Folder"]),
+              el("th", {}, ["Size"]),
+            ]),
+          ]),
+          el(
+            "tbody",
+            {},
+            sourceSizes.map((s) =>
+              el("tr", {}, [
+                el("td", {}, [el("strong", {}, [s.name])]),
+                el("td", {}, [el("code", { class: "source-folder-path", title: s.path }, [s.path])]),
+                el("td", {}, [s.size_kb === null ? "—" : formatKb(s.size_kb)]),
+              ]),
+            ),
+          ),
+        ]),
+  ]);
+
+  const projectsSection = el("section", { class: "disk-usage-section" }, [
+    el("h2", {}, ["Per project (what's in SYNC + HISTORY)"]),
+    report.projects.length === 0
+      ? el("p", {}, ["No projects on disk yet."])
+      : el("table", { class: "sources-table" }, [
+          el("thead", {}, [
+            el("tr", {}, [
+              el("th", {}, ["Project"]),
+              el("th", {}, ["SYNC"]),
+              el("th", {}, ["HISTORY"]),
+              el("th", {}, ["Off-site"]),
+            ]),
+          ]),
+          el(
+            "tbody",
+            {},
+            report.projects.map((p) =>
+              el("tr", {}, [
+                el("td", {}, [el("strong", {}, [p.name])]),
+                el("td", {}, [formatKb(p.sync_kb)]),
+                el("td", {}, [formatKb(p.history_kb)]),
+                el("td", {}, [p.replicate_class === "none" ? "Local-only" : "Replicated"]),
+              ]),
+            ),
+          ),
+        ]),
+  ]);
+
+  children.push(totalsBox, sourcesSection, projectsSection);
+  app.replaceChildren(...children);
 }
 
 // The first "navigate to a second screen and back" affordance in this

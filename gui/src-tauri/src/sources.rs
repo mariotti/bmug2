@@ -50,6 +50,42 @@ pub fn list(app_data_dir: &Path) -> Vec<BackupSource> {
     sources
 }
 
+/// Phase 1 of the disk-size project, GUI side: `du -sk` on each
+/// tracked source folder, so the Disk usage view can show "how much
+/// are we backing UP" (as opposed to "how much is in SYNC/HISTORY"
+/// which the CLI's `backmeup.disk.sh` already covers). CLI can't do
+/// this itself - it has no persistent list of source paths; the GUI
+/// is the only component that tracks which folders bmug2 is pointed
+/// at. A path that can't be `du`'d (permission denied, no longer
+/// exists, etc.) comes back with `size_kb: None`, not an error -
+/// visibility beats failure for one row in a report view.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct SourceSize {
+    pub name: String,
+    pub path: String,
+    pub size_kb: Option<u64>,
+}
+
+pub fn sizes(app_data_dir: &Path) -> Vec<SourceSize> {
+    list(app_data_dir)
+        .into_iter()
+        .map(|s| SourceSize {
+            size_kb: du_sk(Path::new(&s.path)),
+            name: s.name,
+            path: s.path,
+        })
+        .collect()
+}
+
+fn du_sk(p: &Path) -> Option<u64> {
+    let out = std::process::Command::new("du").args(["-sk"]).arg(p).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let first_col = std::str::from_utf8(&out.stdout).ok()?.split_whitespace().next()?;
+    first_col.parse::<u64>().ok()
+}
+
 pub fn add(app_data_dir: &Path, path: &str, name: Option<&str>) -> Result<BackupSource, String> {
     let mut sources = list(app_data_dir);
     let source = build_source(&sources, path, name)?;
@@ -208,6 +244,50 @@ mod tests {
 
         std::fs::remove_dir_all(&app_data_dir).ok();
         std::fs::remove_dir_all(&source_dir).ok();
+    }
+
+    #[test]
+    fn sizes_du_sks_each_tracked_source_folder() {
+        // Round-trip over the real du binary - the function is thin
+        // on purpose (du's output + parse), so the test IS the thing
+        // that catches a regression in the parse or the args.
+        let app_data_dir = tmp_app_data_dir("sizes");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+        let src = tmp_dir("sizes-src");
+        // Write ~5 KB of filler so du reports a non-zero figure even
+        // on APFS where small files dedupe to near-zero blocks.
+        std::fs::write(src.join("filler.bin"), vec![0u8; 5 * 1024]).unwrap();
+
+        add(&app_data_dir, src.to_str().unwrap(), Some("sz")).unwrap();
+        let results = sizes(&app_data_dir);
+        assert_eq!(results.len(), 1);
+        let got = &results[0];
+        assert_eq!(got.name, "sz");
+        assert_eq!(got.path, src.to_str().unwrap().to_string());
+        // Some(>= 5) KB; exact figure depends on FS block size.
+        let kb = got.size_kb.expect("du should have succeeded on a real dir");
+        assert!(kb >= 5, "expected >= 5 KB, got {kb}");
+
+        std::fs::remove_dir_all(&app_data_dir).ok();
+        std::fs::remove_dir_all(&src).ok();
+    }
+
+    #[test]
+    fn sizes_returns_none_for_a_tracked_source_whose_path_no_longer_exists() {
+        // A user can delete the underlying folder without removing the
+        // source from bmug2's tracked list - the Disk usage view then
+        // shows a row with size unavailable rather than breaking the
+        // whole report.
+        let app_data_dir = tmp_app_data_dir("sizes-missing");
+        config::save(&app_data_dir, "/usr/bmu/bin").unwrap();
+        let src = tmp_dir("sizes-missing-src");
+        add(&app_data_dir, src.to_str().unwrap(), None).unwrap();
+        std::fs::remove_dir_all(&src).unwrap();
+
+        let results = sizes(&app_data_dir);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].size_kb.is_none(), "deleted path should be reported as None");
+        std::fs::remove_dir_all(&app_data_dir).ok();
     }
 
     #[test]
