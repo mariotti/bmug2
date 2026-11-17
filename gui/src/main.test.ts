@@ -251,6 +251,25 @@ describe("buildScheduleInfoPanel", () => {
     expect(panel?.textContent).toContain("Full Disk Access");
   });
 
+  it("names the two grants the user actually needs, not just Terminal", () => {
+    // Regression guard against the old copy ("Scheduled runs may
+    // need Full Disk Access to read ~/Documents...") which was true
+    // but misleading - it implied one grant on Terminal would fix
+    // everything. FDA is per-binary and doesn't flow across the
+    // launchd boundary, so the panel has to list both the GUI grant
+    // (silences this + keeps Run Now working) AND one of rsync //
+    // /bin/sh for the actual schedule path.
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const panel = buildScheduleInfoPanel(false);
+    const text = panel?.textContent ?? "";
+    expect(text).toContain("bmug2.app");
+    expect(text).toContain("rsync");
+    expect(text).toContain("/bin/sh");
+    // The empty-list / + button guidance - users were landing in
+    // the FDA pane and reporting "nothing is in the list".
+    expect(text).toMatch(/\+/);
+  });
+
   it("shows the lingering-session note on Linux regardless of hasFullDiskAccess", () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     expect(buildScheduleInfoPanel(true)?.textContent).toContain("lingering");
