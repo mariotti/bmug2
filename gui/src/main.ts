@@ -2185,9 +2185,22 @@ export async function clearReplication(binDir: string) {
 // enabling linger is a real session-policy change that stays a
 // manual, explicit step.
 //
+// FDA is per-binary and does NOT flow across launchd's process
+// boundary: Terminal's grant covers nothing scheduled, and bmug2's
+// own grant (what "Run Now" rides on) also doesn't reach the
+// launchd-spawned chain `/bin/sh -> backmeup.sh -> rsync`. So the
+// panel has to list both the GUI grant (silences this warning +
+// keeps Run Now working) AND the schedule-path grant (one of rsync
+// or /bin/sh - the actual binary reading ~/Documents under launchd).
+// macOS's FDA list is empty by default; `+` + Cmd+Shift+G is the
+// only way to add a hidden path like /bin/sh.
+//
 // hasFullDiskAccess (macOS only - see has_full_disk_access in
-// schedule.rs) lets this skip the warning entirely once it's moot,
-// rather than nagging a user who already granted it.
+// schedule.rs) only probes the GUI binary's own FDA (readability of
+// ~/Library/Application Support/com.apple.TCC/TCC.db from this
+// process). Granting the GUI FDA silences the panel but the
+// schedule-path grant still has to happen separately for scheduled
+// runs on protected folders to succeed.
 export function buildScheduleInfoPanel(hasFullDiskAccess: boolean): HTMLElement | null {
   if (isMac()) {
     if (hasFullDiskAccess) return null;
@@ -2197,8 +2210,42 @@ export function buildScheduleInfoPanel(hasFullDiskAccess: boolean): HTMLElement 
     });
     return el("div", { class: "schedule-info" }, [
       el("p", {}, [
-        "Scheduled runs may need Full Disk Access to read folders like ~/Documents, " +
-          "even though the same backup works fine when run by hand or via Run Now.",
+        "Scheduled runs don't inherit your Terminal's Full Disk Access — launchd " +
+          "spawns them in a fresh process tree. Grant FDA explicitly to:",
+      ]),
+      el("ul", {}, [
+        el("li", {}, [
+          el("strong", {}, ["bmug2.app"]),
+          " — silences this warning and keeps Run Now working.",
+        ]),
+        el("li", {}, [
+          "Plus ",
+          el("strong", {}, ["one of these"]),
+          " so scheduled runs can read ~/Documents / ~/Desktop / ~/Downloads:",
+          el("ul", {}, [
+            el("li", {}, [
+              el("code", {}, ["/opt/homebrew/bin/rsync"]),
+              " (Apple Silicon) or ",
+              el("code", {}, ["/usr/local/bin/rsync"]),
+              " (Intel) — most surgical; may need re-granting after a ",
+              el("code", {}, ["brew upgrade rsync"]),
+              " that replaces the binary.",
+            ]),
+            el("li", {}, [
+              el("code", {}, ["/bin/sh"]),
+              " — covers the launchd wrapper that invokes rsync. Broader but stable across rsync upgrades.",
+            ]),
+          ]),
+        ]),
+      ]),
+      el("p", {}, [
+        "The FDA list starts empty — click the ",
+        el("strong", {}, ["+"]),
+        " button to add each, using ",
+        el("strong", {}, ["⌘⇧G"]),
+        " in the file picker to type a hidden path like ",
+        el("code", {}, ["/bin/sh"]),
+        ".",
       ]),
       openBtn,
     ]);
