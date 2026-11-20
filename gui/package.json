@@ -1,7 +1,7 @@
 {
   "name": "gui",
   "private": true,
-  "version": "2.18.33",
+  "version": "2.18.35",
   "type": "module",
   "scripts": {
     "dev": "vite",
