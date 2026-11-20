@@ -56,7 +56,7 @@ jobs:
       mcp:   ${{ steps.filter.outputs.mcp }}
       gui:   ${{ steps.filter.outputs.gui }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -88,7 +88,7 @@ jobs:
     outputs:
       count: ${{ steps.test-suite.outputs.count }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install dependencies
         # plocate provides the mlocate-style updatedb/locate dialect,
         # exercising the non-GNU branch of the capability detection;
@@ -116,7 +116,7 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.shell == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install dependencies
         # real rsync (Apple ships openrsync), GNU findutils
         # (gupdatedb/glocate), and rclone for backmeup.replicate.sh
@@ -131,7 +131,7 @@ jobs:
     outputs:
       count: ${{ steps.test-suite.outputs.count }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -164,7 +164,7 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.mcp == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -190,7 +190,7 @@ jobs:
       ts_count: ${{ steps.ts-tests.outputs.count }}
       rust_count: ${{ steps.rust-tests.outputs.count }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           # clippy here so the warnings-as-errors step below can run on
@@ -288,7 +288,7 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.gui == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
