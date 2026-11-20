@@ -1,0 +1,78 @@
+# Dependabot version updates (L3). Monthly cadence, grouped per
+# ecosystem: patch + minor bumps land as ONE PR per month (and per
+# ecosystem), majors stay separate so they get their own review.
+#
+# Complements the always-on security side, which is enabled via the
+# repository's Security settings (L1 alerts + L2 security updates)
+# and does NOT need any config here. See docs/CONTRIBUTING.md ->
+# "Dependency audits" for the policy stance; docs/DEPENDENCIES.md
+# for the current catalog.
+#
+# `open-pull-requests-limit: 3` is a safety valve: Dependabot will
+# never have more than three unmerged L3 PRs open per ecosystem at
+# once. New ones queue silently.
+
+version: 2
+
+updates:
+  # Rust / Cargo - Tauri + serde + their transitive forest.
+  - package-ecosystem: "cargo"
+    directory: "/gui/src-tauri"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      cargo-patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
+  # Node / npm - vite + vitest + @tauri-apps/* plugins.
+  - package-ecosystem: "npm"
+    directory: "/gui"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      npm-patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
+  # Python / pip (via pyproject.toml) - the MCP server subproject.
+  # Small surface (mcp, pydantic, pytest, pytest-cov) but gated by
+  # its own mcp-linux / mcp-macos CI jobs, so bumps surface a real
+  # test signal.
+  - package-ecosystem: "pip"
+    directory: "/mcp"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      pip-patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
+  # GitHub Actions themselves (actions/checkout@vN, codecov@vN,
+  # dorny/paths-filter@vN, etc.). Catches a deprecated-runtime
+  # announcement before it fails a CI run - we hit this pattern
+  # before, documented in CLAUDE.md's "Fix every warning" rule.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      actions-patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
