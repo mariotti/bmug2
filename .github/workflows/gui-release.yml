@@ -82,7 +82,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          # Both pinned to ubuntu-24.04. `ubuntu-latest` resolved to
+          # ubuntu-26.04 as of GHA image bump 20261116 (run 44833228187,
+          # v2.18.33-experimental) which ships rpm 4.19+ - that rpm
+          # version stopped expanding %{__signature_filename} and
+          # %{__plaintext_filename} inside %__gpg_sign_cmd, breaking the
+          # "Sign RPM" step below. Keeping both arches on 24.04 restores
+          # parity until the macro is rewritten to rpm 4.19+'s
+          # positional-args convention; see the Sign RPM step comment.
+          - runner: ubuntu-24.04
             arch: x86_64
           - runner: ubuntu-24.04-arm
             arch: aarch64
@@ -133,6 +141,15 @@ jobs:
         # passphrase from env so gpg doesn't block for a tty prompt.
         # Keeping the passphrase in a step env + wrapper (not in
         # ~/.rpmmacros on disk) means it never persists to a file.
+        #
+        # RPM-VERSION LOCK-IN: the %{__signature_filename} and
+        # %{__plaintext_filename} macro expansion below only works on
+        # rpm < 4.19. rpm 4.19 (Ubuntu 26.04's version as of GHA image
+        # 20261116) stopped expanding those names and instead passes
+        # the two filenames as positional args to the sign command.
+        # The matrix pin to ubuntu-24.04 above keeps us on a compatible
+        # rpm; when that's retired, rewrite the macro to drop the two
+        # %{} references and consume $1/$2 inside the wrapper script.
         run: |
           mkdir -p "$HOME/.gpg-wrapper"
           cat > "$HOME/.gpg-wrapper/gpg-sign-wrapper" <<'WRAPPER'
