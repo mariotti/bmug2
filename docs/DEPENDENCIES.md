@@ -46,7 +46,7 @@ advisories" section near the bottom). A full transitive listing would
 rot on every `npm update` / `cargo update`; the lockfiles already own
 that catalog.
 
-**CVE (OSV) last checked: 2026-11-17.** Regenerate with the one-liner
+**CVE (OSV) last checked: 2026-11-20.** Regenerate with the one-liner
 in "How to maintain this file" at the bottom (both direct and
 transitive scans use the same OSV batch endpoint). Not automated —
 a weekly or per-release manual run is the discipline.
@@ -83,8 +83,8 @@ pass missed. The two scanners are complementary, not redundant.
 | `@vitest/coverage-v8`         | `^5.0.4`         | 2026-10-15 | `standard-toolchain` — official vitest coverage provider; dev-time only. | 0 / 0 | V8-based coverage provider for vitest. Opt-in — `npm test` does not pass `--coverage`, so this only runs on demand (useful locally when inspecting what a given test exercises). |
 | `jsdom`                       | `^30.0.1`        | 2026-09-13 | `well-known` — the standard JS-ecosystem DOM simulator; dev-time only. | 0 / 0 | DOM environment for vitest unit tests (`document`, `window`, `querySelector…`). All `*.test.ts` under `gui/src/` render DOM via this. |
 | `typescript`                  | `~6.0.3`         | 2026-09-08 | `well-known` — Microsoft-maintained; dev-time only. | 0 / 0 | Compiler. Gated in CI via `tsc --noEmit`. |
-| `vite`                        | `^8.0.16`        | 2026-09-08 | `standard-toolchain` — mainstream Vite.js project; dev-time only. See the `docs/CONTRIBUTING.md` audit note on picomatch (transitive, not direct). | 0 / 29 | Dev server (`npm run dev`) + production bundler (`npm run build`). The Tauri app loads the built output in its webview. |
-| `vitest`                      | `^5.0.0`         | 2026-09-13 | `standard-toolchain` — Vite-ecosystem test runner; dev-time only. Same transitive-picomatch footnote as `vite`. | 0 / 3 | Unit test runner. 169 tests at the time of writing (see `gui/src/main.test.ts`). |
+| `vite`                        | `^8.0.16`        | 2026-09-08 | `standard-toolchain` — mainstream Vite.js project; dev-time only. | 0 / 29 | Dev server (`npm run dev`) + production bundler (`npm run build`). The Tauri app loads the built output in its webview. |
+| `vitest`                      | `^5.0.0`         | 2026-09-13 | `standard-toolchain` — Vite-ecosystem test runner; dev-time only. | 0 / 3 | Unit test runner. 169 tests at the time of writing (see `gui/src/main.test.ts`). |
 
 ## Transitive active advisories
 
@@ -93,14 +93,14 @@ inside at least one `affected.ranges` interval. Direct deps are
 already covered in the three tables above; this section is strictly
 for transitives we're carrying through the lockfiles.
 
-As of 2026-11-17 (full cross-target scan — see the refresh snippet
-for the exact command; the `--target all` flag matters on macOS,
-where without it the Linux-only subtree would be invisible).
+As of 2026-11-20 (441 Rust + 130 npm transitives scanned; full
+cross-target — see the refresh snippet for the exact command, the
+`--target all` flag matters on macOS where without it the Linux-only
+subtree would be invisible).
 
 | Package                            | Installed | Reached via                                    | Advisory                                           | Status  | Notes |
 |------------------------------------|-----------|------------------------------------------------|----------------------------------------------------|---------|-------|
-| `picomatch` (npm)                  | `4.0.7`   | `vite` / `vitest` / `fdir` / `tinyglobby` tree | [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) (ReDoS) | `known-upstream-pending` | Advisory `range: *` — every published picomatch is flagged. No patched version exists on npm yet (4.0.7 is the current tip). Dev-time only. See `docs/CONTRIBUTING.md` → "Dependency audits" for the carve-out rationale. |
-| `glib` (crates.io)                 | `0.18.5`  | `tauri` → `muda` → `gtk` 0.18 (Linux build only) | [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g) / [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429) (unsoundness in `VariantStrIter` iterator impl) | `known-upstream-pending` | Patched upstream in `glib` 0.20.0, but the 0.18 line is pinned by Tauri 2.x's muda/gtk-rs transitive. Latest stable `tauri` is 2.12.5 (what we're on); only `3.0.0-alpha.6` is newer, so no stable bump path exists today. Linux-only. Re-check when Tauri 2.x updates muda/gtk, or when Tauri 3 ships stable. |
+| `glib` (crates.io)                 | `0.18.5`  | `tauri` → `muda` → `gtk` 0.18 (Linux build only) | [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g) / [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429) (unsoundness in `VariantStrIter` iterator impl) | `known-upstream-pending` | Patched upstream in `glib` 0.20.0, but the 0.18 line is pinned by Tauri 2.x's muda/gtk-rs transitive. We're on `tauri` 2.12.7 (latest stable, verified 2026-11-20); the 2.12.6/2.12.7 patch bumps didn't advance gtk/muda. Only `3.0.0-alpha.6` is newer. Linux-only. Re-check when Tauri 2.x updates muda/gtk, or when Tauri 3 ships stable. |
 | `proc-macro-error` (crates.io)     | `1.0.4`   | `tauri` → `muda` → `gtk` → `glib-macros` (Linux-only) | [RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370) (unmaintained) | `unmaintained-upstream` | Informational advisory: no active maintainer. No fix version by design. Reaches us via the same Linux GTK subtree as `glib`; moves with it. |
 | `zbus_names` (crates.io)           | `4.3.5`   | `tauri-plugin-opener` → `zbus` (Linux only)    | [RUSTSEC-2026-0371](https://rustsec.org/advisories/RUSTSEC-2026-0371) (unmaintained) | `unmaintained-upstream` | Informational. Part of the `zbus` 5.x transitive carried by `tauri-plugin-opener` on Linux (D-Bus for `xdg-open`-style dispatch). `zbus` ecosystem split between maintained and unmaintained sub-crates; the opener plugin would need to switch to a maintained alternative, or absorb its own. |
 | `zvariant` (crates.io)             | `5.15.1`  | `tauri-plugin-opener` → `zbus` (Linux only)    | [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370) (unmaintained) | `unmaintained-upstream` | Same chain / same rationale as `zbus_names`. |

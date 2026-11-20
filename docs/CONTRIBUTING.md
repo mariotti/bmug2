@@ -118,24 +118,30 @@ finding. Rust side: `cargo build` / `cargo clippy --all-targets --
 -D warnings` are already gated in CI, so warnings there fail the
 build at PR time; that's the entire Rust audit surface we care about.
 
-One finding is parked as **known-upstream-pending**, not ignored:
+Status tags for anything we're actively carrying (as opposed to
+fixing today):
 
-- **picomatch ReDoS** (GHSA-fc5q-39xc-vjpf) — advertised `range: *`,
-  affects every published version through at least `4.0.7` (the
-  current latest on npm). Reaches us only via `vite`/`vitest`'s
-  transitive tree (`picomatch` → `fdir`/`tinyglobby` → `vite` →
-  `vitest` → `@vitest/coverage-v8`), i.e. **dev-only tooling** that
-  processes our own test file patterns at bundle/test time, never
-  user input. npm's suggested "fix" (downgrade vite to 6.2.7) is a
-  detection-window dodge, not a code patch. Re-check on each
-  picomatch release; a 4.0.8 / 5.x publication is the trigger to
-  bump and re-audit.
+- **`known-upstream-pending`** — advisory exists, has a fix
+  published somewhere upstream, but we can't resolve into it yet
+  (typical shape: a transitive is pinned by a parent we don't
+  control). Re-check on each upstream release of the parent chain.
+- **`unmaintained-upstream`** — RUSTSEC-style informational
+  advisory ("no active maintainer"). No fix version exists by
+  design. Clears when the dependency chain switches to a maintained
+  alternative.
 
-The discipline for any OTHER audit finding stays "fix in the same PR,
-not later" — see the "Fix every warning in the same PR" paragraph in
-CLAUDE.md. Known-upstream-pending is a narrow carve-out for
-"advisory with no published patched version anywhere", not a general
-"it's inconvenient so we'll ignore it" escape.
+Both are narrow carve-outs. The discipline for any OTHER audit
+finding stays "fix in the same PR, not later" — see the "Fix every
+warning in the same PR" paragraph in CLAUDE.md. These tags are not
+a general "it's inconvenient so we'll ignore it" escape.
+
+Historical note: the first entry we parked as
+`known-upstream-pending` was `picomatch` ReDoS (GHSA-fc5q-39xc-vjpf),
+reached via `vite`/`vitest`'s dev-only tree. Advisory was
+**withdrawn by the upstream reviewer on 2026-11-18**, so there's
+nothing left to park on the npm side; this paragraph stays only to
+show what a withdrawal looks like (a clean exit, no code change
+needed on our part).
 
 `docs/DEPENDENCIES.md` carries the live, row-by-row list of direct
 and transitive advisories with their status tags; this file owns the
