@@ -8,25 +8,39 @@ earlier ones reveal.
 
 ## Status
 
-- **Phase 1 — Measure + report**: in progress / next up.
+- **Phase 1 — Measure + report**: **shipped** in #217,
+  `v2.18.31-experimental`.
 - **Phases 2–6**: parked, listed below as a living outline (not
   commitments). Decisions to be made; shape may change.
 
-## Phase 1 — Measure + report *(in progress)*
+## Phase 1 — Measure + report *(shipped #217, v2.18.31-experimental)*
 
-Foundation. `backmeup.status.sh` already reports KB per project
-(`mirror_size_kb` and `history_size_kb` in its JSON output). Phase 1
-aggregates that into a cross-project rollup so "how much is bmug2
+Foundation. `backmeup.status.sh` already reported KB per project
+(`mirror_size_kb` and `history_size_kb` in its JSON output); Phase 1
+aggregated that into a cross-project rollup so "how much is bmug2
 costing me on this machine?" has a one-line answer.
 
-Scope:
+What shipped:
 
-- Add totals rows to `backmeup.status.sh`'s text and JSON output
-  (sum of SYNC + HISTORY across projects; same for each individually).
-- Surface the same rollup on the GUI dashboard header, near the
-  existing SYNC / HISTORY path lines.
+- New shell command `bin/backmeup.disk.sh` (text + `--json`) — sums
+  SYNC + HISTORY across every project and produces a replicate-
+  estimate number (local proxy, no remote call: SYNC + HISTORY minus
+  any project with `replicate_class=none`).
+- New Tauri commands `get_disk_usage` (shells to the new CLI) and
+  `get_sources_sizes` (walks each tracked source with `du -sk`;
+  size_kb comes back as `None` when a path can't be read).
+- New GUI screen `renderDiskUsage` — Settings-style full-screen view
+  reached via a "Disk usage" button in the dashboard header. Shows
+  four headline numbers (Sources total, SYNC total, HISTORY total,
+  Replicate estimate) + per-source and per-project tables.
+- Help-icon copy on the Replicate estimate explicitly labels the
+  number as a local proxy, not a measurement.
 
-No behavior change beyond visibility. No new config.
+Deliberately out of scope (decisions deferred to later phases):
+- No enforcement — report-only.
+- No budgets.
+- No automatic action on over-size — the user reads the number and
+  decides.
 
 ## Phase 2 — Budgets (open question)
 
