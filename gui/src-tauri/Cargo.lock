@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "gui"
-version = "2.18.33"
+version = "2.18.35"
 dependencies = [
  "serde",
  "serde_json",
