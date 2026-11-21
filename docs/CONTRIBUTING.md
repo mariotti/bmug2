@@ -96,6 +96,14 @@ failing) is not, since faking a tarball with a plausible-but-wrong
 entry count adds real complexity for the same code path already
 covered by the failure case.
 
+### Pre-release GUI walkthrough
+
+See `docs/PRE_RELEASE_GUI_CHECKLIST.md` — a hand-driven pass through
+each top-level user journey against a locally-built binary, run
+**before** promoting an experimental tag to stable. Covers the
+visual/runtime surface that unit + integration tests can't (native
+dialogs, cursor focus, window sizing, DevTools console errors).
+
 ### Pre-release RPM smoke test (Lima)
 
 Between an experimental tag (`vX.Y.Z-experimental`) and the plain
