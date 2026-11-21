@@ -41,6 +41,36 @@ bmug2 starts from bmu's last state, fixes its known issues, and adds a
 regression test suite and CI. See [Releases](../../releases) for the
 version history.
 
+## Why bmug2
+
+A backup tool for people who want their backup to be a browsable
+directory, not a vendor's format.
+
+- **Plain files.** Every snapshot is just a timestamped directory
+  (`B-20261120-143012/`) of ordinary files. Restore with `cp`,
+  Finder, or a Linux live-USB — no bmug2 install required.
+- **Time-Machine-style history + locate-style search.**
+  `backmeup.locate.sh` greps live and archived snapshots in one
+  pass; no index rebuild step before you can search.
+- **Off-site replication, your choice of backend:** rclone to any
+  remote, Proton Drive natively, pCloud, or a mounted cloud folder.
+  Per-source opt-out for the 44 GB videos folder you don't want
+  eating off-site quota.
+- **GUI + CLI, same storage.** A Tauri desktop app on macOS and
+  Linux; POSIX `/bin/sh` scripts for the terminal. They read the
+  same directories — pick one, or use both interchangeably.
+- **Schedules via launchd / systemd timers**, not a background
+  daemon. bmug2 generates the plist/unit file; your OS runs them.
+- **Refuses to silently lose data.** Mount checks before writes,
+  per-project locks against concurrent runs, Apple-`openrsync`
+  detection, tar-count verification before deleting a snapshot,
+  absolute paths in schedules so `$PATH` can't swap in the wrong
+  binary.
+
+Not for everyone. If you want "install Dropbox and forget", this
+isn't it. If you want your backup to still be yours when the tool
+is gone, this is it.
+
 ## By a human (granted :) )
 
 This is a lift up of the old BMU project. It is fully AI driven, but with a lot of human directions.
