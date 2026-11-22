@@ -36,6 +36,30 @@ BMU_DIRDBLOCATE="${BMU_DIRRSYNC}/.locate.dir"
 BMU_DIRRSYNC_MOUNT=""
 BMU_DIRBACKUPS_MOUNT=""
 #
+# Disk-size WARNINGS (Phase 2 of the disk-size project)
+# ------------------------------------------------------
+# Optional soft ceilings in bytes. At the end of every backmeup.sh run,
+# if the project's own SYNC or HISTORY size exceeds its effective
+# budget, backmeup.sh prints a one-line warning naming the overage
+# and the explicit CLI command the user would run to shrink it
+# (backmeup.archive.sh <project> <days>). It does NOT delete anything,
+# refuse to run, or auto-archive - the shell layer in bmug2 is
+# deliberately warn-only (see docs/PROJECT_disk-size.md's "Core
+# policy" section). Deletion from the shell requires an explicit,
+# human-invoked command - never a configured threshold.
+#
+# Both empty = silent, no warnings. Set either or both to a plain
+# integer byte count to enable the corresponding warning. Suggested
+# starting points: half the volume's capacity for HISTORY (since
+# histories grow unboundedly), free-disk minus 20 GB for SYNC.
+#
+# A per-project override lives in a .bmubudget sidecar inside each
+# project's HISTORY directory (${BMU_DIRBACKUPS}/<project>/.bmubudget)
+# with lines like SYNC_WARN_BYTES=20000000000 - see
+# docs/PROJECT_disk-size.md for the exact format.
+BMU_SYNC_WARN_BYTES=""
+BMU_HISTORY_WARN_BYTES=""
+#
 # OS Options
 # ----------
 #BMU_INSTDIR="/usr/local/bmu"

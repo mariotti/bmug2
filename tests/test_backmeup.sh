@@ -2296,6 +2296,180 @@ assert d['replicate_estimate_kb'] == included, \
     rm -rf "${l_src}" "${SB}/sync/noreplproj" "${SB}/sync-BP/noreplproj"
 }
 
+testDiskReportBudgetJsonNullWhenNotSet() {
+    # Phase 2 of the disk-size project: backmeup.disk.sh gains a
+    # `budget` section and per-project budget fields. With neither
+    # BMU_SYNC_WARN_BYTES / BMU_HISTORY_WARN_BYTES set AND no
+    # .bmubudget sidecars present, every budget field must come back
+    # as JSON null (not 0, not ""); sync_over / history_over must be
+    # false. Regression guard: Phase 1's output parsers had no budget
+    # keys at all, so the shape has to grow compatibly.
+    l_json=`"${SB}/bin/backmeup.disk.sh" --json 2>&1`
+    assertEquals "disk --json failed" 0 $?
+    echo "${l_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+b = d.get('budget')
+assert b is not None, 'missing budget section'
+assert b['sync_warn_bytes'] is None, f'expected null, got {b[\"sync_warn_bytes\"]}'
+assert b['history_warn_bytes'] is None, f'expected null, got {b[\"history_warn_bytes\"]}'
+assert b['sync_over'] is False, b
+assert b['history_over'] is False, b
+# Per-project budget fields also null when nothing is configured
+for p in d['projects']:
+    assert p['sync_warn_bytes'] is None, p
+    assert p['history_warn_bytes'] is None, p
+    assert p['sync_over'] is False, p
+    assert p['history_over'] is False, p
+"
+    assertTrue "budget section missing or wrong shape when nothing is configured" $?
+}
+
+testBackmeupSilentWhenNoBudgetSet() {
+    # Shell is warn-only. With no budget set, a normal backmeup.sh run
+    # must not print any "WARNING: SYNC..." / "WARNING: HISTORY..." line
+    # - the warning text is noise when the user hasn't opted in.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/bgt_silent"
+    mkdir -p "${l_src}"
+    echo "content" > "${l_src}/data.txt"
+    l_log="${SB}/bgt-silent.log"
+    "${SB}/bin/backmeup.sh" "${l_src}" > "${l_log}" 2>&1
+    assertEquals "backmeup.sh failed on silent case" 0 $?
+    grep -q "WARNING: SYNC" "${l_log}"
+    assertFalse "unexpected SYNC warning when no budget set" $?
+    grep -q "WARNING: HISTORY" "${l_log}"
+    assertFalse "unexpected HISTORY warning when no budget set" $?
+    rm -rf "${l_src}" "${SB}/sync/bgt_silent" "${SB}/sync-BP/bgt_silent"
+}
+
+testBackmeupWarnsOnOverBudgetGlobalSync() {
+    # Global BMU_SYNC_WARN_BYTES set small; project is above it; expect
+    # a one-line WARNING: SYNC for '<project>' naming the overage and
+    # the no-automatic-action language. Must NOT exit non-zero -
+    # warning is purely informational.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/bgt_global"
+    mkdir -p "${l_src}"
+    dd if=/dev/zero of="${l_src}/filler" bs=1024 count=256 > /dev/null 2>&1
+
+    # Make a temp install with a global SYNC budget of 1 byte
+    # (guaranteed to be exceeded). Can't just edit SB's setup.sh in
+    # place - that's shared with every other test; build a one-off.
+    l_home="${SHUNIT_TMPDIR}/bgt_global_home"
+    mkdir -p "${l_home}/usr" "${l_home}/checkout"
+    cp -R "${BMU_BIN_SRC}/." "${l_home}/checkout"
+    "${l_home}/checkout/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/bgt_global-install.log" 2>&1
+    assertEquals "bgt global install failed" 0 $?
+
+    # Append the budget. Keep BMU_HISTORY_WARN_BYTES unset; we only
+    # want the SYNC warning to fire.
+    echo 'BMU_SYNC_WARN_BYTES="1"' >> "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+
+    l_log="${SHUNIT_TMPDIR}/bgt_global-run.log"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" > "${l_log}" 2>&1
+    assertEquals "backmeup.sh must not exit non-zero on budget warning" 0 $?
+    grep -q "WARNING: SYNC for 'bgt_global'" "${l_log}"
+    assertTrue "missing SYNC WARNING line" $?
+    grep -q "No automatic action taken" "${l_log}"
+    assertTrue "warning must spell out no-automatic-action discipline" $?
+    # Must NOT also fire a HISTORY warning when only SYNC budget is set
+    grep -q "WARNING: HISTORY" "${l_log}"
+    assertFalse "HISTORY warning fired unexpectedly" $?
+}
+
+testBackmeupPerSourceSidecarOverridesGlobal() {
+    # Per-source .bmubudget HISTORY_WARN_BYTES overrides the global
+    # default. Setup: tiny global budget set (would fire on its own);
+    # per-source sidecar sets a huge one. Expect NO HISTORY warning.
+    # This is the specific regression guard for the shell-warn
+    # precedence contract documented in PROJECT_disk-size.md.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/bgt_override"
+    mkdir -p "${l_src}"
+    echo "trivial" > "${l_src}/x.txt"
+
+    l_home="${SHUNIT_TMPDIR}/bgt_override_home"
+    mkdir -p "${l_home}/usr" "${l_home}/checkout"
+    cp -R "${BMU_BIN_SRC}/." "${l_home}/checkout"
+    "${l_home}/checkout/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/bgt_override-install.log" 2>&1
+    assertEquals "bgt override install failed" 0 $?
+    # Global budget that would trigger (1 byte).
+    echo 'BMU_HISTORY_WARN_BYTES="1"' >> "${l_home}/usr/bmu/bin/backmeup.setup.sh"
+    # First backup so HISTORY/<project>/ exists for the sidecar.
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    # Now install a per-source override that does NOT trigger.
+    echo "HISTORY_WARN_BYTES=999999999999" > "${l_home}/sync-BP/bgt_override/.bmubudget"
+    # Run again - the WARNING must now be silent for HISTORY.
+    l_log="${SHUNIT_TMPDIR}/bgt_override-run2.log"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" > "${l_log}" 2>&1
+    grep -q "WARNING: HISTORY for 'bgt_override'" "${l_log}"
+    assertFalse "per-source sidecar failed to suppress the global budget warning" $?
+}
+
+testBackmeupIgnoresMalformedBudgetSidecar() {
+    # Permissive discipline from docs/PROJECT_disk-size.md: a typo in
+    # .bmubudget reads as "not set", falls back to the global default.
+    # NEVER a crash, non-zero exit, or warning text that references
+    # the typo'd value.
+    l_src="${SHUNIT_TMPDIR}/bmu/src/bgt_malformed"
+    mkdir -p "${l_src}"
+    echo "x" > "${l_src}/x.txt"
+
+    l_home="${SHUNIT_TMPDIR}/bgt_malformed_home"
+    mkdir -p "${l_home}/usr" "${l_home}/checkout"
+    cp -R "${BMU_BIN_SRC}/." "${l_home}/checkout"
+    "${l_home}/checkout/backmeup.install.sh" \
+        --sync-dir="${l_home}/sync" --backup-dir="${l_home}/sync-BP" \
+        --index-dir="${l_home}/sync/.locate.dir" --install-dir="${l_home}/usr/bmu" \
+        < /dev/null > "${SHUNIT_TMPDIR}/bgt_malformed-install.log" 2>&1
+    assertEquals "bgt malformed install failed" 0 $?
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" > /dev/null 2>&1
+    # Invalid: non-integer value, extra garbage, bogus key.
+    cat > "${l_home}/sync-BP/bgt_malformed/.bmubudget" <<'SIDECAR'
+HISTORY_WARN_BYTES=twelve-and-a-half
+# comment line - should be ignored
+SOMETHING_ELSE=12345
+SYNC_WARN_BYTES=
+SIDECAR
+    l_log="${SHUNIT_TMPDIR}/bgt_malformed-run.log"
+    "${l_home}/usr/bmu/bin/backmeup.sh" "${l_src}" > "${l_log}" 2>&1
+    assertEquals "malformed sidecar must not break backup" 0 $?
+    grep -q "WARNING" "${l_log}"
+    assertFalse "malformed sidecar should fall back to unset (no warning), got one anyway" $?
+}
+
+testDiskReportShowsVolumeInfo() {
+    # Phase 2: backmeup.disk.sh JSON gains a `volumes` object with
+    # mount / total_kb / avail_kb per root + same_volume boolean.
+    # In the test sandbox, SYNC and HISTORY are siblings so they
+    # should share a volume - same_volume: true.
+    l_json=`"${SB}/bin/backmeup.disk.sh" --json 2>&1`
+    assertEquals "disk --json failed" 0 $?
+    echo "${l_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('volumes')
+assert v is not None, 'missing volumes section'
+for side in ('sync','history'):
+    assert side in v, f'missing {side}'
+    for k in ('mount','total_kb','avail_kb'):
+        assert k in v[side], f'missing {side}.{k}'
+    # mount must be a string when present (df returned successfully
+    # in this test env); total/avail must be integers
+    if v[side]['mount'] is not None:
+        assert isinstance(v[side]['mount'], str), v[side]
+        assert isinstance(v[side]['total_kb'], int), v[side]
+        assert isinstance(v[side]['avail_kb'], int), v[side]
+# same_volume: true since SYNC + HISTORY are both tempdir siblings
+assert v['same_volume'] is True, f'same_volume should be true, got {v[\"same_volume\"]}'
+"
+    assertTrue "volumes section missing or wrong shape" $?
+}
+
 testLocateJsonMatchesTextResults() {
     [ -z "${BMU_CMDUPDATEDB}" ] && startSkipping
     "${SB}/bin/backmeup.updatedb.sh" > "${SB}/jsonlocate-updatedb.log" 2>&1

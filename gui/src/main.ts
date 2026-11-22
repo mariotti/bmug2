@@ -55,6 +55,37 @@ export interface DiskUsageProject {
   sync_kb: number;
   history_kb: number;
   replicate_class: string;
+  // Phase 2: per-project effective budget (sidecar override else
+  // global default). Optional in TS to match the Rust side's
+  // #[serde(default)] - an install predating Phase 2 won't emit
+  // these fields at all; the GUI treats them as missing = no budget.
+  sync_warn_bytes?: number | null;
+  history_warn_bytes?: number | null;
+  sync_over?: boolean;
+  history_over?: boolean;
+}
+
+// Phase 2 of the disk-size project: global budget totals + per-volume
+// info. Separate interfaces so DiskUsageReport can embed them by name
+// (matches the shell JSON shape exactly and keeps the GUI free to
+// render each sub-object independently).
+export interface DiskUsageBudget {
+  sync_warn_bytes?: number | null;
+  history_warn_bytes?: number | null;
+  sync_over?: boolean;
+  history_over?: boolean;
+}
+
+export interface DiskUsageVolume {
+  mount?: string | null;
+  total_kb?: number | null;
+  avail_kb?: number | null;
+}
+
+export interface DiskUsageVolumes {
+  sync?: DiskUsageVolume;
+  history?: DiskUsageVolume;
+  same_volume?: boolean | null;
 }
 
 export interface DiskUsageReport {
@@ -64,6 +95,13 @@ export interface DiskUsageReport {
   history_total_kb: number;
   replicate_estimate_kb: number;
   projects: DiskUsageProject[];
+  // Phase 2 additions. Optional for the same reason the Rust struct
+  // uses #[serde(default)]: GUI built against Phase 2 must still
+  // consume a Phase 1 install's report without crashing. The
+  // Disk usage view reads `.budget?.sync_over` with safe-nav
+  // and renders nothing when absent.
+  budget?: DiskUsageBudget;
+  volumes?: DiskUsageVolumes;
 }
 
 // Mirrors sources::SourceSize in Rust. `size_kb` is null when the

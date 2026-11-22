@@ -233,6 +233,61 @@ if [ ${l_BMU_RSYNCRC} -eq 0 ]; then
     ( cd "${BMU_DIRRSYNC}" && find "${l_BMU_PRJDIR}" > "${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}.filelist" )
 fi;
 #
+### Disk-size warnings (Phase 2 of the disk-size project) ###
+#
+# Compares the project's just-updated SYNC / HISTORY sizes against the
+# effective budget - per-project .bmubudget sidecar key if set, else
+# the global BMU_*_WARN_BYTES from setup.sh. On an over-budget hit,
+# prints a one-line warning with the overage and the explicit CLI
+# command the user would run to shrink it. NEVER deletes, archives,
+# refuses, or exits non-zero - the shell layer is deliberately
+# warn-only (see docs/PROJECT_disk-size.md).
+#
+# Deliberately placed after the filelist step above (so an interrupted
+# backup doesn't skip the warning) but BEFORE the final "exit
+# ${l_BMU_RSYNCRC}" so a budget-triggered warning never masks rsync's
+# own exit code to a caller.
+#
+# Skipped on --dry-run (we already exited earlier) and when the budget
+# resolver returns empty (no budget set, warning stays silent). Size
+# measurement via `du -sk` (kilobytes) matches backmeup.status.sh's
+# own numbers - keeping both in the same unit avoids a second
+# portability argument about `du` output.
+l_BMU_SYNC_PRJ_DIR="${BMU_DIRRSYNC}/${l_BMU_PRJDIR}"
+l_BMU_HIST_PRJ_DIR="${BMU_DIRBACKUPS}/${l_BMU_PRJDIR}"
+#
+# Per-source override takes precedence; fall back to the global
+# default. Both empty = silent.
+l_bmu_sync_warn=`bmuReadBudgetKey "${l_BMU_HIST_PRJ_DIR}" SYNC_WARN_BYTES`
+[ -z "${l_bmu_sync_warn}" ] && l_bmu_sync_warn="${BMU_SYNC_WARN_BYTES}"
+l_bmu_hist_warn=`bmuReadBudgetKey "${l_BMU_HIST_PRJ_DIR}" HISTORY_WARN_BYTES`
+[ -z "${l_bmu_hist_warn}" ] && l_bmu_hist_warn="${BMU_HISTORY_WARN_BYTES}"
+#
+if [ -n "${l_bmu_sync_warn}" ] && [ -d "${l_BMU_SYNC_PRJ_DIR}" ]; then
+    l_bmu_sync_kb=`du -sk "${l_BMU_SYNC_PRJ_DIR}" 2>/dev/null | awk '{print $1}'`
+    l_bmu_sync_bytes=`expr "${l_bmu_sync_kb:-0}" \* 1024 2>/dev/null`
+    if [ -n "${l_bmu_sync_bytes}" ] && [ "${l_bmu_sync_bytes}" -gt "${l_bmu_sync_warn}" ] 2>/dev/null; then
+        l_bmu_sync_pretty=`bmuFormatBytes "${l_bmu_sync_bytes}"`
+        l_bmu_sync_budget_pretty=`bmuFormatBytes "${l_bmu_sync_warn}"`
+        echo "WARNING: SYNC for '${l_BMU_PRJDIR}' is ${l_bmu_sync_pretty}, over its ${l_bmu_sync_budget_pretty} budget."
+        echo "  No automatic action taken. To reduce, remove unused content from the source folder"
+        echo "  (${1}) or raise the budget in ${l_BMU_HIST_PRJ_DIR}/.bmubudget (SYNC_WARN_BYTES=...)"
+        echo "  or in backmeup.setup.sh (BMU_SYNC_WARN_BYTES=...)."
+    fi
+fi
+if [ -n "${l_bmu_hist_warn}" ] && [ -d "${l_BMU_HIST_PRJ_DIR}" ]; then
+    l_bmu_hist_kb=`du -sk "${l_BMU_HIST_PRJ_DIR}" 2>/dev/null | awk '{print $1}'`
+    l_bmu_hist_bytes=`expr "${l_bmu_hist_kb:-0}" \* 1024 2>/dev/null`
+    if [ -n "${l_bmu_hist_bytes}" ] && [ "${l_bmu_hist_bytes}" -gt "${l_bmu_hist_warn}" ] 2>/dev/null; then
+        l_bmu_hist_pretty=`bmuFormatBytes "${l_bmu_hist_bytes}"`
+        l_bmu_hist_budget_pretty=`bmuFormatBytes "${l_bmu_hist_warn}"`
+        echo "WARNING: HISTORY for '${l_BMU_PRJDIR}' is ${l_bmu_hist_pretty}, over its ${l_bmu_hist_budget_pretty} budget."
+        echo "  No automatic action taken. To shrink, run:  backmeup.archive.sh ${l_BMU_PRJDIR} 180"
+        echo "  (adjust the days to taste; raises the budget via ${l_BMU_HIST_PRJ_DIR}/.bmubudget"
+        echo "  HISTORY_WARN_BYTES=... or backmeup.setup.sh BMU_HISTORY_WARN_BYTES=...)"
+    fi
+fi
+#
 ### END OF RSYNC JOB ###
 #
 #Exit with rsync's own status: a cron job checking $? should see a real
