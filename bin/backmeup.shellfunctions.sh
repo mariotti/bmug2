@@ -146,6 +146,66 @@ bmuMountPoint() {
     df -P "$1" 2>/dev/null | awk 'NR>1 {line=$NF} END {print line}'
 }
 #
+# bmuVolumeInfo(path) → "mount|total_kb|avail_kb"
+# POSIX wrapper around `df -Pk` returning a single pipe-separated
+# triple for the volume `path` lives on. All sizes in kilobytes
+# (same unit everything else in bmug2 uses - `du -sk`, du -sh, etc.).
+# Empty string on any failure (path missing, df error, parse weirdness)
+# so the caller can treat "volume info unavailable" as a graceful
+# no-op rather than a hard error. Same `line=$NF/last-row` trick as
+# bmuMountPoint above for long device names that wrap onto two lines.
+bmuVolumeInfo() {
+    df -Pk "$1" 2>/dev/null | awk '
+        NR>1 { mount=$NF; total=$2; avail=$4 }
+        END {
+            if (mount == "") exit 0
+            print mount "|" total "|" avail
+        }
+    '
+}
+#
+# bmuReadBudgetKey(dir, key) → integer bytes, or empty.
+# Reads KEY=value from `${dir}/.bmubudget` (the per-project budget
+# sidecar). Returns bytes as a plain integer, or empty when the file
+# or key is absent/malformed. Deliberately permissive: a typo in the
+# sidecar reads as "not set" (fall back to the global default) rather
+# than crashing a backup run - the shell is warn-only, and a broken
+# warning is worse than no warning. Keys read today:
+#   SYNC_WARN_BYTES, HISTORY_WARN_BYTES
+# Future keys (REMOTE_WARN_BYTES, etc.) use the same shape.
+bmuReadBudgetKey() {
+    l_bmu_sidecar="${1}/.bmubudget"
+    [ -f "${l_bmu_sidecar}" ] || return 0
+    l_bmu_val=`awk -F= -v key="$2" '
+        $0 !~ /^[[:space:]]*#/ && $1 == key {
+            v = $2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            # strip optional surrounding quotes, for readability
+            sub(/^"/, "", v); sub(/"$/, "", v)
+            sub(/^'\''/, "", v); sub(/'\''$/, "", v)
+            # final value must be a plain unsigned integer - anything
+            # else is treated as unset, same discipline as reading
+            # malformed .bmukind sidecars in archive.sh
+            if (v ~ /^[0-9]+$/) { print v; exit }
+        }
+    ' "${l_bmu_sidecar}" 2>/dev/null`
+    [ -n "${l_bmu_val}" ] && echo "${l_bmu_val}"
+}
+#
+# bmuFormatBytes(bytes) → "4.2 GB" / "123 MB" / "456 KB" / "1024 B"
+# Human-friendly sizer. Integer-only input, string output. Used by
+# the budget warnings in backmeup.sh and the "over budget?" column
+# in backmeup.disk.sh - never for arithmetic. Shell can't do float
+# math portably, so `awk` does the one division we need.
+bmuFormatBytes() {
+    awk -v b="$1" 'BEGIN {
+        if (b >= 1073741824)    printf "%.1f GB", b/1073741824
+        else if (b >= 1048576)  printf "%.1f MB", b/1048576
+        else if (b >= 1024)     printf "%.1f KB", b/1024
+        else                    printf "%d B",    b
+    }'
+}
+#
 # bmuDetectRclone()
 # Sets BMU_CMDRCLONE to the first usable rclone found on PATH or in the
 # common Homebrew/system locations, resolved to its absolute path via

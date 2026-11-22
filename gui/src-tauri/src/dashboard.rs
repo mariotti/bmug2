@@ -38,6 +38,59 @@ pub struct DiskUsageProject {
     /// internal Rust enum variants (backward compat if either side
     /// evolves independently).
     pub replicate_class: String,
+    /// Per-project effective budget in bytes - sidecar override if
+    /// set, else the global default. Phase 2 of the disk-size project;
+    /// `#[serde(default)]` keeps older bmug2 CLI output parseable (an
+    /// install predating Phase 2 won't emit this field).
+    #[serde(default)]
+    pub sync_warn_bytes: Option<u64>,
+    #[serde(default)]
+    pub history_warn_bytes: Option<u64>,
+    #[serde(default)]
+    pub sync_over: bool,
+    #[serde(default)]
+    pub history_over: bool,
+}
+
+/// Global budget totals, matching backmeup.disk.sh's `budget` object.
+/// Everything optional / `#[serde(default)]` so a pre-Phase-2 CLI's
+/// output still parses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DiskUsageBudget {
+    #[serde(default)]
+    pub sync_warn_bytes: Option<u64>,
+    #[serde(default)]
+    pub history_warn_bytes: Option<u64>,
+    #[serde(default)]
+    pub sync_over: bool,
+    #[serde(default)]
+    pub history_over: bool,
+}
+
+/// Per-volume info for a SYNC/HISTORY root. `mount` is None when
+/// `df -Pk` couldn't resolve the volume (missing path, external
+/// drive not plugged in). Total/avail reported in KB to match
+/// everything else in bmug2.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DiskUsageVolume {
+    #[serde(default)]
+    pub mount: Option<String>,
+    #[serde(default)]
+    pub total_kb: Option<u64>,
+    #[serde(default)]
+    pub avail_kb: Option<u64>,
+}
+
+/// Which volumes SYNC + HISTORY live on. `same_volume` is None when
+/// at least one side couldn't be resolved (unknown).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DiskUsageVolumes {
+    #[serde(default)]
+    pub sync: DiskUsageVolume,
+    #[serde(default)]
+    pub history: DiskUsageVolume,
+    #[serde(default)]
+    pub same_volume: Option<bool>,
 }
 
 /// Phase 1 of the disk-size project: aggregated SYNC/HISTORY totals
@@ -46,6 +99,10 @@ pub struct DiskUsageProject {
 /// (sync_kb + history_kb) over projects whose replicate_class is NOT
 /// "none" (per-source opt-out). A later phase can call `rclone size`
 /// when the configured backend is rclone/pcloud.
+///
+/// Phase 2 added the `budget` + `volumes` sub-objects, both
+/// `#[serde(default)]` so a GUI built against Phase 2 still parses
+/// a pre-Phase-2 CLI's `backmeup.disk.sh --json` output.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiskUsageReport {
     pub sync_dir: String,
@@ -54,6 +111,10 @@ pub struct DiskUsageReport {
     pub history_total_kb: u64,
     pub replicate_estimate_kb: u64,
     pub projects: Vec<DiskUsageProject>,
+    #[serde(default)]
+    pub budget: DiskUsageBudget,
+    #[serde(default)]
+    pub volumes: DiskUsageVolumes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,6 +222,45 @@ mod tests {
         let lea = parsed.projects.iter().find(|p| p.name == "lea").unwrap();
         assert_eq!(lea.replicate_class, "none");
         assert_eq!(lea.sync_kb, 40);
+    }
+
+    #[test]
+    fn parses_phase1_disk_json_against_phase2_schema() {
+        // Permanent regression guard: a Phase-1 install's output
+        // (same bytes as REAL_DISK_JSON above - no `budget`, no
+        // `volumes`, no per-project budget fields) must keep parsing
+        // against the Phase-2 schema that added those sections.
+        // #[serde(default)] on each new field is what makes this work;
+        // a careless change dropping one of them would surface here.
+        let parsed: DiskUsageReport = serde_json::from_str(REAL_DISK_JSON)
+            .expect("Phase-2 schema must still parse Phase-1 output; a `#[serde(default)]` was \
+                     probably dropped. Fix that, not this test.");
+        assert_eq!(parsed.budget, DiskUsageBudget::default());
+        assert_eq!(parsed.volumes, DiskUsageVolumes::default());
+        for p in &parsed.projects {
+            assert_eq!(p.sync_warn_bytes, None);
+            assert_eq!(p.history_warn_bytes, None);
+            assert!(!p.sync_over);
+            assert!(!p.history_over);
+        }
+    }
+
+    #[test]
+    fn parses_phase2_disk_json_with_budget_and_volumes() {
+        // Captured against a real Phase-2 CLI output: both budget
+        // fields set (one over, one under), SYNC and HISTORY on the
+        // same volume, per-project sidecar override on one project.
+        let phase2 = r#"{"sync_dir":"/s","history_dir":"/h","sync_total_kb":100,"history_total_kb":2000,"replicate_estimate_kb":2100,"budget":{"sync_warn_bytes":1048576,"history_warn_bytes":1024,"sync_over":false,"history_over":true},"volumes":{"sync":{"mount":"/","total_kb":500000000,"avail_kb":100000000},"history":{"mount":"/","total_kb":500000000,"avail_kb":100000000},"same_volume":true},"projects":[{"name":"videos","sync_kb":80,"history_kb":1800,"replicate_class":"none","sync_warn_bytes":null,"history_warn_bytes":500,"sync_over":false,"history_over":true},{"name":"docs","sync_kb":20,"history_kb":200,"replicate_class":"default","sync_warn_bytes":null,"history_warn_bytes":null,"sync_over":false,"history_over":false}]}"#;
+        let parsed: DiskUsageReport = serde_json::from_str(phase2).unwrap();
+        assert_eq!(parsed.budget.sync_warn_bytes, Some(1048576));
+        assert_eq!(parsed.budget.history_warn_bytes, Some(1024));
+        assert!(!parsed.budget.sync_over);
+        assert!(parsed.budget.history_over);
+        assert_eq!(parsed.volumes.sync.mount.as_deref(), Some("/"));
+        assert_eq!(parsed.volumes.same_volume, Some(true));
+        let videos = parsed.projects.iter().find(|p| p.name == "videos").unwrap();
+        assert_eq!(videos.history_warn_bytes, Some(500));
+        assert!(videos.history_over);
     }
 
     #[test]
