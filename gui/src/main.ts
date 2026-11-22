@@ -121,6 +121,23 @@ export interface SourceBudget {
   history_warn_bytes: number | null;
 }
 
+// Mirrors archive::ArchivePreview / archive::ArchiveRunOutput in
+// Rust, which in turn come from backmeup.archive.sh. Phase 3
+// follow-up: one-click archive from the GUI with a dry-run
+// preview → explicit "Really archive" confirmation. See
+// docs/PROJECT_disk-size.md "Phase 3 - GUI active management".
+export interface ArchivePreview {
+  candidate_count: number;
+  total_bytes_to_archive: number;
+  log: string;
+}
+
+export interface ArchiveRunOutput {
+  archived_count: number;
+  log: string;
+  ok: boolean;
+}
+
 // Mirrors sources::SourceSize in Rust. `size_kb` is null when the
 // underlying path can't be `du`'d (permission denied, no longer
 // exists, etc.) - the Disk usage view renders that as "—" rather
@@ -2515,6 +2532,13 @@ export async function renderDiskUsage(binDir: string) {
         ]),
   ]);
 
+  // Per-project table. Rows that are HISTORY-over-budget gain an
+  // "Archive…" action (Phase 3 one-click archive) that expands an
+  // inline preview-form row below them: days-preset dropdown →
+  // Preview (dry-run) → "Really archive" confirm button. Deliberately
+  // row-level + inline (not a modal, not a separate screen): the
+  // destructive action is scoped to the one row it was triggered
+  // from, and no other project's state is in play.
   const projectsSection = el("section", { class: "disk-usage-section" }, [
     el("h2", {}, ["Per project (what's in SYNC + HISTORY)"]),
     report.projects.length === 0
@@ -2526,19 +2550,35 @@ export async function renderDiskUsage(binDir: string) {
               el("th", {}, ["SYNC"]),
               el("th", {}, ["HISTORY"]),
               el("th", {}, ["Off-site"]),
+              el("th", {}, [""]), // Actions column; blank header
             ]),
           ]),
           el(
             "tbody",
             {},
-            report.projects.map((p) =>
-              el("tr", {}, [
+            report.projects.flatMap((p) => {
+              const archiveRow = p.history_over
+                ? buildArchiveRow(binDir, p.name)
+                : null;
+              const actionBtn = archiveRow
+                ? (() => {
+                    const btn = el("button", { type: "button" }, ["Archive…"]);
+                    btn.addEventListener("click", () => {
+                      archiveRow.style.display =
+                        archiveRow.style.display === "none" ? "" : "none";
+                    });
+                    return btn;
+                  })()
+                : "";
+              const mainRow = el("tr", {}, [
                 el("td", {}, [el("strong", {}, [p.name])]),
                 el("td", {}, [formatKb(p.sync_kb), overBadge(p.sync_over)]),
                 el("td", {}, [formatKb(p.history_kb), overBadge(p.history_over)]),
                 el("td", {}, [p.replicate_class === "none" ? "Local-only" : "Replicated"]),
-              ]),
-            ),
+                el("td", {}, [actionBtn]),
+              ]);
+              return archiveRow ? [mainRow, archiveRow] : [mainRow];
+            }),
           ),
         ]),
   ]);
@@ -2581,6 +2621,159 @@ function gbInputToBytes(input: string): number | null {
 // corresponding key (shell = silent). Errors from the Tauri side
 // surface inline, not as a banner - this view is complex enough
 // already.
+// Days presets for the one-click archive flow. Named days are what
+// most users think in; a dropdown eliminates typo modes a free-form
+// number input would introduce (and typos in a destructive-adjacent
+// field are the worst kind). Starts at 7 (recent enough to be safe
+// for frequent use), 180 is the shell default for `backmeup.
+// archive.sh <project>` so the preselect matches that intuition.
+const ARCHIVE_DAYS_PRESETS = [7, 30, 90, 180, 365] as const;
+
+// Row-level archive flow: an inline <tr> that lives below each
+// over-budget project row. Initially hidden; the "Archive…"
+// button on the main row toggles its display. Three states:
+//   1. idle - days picker + Preview button
+//   2. previewed - "N snapshots would be archived (X GB)" + Really
+//                  archive + Reset buttons
+//   3. ran - "N snapshots archived" + log (or error log on fail)
+// renderDiskUsage re-runs on success to refresh the numbers.
+function buildArchiveRow(binDir: string, project: string): HTMLTableRowElement {
+  const row = el("tr", { class: "disk-usage-archive-row" }, []) as HTMLTableRowElement;
+  row.style.display = "none";
+
+  const daysSelect = el("select", {}) as HTMLSelectElement;
+  for (const d of ARCHIVE_DAYS_PRESETS) {
+    const label = d === 7 ? "7 days" :
+                  d === 30 ? "30 days" :
+                  d === 90 ? "90 days" :
+                  d === 180 ? "180 days (default)" :
+                  "365 days";
+    daysSelect.append(new Option(label, String(d), d === 180, d === 180));
+  }
+
+  const previewBtn = el("button", { type: "button" }, ["Preview"]) as HTMLButtonElement;
+  const summary = el("span", { class: "disk-usage-archive-summary" }, []);
+  const confirmBtn = el("button", { type: "button", class: "remove-btn" }, [
+    "Really archive",
+  ]) as HTMLButtonElement;
+  confirmBtn.style.display = "none";
+  const resetBtn = el("button", { type: "button" }, ["Reset"]) as HTMLButtonElement;
+  resetBtn.style.display = "none";
+  const resultLog = el("pre", { class: "log" }, []) as HTMLPreElement;
+  resultLog.style.display = "none";
+  const errorLog = el("p", { class: "settings-check-error" }, []) as HTMLParagraphElement;
+  errorLog.style.display = "none";
+
+  const toIdle = () => {
+    summary.replaceChildren();
+    confirmBtn.style.display = "none";
+    resetBtn.style.display = "none";
+    resultLog.style.display = "none";
+    resultLog.textContent = "";
+    errorLog.style.display = "none";
+    errorLog.textContent = "";
+    daysSelect.disabled = false;
+    previewBtn.disabled = false;
+    previewBtn.textContent = "Preview";
+  };
+  resetBtn.addEventListener("click", toIdle);
+
+  previewBtn.addEventListener("click", async () => {
+    previewBtn.disabled = true;
+    previewBtn.textContent = "Previewing…";
+    errorLog.style.display = "none";
+    try {
+      const preview = await invoke<ArchivePreview>("preview_archive", {
+        binDir,
+        project,
+        days: daysSelect.value,
+      });
+      if (preview.candidate_count === 0) {
+        summary.replaceChildren(
+          `No snapshots older than ${daysSelect.value} days — nothing would be archived.`,
+        );
+        confirmBtn.style.display = "none";
+        resetBtn.style.display = "";
+      } else {
+        const gb = (preview.total_bytes_to_archive / 1_073_741_824).toFixed(2);
+        summary.replaceChildren(
+          `${preview.candidate_count} snapshot${preview.candidate_count === 1 ? "" : "s"} ` +
+            `older than ${daysSelect.value} days would be archived ` +
+            `(~${gb} GB on disk today; actual archive size is typically smaller after gzip).`,
+        );
+        confirmBtn.style.display = "";
+        resetBtn.style.display = "";
+      }
+      daysSelect.disabled = true;
+      previewBtn.disabled = true;
+      previewBtn.textContent = "Preview";
+    } catch (err) {
+      errorLog.textContent = `Preview failed: ${err}`;
+      errorLog.style.display = "";
+      previewBtn.disabled = false;
+      previewBtn.textContent = "Preview";
+    }
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Archiving…";
+    try {
+      const result = await invoke<ArchiveRunOutput>("commit_archive", {
+        binDir,
+        project,
+        days: daysSelect.value,
+      });
+      resultLog.textContent = result.log;
+      resultLog.style.display = "";
+      if (result.ok) {
+        summary.replaceChildren(
+          `Archived ${result.archived_count} snapshot${result.archived_count === 1 ? "" : "s"}. ` +
+            `Refresh the Disk usage view to see updated numbers.`,
+        );
+        confirmBtn.style.display = "none";
+        // Deliberately NOT auto-refreshing the whole disk view here:
+        // (a) the user's cursor is on this row and a hard re-render
+        // would scroll away unpredictably, (b) the OS filesystem
+        // cache may not reflect the tar/rm immediately. The explicit
+        // "Refresh the Disk usage view" hint matches how we already
+        // handle it for Run Now.
+      } else {
+        errorLog.textContent = `Archive reported failure (exit non-zero). See log below.`;
+        errorLog.style.display = "";
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Really archive";
+      }
+    } catch (err) {
+      errorLog.textContent = `Archive failed: ${err}`;
+      errorLog.style.display = "";
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Really archive";
+    }
+  });
+
+  row.append(
+    el("td", { colspan: "5", class: "disk-usage-archive-form" }, [
+      el("div", { class: "field-row" }, [
+        el("label", {}, [
+          "Archive snapshots older than ",
+          daysSelect,
+          " for '",
+          el("strong", {}, [project]),
+          "' ",
+        ]),
+        previewBtn,
+        confirmBtn,
+        resetBtn,
+      ]),
+      summary,
+      errorLog,
+      resultLog,
+    ]),
+  );
+  return row;
+}
+
 export function buildBudgetEditor(
   binDir: string,
   initialGlobal: GlobalBudget,

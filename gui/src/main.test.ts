@@ -62,6 +62,8 @@ import {
   type LocateHit,
   type DiskUsageReport,
   type SourceSize,
+  type ArchivePreview,
+  type ArchiveRunOutput,
   type DefaultPaths,
   type InstallOutcome,
   type RemoteEntry,
@@ -2015,6 +2017,11 @@ describe("renderDiskUsage", () => {
         case "get_source_budget": return { sync_warn_bytes: null, history_warn_bytes: null };
         case "set_global_budget": return undefined;
         case "set_source_budget": return undefined;
+        // Phase 3 follow-up: archive-row defaults so the base tests
+        // (which don't exercise the archive flow) stay silent when
+        // the row isn't even visible. Specific tests override.
+        case "preview_archive": return { candidate_count: 0, total_bytes_to_archive: 0, log: "" };
+        case "commit_archive": return { archived_count: 0, log: "", ok: true };
         default: throw new Error(`unmocked invoke command in test: ${cmd}`);
       }
     });
@@ -2169,9 +2176,15 @@ describe("renderDiskUsage", () => {
       } satisfies DiskUsageReport,
     });
     await renderDiskUsage("/bin");
-    const projRows = Array.from(document.querySelectorAll("table.sources-table")[1].querySelectorAll("tbody tr"));
-    expect(projRows.length).toBe(1);
-    expect(projRows[0].textContent).toContain("OVER BUDGET");
+    // 1 main row + 1 hidden archive-form row underneath (added in
+    // the Phase 3 follow-up for the Archive… button). Scope to the
+    // non-form row for the badge assertion.
+    const projectsTable = document.querySelectorAll("table.sources-table")[1];
+    const mainRows = Array.from(
+      projectsTable.querySelectorAll("tbody tr:not(.disk-usage-archive-row)"),
+    );
+    expect(mainRows.length).toBe(1);
+    expect(mainRows[0].textContent).toContain("OVER BUDGET");
   });
 
   it("renders a Budgets section with two global inputs when disk usage loads", async () => {
@@ -2248,6 +2261,244 @@ describe("renderDiskUsage", () => {
     const values = Array.from(picker.options).map((o) => o.value);
     expect(values).toContain("/me/Documents");
     expect(values).toContain("/me/Lea");
+  });
+
+  // ------------------------------------------------------------
+  // Phase 3 follow-up: row-level one-click archive. Dry-run
+  // preview → explicit "Really archive" confirm. Only OVER BUDGET
+  // (history_over=true) rows gain the entry point.
+  // ------------------------------------------------------------
+
+  const overBudgetReport: DiskUsageReport = {
+    sync_dir: "/sync",
+    history_dir: "/sync-BP",
+    sync_total_kb: 2048,
+    history_total_kb: 1024,
+    replicate_estimate_kb: 1024,
+    projects: [
+      {
+        name: "over",
+        sync_kb: 20,
+        history_kb: 2000,
+        replicate_class: "default",
+        sync_warn_bytes: null,
+        history_warn_bytes: 500,
+        sync_over: false,
+        history_over: true,
+      },
+      {
+        name: "under",
+        sync_kb: 10,
+        history_kb: 100,
+        replicate_class: "default",
+        sync_warn_bytes: null,
+        history_warn_bytes: null,
+        sync_over: false,
+        history_over: false,
+      },
+    ],
+  };
+
+  it("only renders the Archive… button on rows that are history_over", async () => {
+    mockDisk({ get_disk_usage: overBudgetReport });
+    await renderDiskUsage("/bin");
+    // Scope to the per-project table (second of two sources-table).
+    const rows = Array.from(
+      document.querySelectorAll("table.sources-table")[1].querySelectorAll("tbody tr.disk-usage-archive-row, tbody tr:not(.disk-usage-archive-row)"),
+    );
+    // Only the over row should have an archive button. Button text is "Archive…"
+    const buttons = Array.from(document.querySelectorAll("button")).filter((b) => b.textContent === "Archive…");
+    expect(buttons.length).toBe(1);
+    // The archive form row is initially hidden.
+    const form = document.querySelector<HTMLTableRowElement>("tr.disk-usage-archive-row")!;
+    expect(form.style.display).toBe("none");
+    // Rows count: 2 main + 1 archive form row (hidden) = 3 total
+    expect(rows.length).toBe(3);
+  });
+
+  it("clicking Archive… toggles the inline form visibility", async () => {
+    mockDisk({ get_disk_usage: overBudgetReport });
+    await renderDiskUsage("/bin");
+    const archiveBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Archive…")!;
+    const form = document.querySelector<HTMLTableRowElement>("tr.disk-usage-archive-row")!;
+    expect(form.style.display).toBe("none");
+    archiveBtn.dispatchEvent(new Event("click"));
+    expect(form.style.display).toBe("");
+    archiveBtn.dispatchEvent(new Event("click"));
+    expect(form.style.display).toBe("none");
+  });
+
+  it("Preview summarises candidate_count and GB from preview_archive", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: {
+        candidate_count: 5,
+        total_bytes_to_archive: 2_147_483_648, // 2.00 GB
+        log: "would archive...\n",
+      } satisfies ArchivePreview,
+    });
+    await renderDiskUsage("/bin");
+    const archiveBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Archive…")!;
+    archiveBtn.dispatchEvent(new Event("click"));
+    const previewBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Preview")!;
+    previewBtn.dispatchEvent(new Event("click"));
+    await waitFor(() => {
+      const t = document.querySelector(".disk-usage-archive-summary")!.textContent ?? "";
+      return t.includes("5 snapshots") && t.includes("~2.00 GB");
+    });
+    // After a successful preview the "Really archive" button becomes
+    // visible - the days picker gets disabled to prevent a bait-and-
+    // switch between preview and commit.
+    const confirmBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Really archive") as HTMLButtonElement;
+    expect(confirmBtn.style.display).toBe("");
+    const daysSelect = document.querySelector<HTMLSelectElement>("tr.disk-usage-archive-row select")!;
+    expect(daysSelect.disabled).toBe(true);
+  });
+
+  it("empty-preview (candidate_count=0) shows no 'Really archive' button, just a note", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: {
+        candidate_count: 0,
+        total_bytes_to_archive: 0,
+        log: "No snapshots older than 180 days.\n",
+      } satisfies ArchivePreview,
+    });
+    await renderDiskUsage("/bin");
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Archive…")!
+      .dispatchEvent(new Event("click"));
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Preview")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      (document.querySelector(".disk-usage-archive-summary")!.textContent ?? "")
+        .includes("nothing would be archived"),
+    );
+    const confirmBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Really archive") as HTMLButtonElement;
+    expect(confirmBtn.style.display).toBe("none");
+  });
+
+  it("Preview error surfaces inline without destroying the row", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: new Error("backmeup.archive.sh: ERROR: no history for over"),
+    });
+    await renderDiskUsage("/bin");
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Archive…")!
+      .dispatchEvent(new Event("click"));
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Preview")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      Array.from(document.querySelectorAll("tr.disk-usage-archive-row .settings-check-error")).some(
+        (e) => (e.textContent ?? "").includes("ERROR: no history"),
+      ),
+    );
+    // The Preview button becomes enabled again so the user can retry
+    // (after adjusting days or fixing the underlying issue).
+    const previewBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Preview") as HTMLButtonElement;
+    expect(previewBtn.disabled).toBe(false);
+  });
+
+  it("Really archive invokes commit_archive with the same days, reports archived_count on success", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: {
+        candidate_count: 3,
+        total_bytes_to_archive: 100,
+        log: "",
+      } satisfies ArchivePreview,
+      commit_archive: {
+        archived_count: 3,
+        log: "3 snapshot(s) archived.\n",
+        ok: true,
+      } satisfies ArchiveRunOutput,
+    });
+    await renderDiskUsage("/bin");
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Archive…")!
+      .dispatchEvent(new Event("click"));
+    // Change days from the default 180 to 90 BEFORE previewing.
+    const daysSelect = document.querySelector<HTMLSelectElement>("tr.disk-usage-archive-row select")!;
+    daysSelect.value = "90";
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Preview")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      (document.querySelector(".disk-usage-archive-summary")!.textContent ?? "").includes("3 snapshots"),
+    );
+    // Clear any previous invoke call records so we can assert on just commit_archive.
+    const before = vi.mocked(invoke).mock.calls.length;
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Really archive")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      vi.mocked(invoke).mock.calls.slice(before).some(([cmd]) => cmd === "commit_archive"),
+    );
+    const call = vi.mocked(invoke).mock.calls.slice(before)
+      .find(([cmd]) => cmd === "commit_archive")!;
+    // Days must match what was previewed, not the default - regression
+    // guard against a bait-and-switch between preview and commit.
+    expect(call[1]).toEqual({ binDir: "/bin", project: "over", days: "90" });
+    await waitFor(() =>
+      (document.querySelector(".disk-usage-archive-summary")!.textContent ?? "").includes("Archived 3 snapshots"),
+    );
+  });
+
+  it("commit_archive failure surfaces the error log + leaves Really archive clickable for retry", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: {
+        candidate_count: 1,
+        total_bytes_to_archive: 100,
+        log: "",
+      } satisfies ArchivePreview,
+      commit_archive: new Error("ERROR: tar failed for B-20250511-120000"),
+    });
+    await renderDiskUsage("/bin");
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Archive…")!
+      .dispatchEvent(new Event("click"));
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Preview")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      (document.querySelector(".disk-usage-archive-summary")!.textContent ?? "").includes("1 snapshot"),
+    );
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Really archive")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      Array.from(document.querySelectorAll("tr.disk-usage-archive-row .settings-check-error")).some(
+        (e) => (e.textContent ?? "").includes("tar failed"),
+      ),
+    );
+    // Really archive re-enabled for retry; text restored.
+    const confirmBtn = Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent === "Really archive") as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(false);
+  });
+
+  it("Reset returns the row to idle state", async () => {
+    mockDisk({
+      get_disk_usage: overBudgetReport,
+      preview_archive: {
+        candidate_count: 2,
+        total_bytes_to_archive: 100,
+        log: "",
+      } satisfies ArchivePreview,
+    });
+    await renderDiskUsage("/bin");
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Archive…")!
+      .dispatchEvent(new Event("click"));
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Preview")!
+      .dispatchEvent(new Event("click"));
+    await waitFor(() =>
+      (document.querySelector(".disk-usage-archive-summary")!.textContent ?? "").includes("2 snapshots"),
+    );
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Reset")!
+      .dispatchEvent(new Event("click"));
+    expect(document.querySelector(".disk-usage-archive-summary")!.textContent).toBe("");
+    const daysSelect = document.querySelector<HTMLSelectElement>("tr.disk-usage-archive-row select")!;
+    expect(daysSelect.disabled).toBe(false);
   });
 });
 
