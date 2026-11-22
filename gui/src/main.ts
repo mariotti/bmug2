@@ -104,6 +104,23 @@ export interface DiskUsageReport {
   volumes?: DiskUsageVolumes;
 }
 
+// Mirrors budget.rs. GlobalBudget / SourceBudget each carry null-
+// when-unset byte counts; `BudgetKey` is the discriminator for
+// set_global_budget (matches the Rust enum via serde snake_case
+// rename_all). Phase 3 of the disk-size project; see
+// docs/PROJECT_disk-size.md.
+export type BudgetKey = "sync" | "history";
+
+export interface GlobalBudget {
+  sync_warn_bytes: number | null;
+  history_warn_bytes: number | null;
+}
+
+export interface SourceBudget {
+  sync_warn_bytes: number | null;
+  history_warn_bytes: number | null;
+}
+
 // Mirrors sources::SourceSize in Rust. `size_kb` is null when the
 // underlying path can't be `du`'d (permission denied, no longer
 // exists, etc.) - the Disk usage view renders that as "—" rather
@@ -2371,11 +2388,16 @@ export async function renderDiskUsage(binDir: string) {
 
   let report: DiskUsageReport | null = null;
   let sourceSizes: SourceSize[] = [];
+  let globalBudget: GlobalBudget = { sync_warn_bytes: null, history_warn_bytes: null };
   let reportError: string | null = null;
   try {
-    [report, sourceSizes] = await Promise.all([
+    // Four parallel loads - the disk report, the source sizes, the
+    // global budget, and - omitted here but loaded on-demand from the
+    // editor - per-source budgets. Phase 3 of the disk-size project.
+    [report, sourceSizes, globalBudget] = await Promise.all([
       invoke<DiskUsageReport>("get_disk_usage", { binDir }),
       invoke<SourceSize[]>("get_sources_sizes"),
+      invoke<GlobalBudget>("get_global_budget", { binDir }),
     ]);
   } catch (err) {
     reportError = String(err);
@@ -2399,6 +2421,29 @@ export async function renderDiskUsage(binDir: string) {
   const sourcesTotalKb = sourceSizes.reduce((sum, s) => sum + (s.size_kb ?? 0), 0);
   const anySourceMissing = sourceSizes.some((s) => s.size_kb === null);
 
+  // Phase 3 helpers: per-row "OVER BUDGET" badge + volume subheading.
+  // Reading via safe-nav because budget/volumes are optional in the
+  // TS interface (Phase 1 installs don't emit them) - this view
+  // renders zero extras in that case and the layout stays the same
+  // as Phase 1 shipped.
+  const overBadge = (over?: boolean) =>
+    over
+      ? el("span", { class: "over-budget-badge", title: "Current usage exceeds the configured budget. Shell is warn-only; use the Budgets section below (or backmeup.archive.sh) to reduce." }, [" OVER BUDGET"])
+      : "";
+  const volumeLine = (label: string, vol?: DiskUsageVolume) => {
+    if (!vol?.mount) return "";
+    const avail = vol.avail_kb ?? 0;
+    const total = vol.total_kb ?? 0;
+    return el("div", { class: "disk-usage-volume" }, [
+      el("small", {}, [
+        `${label}: `,
+        el("code", {}, [vol.mount]),
+        total > 0 ? ` (${formatKb(avail)} free of ${formatKb(total)})` : "",
+      ]),
+    ]);
+  };
+
+  const sameVolume = report.volumes?.same_volume ?? null;
   const totalsBox = el("div", { class: "settings-version" }, [
     el("p", {}, [
       el("strong", {}, ["Sources total: "]),
@@ -2412,21 +2457,28 @@ export async function renderDiskUsage(binDir: string) {
     el("p", {}, [
       el("strong", {}, ["SYNC total: "]),
       formatKb(report.sync_total_kb),
+      overBadge(report.budget?.sync_over),
       " ",
       helpIcon(
         "Live mirror across every project under HISTORY's sibling SYNC directory.",
         "backmeup.disk.sh",
       ),
     ]),
+    volumeLine("SYNC on", report.volumes?.sync),
     el("p", {}, [
       el("strong", {}, ["HISTORY total: "]),
       formatKb(report.history_total_kb),
+      overBadge(report.budget?.history_over),
       " ",
       helpIcon(
         "Versioned-history across every project — includes all B-<date> snapshots and any .tar.gz/.tar archives.",
         "backmeup.disk.sh",
       ),
     ]),
+    // Only show the HISTORY volume line when it's a DIFFERENT volume
+    // than SYNC's - repeating the same mount twice is noise. Phase 2
+    // CLI emits same_volume=true when both roots share a volume.
+    sameVolume === false ? volumeLine("HISTORY on", report.volumes?.history) : "",
     el("p", {}, [
       el("strong", {}, ["Replicate estimate: "]),
       formatKb(report.replicate_estimate_kb),
@@ -2482,8 +2534,8 @@ export async function renderDiskUsage(binDir: string) {
             report.projects.map((p) =>
               el("tr", {}, [
                 el("td", {}, [el("strong", {}, [p.name])]),
-                el("td", {}, [formatKb(p.sync_kb)]),
-                el("td", {}, [formatKb(p.history_kb)]),
+                el("td", {}, [formatKb(p.sync_kb), overBadge(p.sync_over)]),
+                el("td", {}, [formatKb(p.history_kb), overBadge(p.history_over)]),
                 el("td", {}, [p.replicate_class === "none" ? "Local-only" : "Replicated"]),
               ]),
             ),
@@ -2491,8 +2543,213 @@ export async function renderDiskUsage(binDir: string) {
         ]),
   ]);
 
-  children.push(totalsBox, sourcesSection, projectsSection);
+  const budgetSection = buildBudgetEditor(binDir, globalBudget, sourceSizes);
+
+  children.push(totalsBox, sourcesSection, projectsSection, budgetSection);
   app.replaceChildren(...children);
+}
+
+// Shared by the global budget inputs + per-source budget inputs: a
+// GB-denominated number field that round-trips bytes to GB (3 dp)
+// for display. Empty string = unset = shell silent. GB rather than
+// bytes because a user thinking "40 GB" shouldn't have to type
+// 42949672960 to express it; three decimal places preserves "500 MB"
+// = 0.5 GB without losing precision.
+function bytesToGbInputValue(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return "";
+  return (bytes / 1_073_741_824).toFixed(3);
+}
+
+function gbInputToBytes(input: string): number | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 1_073_741_824);
+}
+
+// Phase 3 of the disk-size project: the GUI's write surface for
+// budgets. Global pair at the top; a per-source panel below that
+// loads (lazy) the sidecar's current values when a source is picked.
+// Deliberately NOT a modal - matches renderSettings' and the
+// existing dashboard idiom of "editing happens inline on a dedicated
+// screen, not in a floating window this app has no idiom for".
+//
+// The editor is read-only-visibly until a value changes: Save fires
+// per-field (debounced via a blur handler) so a typo-fix doesn't
+// require remembering to click. Reverting to empty clears the
+// corresponding key (shell = silent). Errors from the Tauri side
+// surface inline, not as a banner - this view is complex enough
+// already.
+export function buildBudgetEditor(
+  binDir: string,
+  initialGlobal: GlobalBudget,
+  sources: SourceSize[],
+): HTMLElement {
+  const section = el("section", { class: "disk-usage-section" }, [
+    el("h2", {}, [
+      "Budgets ",
+      helpIcon(
+        "Warn-only soft ceilings in bytes. Shell prints a WARNING on over-budget runs but never deletes - deletion from the shell requires an explicit human command. See docs/PROJECT_disk-size.md for the full policy.",
+      ),
+    ]),
+    el("p", {}, [
+      "Global defaults apply across every project; a per-source override takes precedence when set. Enter values in GB. Leave a field blank to disable that warning.",
+    ]),
+  ]);
+
+  // Global section
+  const globalError = el("p", { class: "settings-check-error" }, []) as HTMLParagraphElement;
+  globalError.style.display = "none";
+  const mkGlobalInput = (key: BudgetKey, initial: number | null): HTMLInputElement => {
+    const input = el("input", {
+      type: "number",
+      min: "0",
+      step: "0.001",
+      placeholder: "unset",
+    }) as HTMLInputElement;
+    input.value = bytesToGbInputValue(initial);
+    // Save on blur (matches native-form intuition) and on explicit
+    // Enter. Saving on every keystroke would spam setup.sh writes.
+    const commit = () => {
+      const bytes = gbInputToBytes(input.value);
+      // Empty-then-blur must NOT re-save as 0 bytes when the field
+      // was already empty - treat as no-op.
+      if (bytes === null && input.value.trim() === "") {
+        void invoke("set_global_budget", { binDir, key, bytes: null }).catch(
+          (err) => {
+            globalError.textContent = String(err);
+            globalError.style.display = "";
+          },
+        );
+      } else if (bytes !== null) {
+        void invoke("set_global_budget", { binDir, key, bytes }).catch((err) => {
+          globalError.textContent = String(err);
+          globalError.style.display = "";
+        });
+      } else {
+        globalError.textContent = `Invalid number: ${input.value}`;
+        globalError.style.display = "";
+      }
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+    });
+    return input;
+  };
+
+  const globalSyncInput = mkGlobalInput("sync", initialGlobal.sync_warn_bytes);
+  const globalHistInput = mkGlobalInput("history", initialGlobal.history_warn_bytes);
+  section.append(
+    el("div", { class: "disk-usage-global-budget" }, [
+      el("div", { class: "field" }, [
+        el("label", {}, ["SYNC warning threshold (GB): "]),
+        globalSyncInput,
+      ]),
+      el("div", { class: "field" }, [
+        el("label", {}, ["HISTORY warning threshold (GB): "]),
+        globalHistInput,
+      ]),
+      globalError,
+    ]),
+  );
+
+  // Per-source section: dropdown of tracked sources, picking one
+  // loads its sidecar (lazy - avoids N Tauri calls on page open).
+  if (sources.length === 0) {
+    return section;
+  }
+  const perSourceHeading = el("h3", {}, ["Per-source override"]);
+  const picker = el("select", {}) as HTMLSelectElement;
+  picker.append(new Option("Choose a source…", "", true, true));
+  for (const s of sources) {
+    picker.append(new Option(s.name, s.path));
+  }
+  const detail = el("div", { class: "disk-usage-source-budget" }, []);
+  const sourceError = el("p", { class: "settings-check-error" }, []) as HTMLParagraphElement;
+  sourceError.style.display = "none";
+
+  const showSourceDetail = async (sourcePath: string) => {
+    detail.replaceChildren(el("p", {}, ["Loading…"]));
+    sourceError.style.display = "none";
+    let current: SourceBudget;
+    try {
+      current = await invoke<SourceBudget>("get_source_budget", {
+        binDir,
+        sourcePath,
+      });
+    } catch (err) {
+      detail.replaceChildren();
+      sourceError.textContent = String(err);
+      sourceError.style.display = "";
+      return;
+    }
+
+    const mkSourceInput = (
+      key: "sync_warn_bytes" | "history_warn_bytes",
+      initial: number | null,
+    ): HTMLInputElement => {
+      const input = el("input", {
+        type: "number",
+        min: "0",
+        step: "0.001",
+        placeholder: "inherit global",
+      }) as HTMLInputElement;
+      input.value = bytesToGbInputValue(initial);
+      const commit = () => {
+        const bytes = gbInputToBytes(input.value);
+        if (bytes === null && input.value.trim() !== "") {
+          sourceError.textContent = `Invalid number: ${input.value}`;
+          sourceError.style.display = "";
+          return;
+        }
+        sourceError.style.display = "none";
+        const nextSync =
+          key === "sync_warn_bytes" ? bytes : gbInputToBytes(syncInput.value);
+        const nextHist =
+          key === "history_warn_bytes" ? bytes : gbInputToBytes(histInput.value);
+        void invoke("set_source_budget", {
+          binDir,
+          sourcePath,
+          budget: { sync_warn_bytes: nextSync, history_warn_bytes: nextHist },
+        }).catch((err) => {
+          sourceError.textContent = String(err);
+          sourceError.style.display = "";
+        });
+      };
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commit();
+      });
+      return input;
+    };
+
+    const syncInput = mkSourceInput("sync_warn_bytes", current.sync_warn_bytes);
+    const histInput = mkSourceInput("history_warn_bytes", current.history_warn_bytes);
+    detail.replaceChildren(
+      el("div", { class: "field" }, [
+        el("label", {}, ["SYNC override (GB), blank = inherit: "]),
+        syncInput,
+      ]),
+      el("div", { class: "field" }, [
+        el("label", {}, ["HISTORY override (GB), blank = inherit: "]),
+        histInput,
+      ]),
+    );
+  };
+
+  picker.addEventListener("change", () => {
+    const val = picker.value;
+    if (!val) {
+      detail.replaceChildren();
+      return;
+    }
+    void showSourceDetail(val);
+  });
+
+  section.append(perSourceHeading, picker, detail, sourceError);
+  return section;
 }
 
 // The first "navigate to a second screen and back" affordance in this
