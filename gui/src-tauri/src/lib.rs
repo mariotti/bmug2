@@ -1,3 +1,4 @@
+mod budget;
 mod config;
 mod dashboard;
 mod ignore;
@@ -130,6 +131,41 @@ async fn get_sources_sizes(app: AppHandle) -> Result<Vec<sources::SourceSize>, S
     tauri::async_runtime::spawn_blocking(move || sources::sizes(&app_data_dir))
         .await
         .map_err(|e| format!("background task panicked: {e}"))
+}
+
+// Phase 3 of the disk-size project: GUI-writable budgets.
+// Four commands, two per scope (read/write × global/source). Reads
+// are plain (fast lock-free IO against setup.sh or a sidecar);
+// writes run on the main thread too - the file touch is trivial,
+// no reason to spawn_blocking. See gui/src-tauri/src/budget.rs
+// for the precedence contract (sidecar overrides global; empty =
+// unset = shell stays silent).
+#[tauri::command]
+fn get_global_budget(bin_dir: String) -> budget::GlobalBudget {
+    budget::read_global(std::path::Path::new(&bin_dir))
+}
+
+#[tauri::command]
+fn set_global_budget(
+    bin_dir: String,
+    key: budget::BudgetKey,
+    bytes: Option<u64>,
+) -> Result<(), String> {
+    budget::set_global(std::path::Path::new(&bin_dir), key, bytes)
+}
+
+#[tauri::command]
+fn get_source_budget(bin_dir: String, source_path: String) -> budget::SourceBudget {
+    budget::read_source(std::path::Path::new(&bin_dir), &source_path)
+}
+
+#[tauri::command]
+fn set_source_budget(
+    bin_dir: String,
+    source_path: String,
+    budget: budget::SourceBudget,
+) -> Result<(), String> {
+    crate::budget::set_source(std::path::Path::new(&bin_dir), &source_path, budget)
 }
 
 // Same bug class already fixed for run_backup_now/run_housekeeping_now
@@ -447,6 +483,10 @@ pub fn run() {
             get_status,
             get_disk_usage,
             get_sources_sizes,
+            get_global_budget,
+            set_global_budget,
+            get_source_budget,
+            set_source_budget,
             search,
             list_sources,
             add_source,

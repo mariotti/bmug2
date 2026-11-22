@@ -2008,6 +2008,13 @@ describe("renderDiskUsage", () => {
       switch (cmd) {
         case "get_disk_usage": return sampleReport;
         case "get_sources_sizes": return sampleSizes;
+        // Phase 3 reads the global budget in the same parallel
+        // Promise.all. Default to "both keys unset" so existing
+        // Phase-1/2 tests stay accurate; specific tests override.
+        case "get_global_budget": return { sync_warn_bytes: null, history_warn_bytes: null };
+        case "get_source_budget": return { sync_warn_bytes: null, history_warn_bytes: null };
+        case "set_global_budget": return undefined;
+        case "set_source_budget": return undefined;
         default: throw new Error(`unmocked invoke command in test: ${cmd}`);
       }
     });
@@ -2082,6 +2089,165 @@ describe("renderDiskUsage", () => {
       .find((b) => b.textContent?.includes("Back to dashboard"))!;
     backBtn.dispatchEvent(new Event("click"));
     await waitFor(() => (document.querySelector("#app")!.textContent ?? "").includes("Loading status"));
+  });
+
+  // ------------------------------------------------------------
+  // Phase 3 of the disk-size project: volume subheadings + OVER
+  // BUDGET badges + the Budgets editor section.
+  // ------------------------------------------------------------
+
+  it("shows a SYNC volume subheading when the disk report includes a volumes section", async () => {
+    mockDisk({
+      get_disk_usage: {
+        ...sampleReport,
+        volumes: {
+          sync: { mount: "/Volumes/BackupHDD", total_kb: 4_000_000_000, avail_kb: 2_100_000_000 },
+          history: { mount: "/Volumes/BackupHDD", total_kb: 4_000_000_000, avail_kb: 2_100_000_000 },
+          same_volume: true,
+        },
+      } satisfies DiskUsageReport,
+    });
+    await renderDiskUsage("/bin");
+    const vols = document.querySelectorAll(".disk-usage-volume");
+    // One subheading for SYNC. same_volume=true means we DON'T
+    // repeat the HISTORY line with the same mount - would be noise.
+    expect(vols.length).toBe(1);
+    expect(vols[0].textContent).toContain("/Volumes/BackupHDD");
+  });
+
+  it("shows both SYNC and HISTORY volume subheadings when they're on different volumes", async () => {
+    mockDisk({
+      get_disk_usage: {
+        ...sampleReport,
+        volumes: {
+          sync: { mount: "/", total_kb: 500_000_000, avail_kb: 100_000_000 },
+          history: { mount: "/Volumes/ExternalHDD", total_kb: 4_000_000_000, avail_kb: 2_000_000_000 },
+          same_volume: false,
+        },
+      } satisfies DiskUsageReport,
+    });
+    await renderDiskUsage("/bin");
+    const vols = Array.from(document.querySelectorAll(".disk-usage-volume"));
+    expect(vols.length).toBe(2);
+    expect(vols[0].textContent).toContain("/");
+    expect(vols[1].textContent).toContain("/Volumes/ExternalHDD");
+  });
+
+  it("shows no volume subheadings when the disk report has no volumes section", async () => {
+    // Pre-Phase-2 install (no `volumes` in the JSON). Must render
+    // without crashing and without showing bogus "undefined" lines.
+    mockDisk({ get_disk_usage: { ...sampleReport, volumes: undefined } });
+    await renderDiskUsage("/bin");
+    expect(document.querySelectorAll(".disk-usage-volume").length).toBe(0);
+  });
+
+  it("renders an OVER BUDGET badge next to SYNC total when budget.sync_over is true", async () => {
+    mockDisk({
+      get_disk_usage: {
+        ...sampleReport,
+        budget: { sync_warn_bytes: 1, history_warn_bytes: null, sync_over: true, history_over: false },
+      } satisfies DiskUsageReport,
+    });
+    await renderDiskUsage("/bin");
+    // Scope to the first totals paragraph to make sure the badge
+    // sits next to SYNC total, not some other row.
+    const totals = document.querySelector(".settings-version")!;
+    expect(totals.textContent).toContain("SYNC total:");
+    expect(totals.textContent).toContain("OVER BUDGET");
+  });
+
+  it("renders OVER BUDGET badges on per-project rows when the row is over", async () => {
+    mockDisk({
+      get_disk_usage: {
+        ...sampleReport,
+        projects: [
+          {
+            name: "videos", sync_kb: 80, history_kb: 1800, replicate_class: "none",
+            sync_warn_bytes: null, history_warn_bytes: 500_000, sync_over: false, history_over: true,
+          },
+        ],
+      } satisfies DiskUsageReport,
+    });
+    await renderDiskUsage("/bin");
+    const projRows = Array.from(document.querySelectorAll("table.sources-table")[1].querySelectorAll("tbody tr"));
+    expect(projRows.length).toBe(1);
+    expect(projRows[0].textContent).toContain("OVER BUDGET");
+  });
+
+  it("renders a Budgets section with two global inputs when disk usage loads", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const text = document.querySelector("#app")!.textContent ?? "";
+    expect(text).toContain("Budgets");
+    expect(text).toContain("SYNC warning threshold (GB):");
+    expect(text).toContain("HISTORY warning threshold (GB):");
+  });
+
+  it("prefills the global budget inputs from get_global_budget in GB", async () => {
+    // 2 GB in bytes (2 * 1024^3 = 2147483648). The input should show
+    // 2.000 (3 dp fixed), not the raw byte count.
+    mockDisk({ get_global_budget: { sync_warn_bytes: 2_147_483_648, history_warn_bytes: null } });
+    await renderDiskUsage("/bin");
+    const inputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>(".disk-usage-global-budget input"),
+    );
+    expect(inputs.length).toBe(2);
+    expect(inputs[0].value).toBe("2.000");
+    // Null budget renders as empty, not "0" or "null"
+    expect(inputs[1].value).toBe("");
+  });
+
+  it("commits a global budget on blur, converting GB back to bytes", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const [syncInput] = Array.from(
+      document.querySelectorAll<HTMLInputElement>(".disk-usage-global-budget input"),
+    );
+    syncInput.value = "1.5";
+    syncInput.dispatchEvent(new Event("blur"));
+    // 1.5 GB = 1610612736 bytes (1.5 * 1024^3)
+    const calls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_global_budget");
+    expect(calls.length).toBe(1);
+    expect(calls[0][1]).toEqual({ binDir: "/bin", key: "sync", bytes: 1_610_612_736 });
+  });
+
+  it("commits a null bytes value when a global budget input is cleared", async () => {
+    mockDisk({ get_global_budget: { sync_warn_bytes: 1024, history_warn_bytes: null } });
+    await renderDiskUsage("/bin");
+    const [syncInput] = Array.from(
+      document.querySelectorAll<HTMLInputElement>(".disk-usage-global-budget input"),
+    );
+    syncInput.value = "";
+    syncInput.dispatchEvent(new Event("blur"));
+    const calls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_global_budget");
+    expect(calls.length).toBe(1);
+    expect(calls[0][1]).toEqual({ binDir: "/bin", key: "sync", bytes: null });
+  });
+
+  it("surfaces a set_global_budget error inline without crashing the view", async () => {
+    mockDisk({ set_global_budget: new Error("cannot write setup.sh: permission denied") });
+    await renderDiskUsage("/bin");
+    const [syncInput] = Array.from(
+      document.querySelectorAll<HTMLInputElement>(".disk-usage-global-budget input"),
+    );
+    syncInput.value = "1";
+    syncInput.dispatchEvent(new Event("blur"));
+    // Error message rendered inline
+    await waitFor(() =>
+      Array.from(document.querySelectorAll(".settings-check-error")).some((e) =>
+        (e.textContent ?? "").includes("permission denied"),
+      ),
+    );
+  });
+
+  it("per-source override picker lists every tracked source as an option", async () => {
+    mockDisk();
+    await renderDiskUsage("/bin");
+    const picker = document.querySelector<HTMLSelectElement>("select")!;
+    // Values: empty "choose" option + each source's path
+    const values = Array.from(picker.options).map((o) => o.value);
+    expect(values).toContain("/me/Documents");
+    expect(values).toContain("/me/Lea");
   });
 });
 
