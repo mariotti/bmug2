@@ -1,3 +1,4 @@
+mod archive;
 mod budget;
 mod config;
 mod dashboard;
@@ -166,6 +167,36 @@ fn set_source_budget(
     budget: budget::SourceBudget,
 ) -> Result<(), String> {
     crate::budget::set_source(std::path::Path::new(&bin_dir), &source_path, budget)
+}
+
+// Phase 3 follow-up: one-click archive. preview_archive runs
+// `backmeup.archive.sh -n <project> <days>` (dry-run) and parses
+// the output into a count+bytes summary. commit_archive runs the
+// same command WITHOUT -n and reports how many snapshots were
+// actually archived. Both backgrounded via spawn_blocking: the
+// shell script can take seconds-to-minutes on a large project
+// (tar + verify entry count), and we don't want to stall Tauri's
+// main thread.
+#[tauri::command]
+async fn preview_archive(
+    bin_dir: String,
+    project: String,
+    days: String,
+) -> Result<archive::ArchivePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || archive::preview(&bin_dir, &project, &days))
+        .await
+        .map_err(|e| format!("background task panicked: {e}"))?
+}
+
+#[tauri::command]
+async fn commit_archive(
+    bin_dir: String,
+    project: String,
+    days: String,
+) -> Result<archive::ArchiveRunOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || archive::commit(&bin_dir, &project, &days))
+        .await
+        .map_err(|e| format!("background task panicked: {e}"))?
 }
 
 // Same bug class already fixed for run_backup_now/run_housekeeping_now
@@ -487,6 +518,8 @@ pub fn run() {
             set_global_budget,
             get_source_budget,
             set_source_budget,
+            preview_archive,
+            commit_archive,
             search,
             list_sources,
             add_source,
