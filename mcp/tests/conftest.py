@@ -35,6 +35,11 @@ def _config(tmp_path: Path, **overrides: object) -> Config:
         history_dir=tmp_path / "sync-BP",
         index_dir=tmp_path / "sync" / ".locate.dir",
         locate_cmd="locate",
+        # Phase 2 of the disk-size project - optional budget soft
+        # ceilings. Default None (unset) for all existing tests;
+        # disk-usage tests override to exercise over-budget shapes.
+        sync_warn_bytes=None,
+        history_warn_bytes=None,
     )
     defaults.update(overrides)
     return Config(**defaults)

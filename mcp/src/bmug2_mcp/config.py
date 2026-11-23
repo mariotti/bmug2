@@ -47,6 +47,13 @@ class Config:
     history_dir: Path
     index_dir: Path | None
     locate_cmd: str | None
+    # Phase 2 of the disk-size project: optional soft ceilings read
+    # from BMU_SYNC_WARN_BYTES / BMU_HISTORY_WARN_BYTES. None when
+    # unset (shell layer stays silent). Per-project .bmubudget
+    # sidecars override these at the disk.collect() level, same
+    # precedence as the shell.
+    sync_warn_bytes: int | None
+    history_warn_bytes: int | None
 
 
 def resolve_bin_dir(cli_value: str | None) -> Path:
@@ -112,10 +119,22 @@ def load_config(bin_dir: Path) -> Config:
     index_dir_value = values.get("BMU_DIRDBLOCATE", "")
     locate_cmd = values.get("BMU_CMDLOCATE", "") or None
 
+    # Budget vars are new in Phase 2 of the disk-size project; a
+    # setup.sh predating that bump just doesn't have the keys, which
+    # we treat as "unset" (not "0"). Empty strings also parse as
+    # None - that's the shell's "KEY=" convention meaning silent.
+    def _opt_int(key: str) -> int | None:
+        raw = values.get(key, "")
+        if not raw.isdigit():
+            return None
+        return int(raw)
+
     return Config(
         bin_dir=bin_dir,
         sync_dir=Path(sync_dir),
         history_dir=Path(history_dir),
         index_dir=Path(index_dir_value) if index_dir_value else None,
         locate_cmd=locate_cmd,
+        sync_warn_bytes=_opt_int("BMU_SYNC_WARN_BYTES"),
+        history_warn_bytes=_opt_int("BMU_HISTORY_WARN_BYTES"),
     )
