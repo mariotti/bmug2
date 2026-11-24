@@ -24,13 +24,14 @@ import sys
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
-from . import commands, locate, status
+from . import commands, disk, locate, status
 from .config import Config, ConfigError, load_config, resolve_bin_dir
 from .models import (
     ArchivePreviewResult,
     ArchiveResult,
     BackupPreviewResult,
     BackupResult,
+    DiskUsageResult,
     LocateResult,
     MigrateResult,
     RetrievePreviewResult,
@@ -62,6 +63,19 @@ def create_server(config: Config) -> MCPServer:
         """Per-project backup overview: last run, last change, snapshot
         count, and mirror/history sizes in bytes. Read-only."""
         return status.get_status(config)
+
+    @server.tool(annotations=_READ_ONLY)
+    def bmug2_disk_usage() -> DiskUsageResult:
+        """How much space bmug2 is using on this machine. Per-project
+        SYNC + HISTORY sizes in bytes, grand totals, a local-proxy
+        replicate estimate (SYNC + HISTORY minus projects with
+        replicate_class=none; no remote call), optional per-project
+        and global budget warnings (set in backmeup.setup.sh's
+        BMU_SYNC_WARN_BYTES / BMU_HISTORY_WARN_BYTES or a per-project
+        .bmubudget sidecar), and per-volume info (mount, total, free)
+        for SYNC and HISTORY roots. Read-only. Phase 1-3 of the
+        disk-size project; see docs/PROJECT_disk-size.md."""
+        return disk.collect(config)
 
     @server.tool(annotations=_READ_ONLY)
     def bmug2_locate(patterns: list[str]) -> LocateResult:
