@@ -83,15 +83,43 @@ On the other side I could add a lot of tests using the AI.
 I start to think that a "test driven" approach works nicely with AI. Given that the tests are correct.
 You need to get the right tests from the start.
 
+## Install
+
+**Experimental builds** are published as GitHub prereleases at
+[releases](../../releases). Pick the right package for your system:
+
+| Platform             | Package                       |
+|----------------------|-------------------------------|
+| macOS (Apple Silicon)| `bmug2_<version>_aarch64.dmg` |
+| Debian / Ubuntu amd64| `bmug2_<version>_amd64.deb`   |
+| Debian / Ubuntu arm64| `bmug2_<version>_arm64.deb`   |
+| Linux x86_64 (any)   | `bmug2_<version>_amd64.AppImage` |
+| Linux aarch64 (any)  | `bmug2_<version>_aarch64.AppImage` |
+| Fedora / RHEL x86_64 | `bmug2-<version>-1.x86_64.rpm`|
+| Fedora / RHEL aarch64| `bmug2-<version>-1.aarch64.rpm`|
+
+The `.rpm` is GPG-signed; verify with the public key at
+[docs/bmug2-releases.asc](docs/bmug2-releases.asc). All other
+formats carry no code-signing today — macOS Gatekeeper will prompt
+"unverified developer" on first open; right-click → Open to confirm.
+
+The GUI installer drops both the desktop app AND the shell CLI
+(`backmeup.sh` and friends) — one install covers both. For a
+terminal-only install, use the [Quick start](#quick-start) below.
+
 ## Status
 
-Personal-use software, actively developed, covered by a real regression
-suite (shell + Python for the MCP server, both running in CI on Linux
-and macOS — see the badge above). It has not seen long-term use at
-large scale yet — read [Requirements](#requirements) below and
-[what bmug2's rsync options do and don't preserve](docs/MANUAL.md#backmeupsh)
-before pointing it at real data, and try
-[`--dry-run`](docs/MANUAL.md#backmeupsh) first.
+> ⚠️ **Experimental software.** It works and has a real test suite
+> (521 tests across shell / Python / Rust / TypeScript, CI-green on
+> Linux + macOS), but it has not seen long-term use at scale yet.
+> Try it on a folder you can afford to lose first, and use
+> [`--dry-run`](docs/MANUAL.md#backmeupsh) before any real backup.
+> Read [Requirements](#requirements) and
+> [what rsync does and doesn't preserve](docs/MANUAL.md#backmeupsh)
+> before pointing it at real data.
+>
+> Feedback / bug reports: open an issue on this repo — a template
+> is set up with the fields needed to reproduce.
 
 ## Versioning
 

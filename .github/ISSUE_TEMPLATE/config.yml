@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/mariotti/bmug2/tree/main/docs
+    about: Manual, scheduling, destinations, examples — most "how do I...?" questions already have an answer here.
+  - name: "What bmug2 does and doesn't preserve"
+    url: https://github.com/mariotti/bmug2/blob/main/docs/MANUAL.md#backmeupsh
+    about: Required reading before pointing bmug2 at real data. Explains the rsync options actually used.
