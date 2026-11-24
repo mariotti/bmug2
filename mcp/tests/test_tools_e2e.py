@@ -65,6 +65,7 @@ def test_all_read_only_tools_over_real_stdio_transport(real_sandbox):
     names = {t.name for t in tools.tools}
     assert names == {
         "bmug2_status",
+        "bmug2_disk_usage",
         "bmug2_locate",
         "bmug2_backup_preview",
         "bmug2_archive_preview",
@@ -79,6 +80,7 @@ def test_all_read_only_tools_over_real_stdio_transport(real_sandbox):
     by_name = {t.name: t.annotations for t in tools.tools}
     for name in (
         "bmug2_status",
+        "bmug2_disk_usage",
         "bmug2_locate",
         "bmug2_backup_preview",
         "bmug2_archive_preview",
