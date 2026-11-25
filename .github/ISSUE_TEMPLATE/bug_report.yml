@@ -1,0 +1,93 @@
+name: Bug report
+description: Something broke, hung, printed something confusing, or didn't do what the docs said it would.
+title: "[bug] <one-line summary>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying bmug2. Please fill in enough to reproduce.
+        A missing field is almost always the reason a report can't
+        be acted on — sorry for the length.
+
+        For a security-sensitive issue (could leak data, bypass a
+        refusal, etc.) please email instead so a fix lands before
+        the issue goes public.
+
+  - type: input
+    id: bmug2-version
+    attributes:
+      label: bmug2 version
+      description: >
+        Run `backmeup.sh --version` in a terminal, or check the About
+        screen in the GUI. Example output includes the full version
+        marker (e.g. `2.18.39-experimental`).
+      placeholder: "2.18.39-experimental"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install bmug2?
+      options:
+        - macOS .dmg
+        - Debian/Ubuntu .deb
+        - Fedora/RHEL .rpm
+        - Linux .AppImage
+        - From source (`backmeup.install.sh`)
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS + version
+      description: >
+        macOS version (e.g. "macOS 15.1 Sequoia") or Linux distro +
+        version (e.g. "Ubuntu 24.04", "Fedora 40"). Include whether
+        you're on Apple Silicon or Intel for macOS, or x86_64 / arm64
+        for Linux.
+      placeholder: "macOS 15.1 Sequoia (Apple Silicon)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >
+        What did you do, what did you see, and (if applicable) what
+        did you expect instead? A concrete sequence of steps is far
+        more useful than a description of the symptom.
+      placeholder: |
+        1. I added /Users/me/Documents as a backup source.
+        2. Clicked "Run now".
+        3. The run exited with a WARNING about ... but the dashboard
+           still shows last-run as "never".
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output (optional)
+      description: >
+        For a scheduled-run issue, logs live at
+        `~/Library/Logs/io.github.mariotti.bmug2.*` on macOS or
+        `~/.local/state/bmug2/` on Linux. For a manual run, paste
+        stdout/stderr. Please strip anything you don't want public
+        (filenames, paths that identify you) — bmug2's own output
+        rarely includes secrets but your source folder might.
+      render: text
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues for a similar report.
+          required: true
+        - label: I'm reporting a bug — not a feature request. (For feature ideas, use the general-issue form or open a discussion instead.)
+          required: true
