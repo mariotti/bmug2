@@ -107,6 +107,11 @@ The GUI installer drops both the desktop app AND the shell CLI
 (`backmeup.sh` and friends) — one install covers both. For a
 terminal-only install, use the [Quick start](#quick-start) below.
 
+**First time?** Read
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) — a one-page
+"install → first backup → verify → schedule → replicate" walk-
+through aimed at new testers.
+
 ## Status
 
 > ⚠️ **Experimental software.** It works and has a real test suite
