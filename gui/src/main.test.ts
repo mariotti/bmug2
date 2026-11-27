@@ -1328,6 +1328,119 @@ describe("buildConfigWarnings", () => {
     );
     expect(proton).toHaveLength(1);
   });
+
+  // ------------------------------------------------------------
+  // State C: schedule-ordering warning. HouseKeeping fires BEFORE
+  // a scheduled source on the same day -> that source's backup
+  // isn't replicated until the next day. Added 2026-11-27.
+  // ------------------------------------------------------------
+
+  const replOn: ReplicationStatus = {
+    backend: "local_path",
+    path_sync: "/p/sync",
+    path_backups: "/p/bp",
+  };
+  const src = (hour: number, minute: number, name = "s"): BackupSource => ({
+    name,
+    path: `/${name}`,
+    schedule: { hour, minute },
+  });
+
+  it("flags a source scheduled AFTER HouseKeeping on the same day (state C)", () => {
+    // HouseKeeping at 18:00, source at 19:00 - the Movining case.
+    const warnings = buildConfigWarnings(
+      [src(19, 0, "late")],
+      { hour: 18, minute: 0 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].textContent).toContain("late");
+    expect(warnings[0].textContent).toContain("19:00");
+    expect(warnings[0].textContent).toContain("23 hours");
+    expect(warnings[0].querySelector("button")?.textContent).toBe(
+      "Edit HouseKeeping schedule",
+    );
+  });
+
+  it("does NOT flag when every source fires BEFORE HouseKeeping", () => {
+    // The coherent setup: all sources run earlier than the nightly
+    // HouseKeeping. No lag, no banner.
+    const warnings = buildConfigWarnings(
+      [src(10, 0, "morning"), src(17, 30, "afternoon")],
+      { hour: 20, minute: 0 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("flags only the sources that are actually late, listing each by name + time", () => {
+    const warnings = buildConfigWarnings(
+      [src(9, 0, "early"), src(20, 15, "late1"), src(22, 0, "late2")],
+      { hour: 18, minute: 0 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(1);
+    const text = warnings[0].textContent ?? "";
+    expect(text).toContain("2 scheduled backups fire later");
+    expect(text).toContain("late1 (Daily at 20:15)");
+    expect(text).toContain("late2 (Daily at 22:00)");
+    expect(text).not.toContain("early");
+  });
+
+  it("skips the state-C check when HouseKeeping is an interval schedule", () => {
+    // Comparing "20:00" against "every 30 minutes" is meaningless -
+    // the interval fires again soon anyway. No banner.
+    const warnings = buildConfigWarnings(
+      [src(19, 0, "late")],
+      { minutes: 30 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("skips the state-C check when the source schedule is an interval", () => {
+    // Same reasoning the other way.
+    const warnings = buildConfigWarnings(
+      [{ name: "i", path: "/i", schedule: { minutes: 30 } }],
+      { hour: 18, minute: 0 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("skips the state-C check when replication is off", () => {
+    // A user who deliberately runs local-only won't be surprised by
+    // a replication lag they don't have. The state-A banner takes
+    // over (no replication configured).
+    const warnings = buildConfigWarnings(
+      [src(19, 0, "late")],
+      { hour: 18, minute: 0 },
+      { backend: "off" },
+      "/bin",
+    );
+    // state A fires but NOT state C
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].textContent).toContain("no off-site replication");
+    expect(warnings[0].textContent).not.toContain("23 hours");
+  });
+
+  it("uses strict > not >=: a source at the same time as HouseKeeping is OK", () => {
+    // Sub-minute ordering is unreliable on launchd anyway; equal
+    // times get a pass. The backup usually finishes before the
+    // replicate step on same-tick firings.
+    const warnings = buildConfigWarnings(
+      [src(18, 0, "same")],
+      { hour: 18, minute: 0 },
+      replOn,
+      "/bin",
+    );
+    expect(warnings).toHaveLength(0);
+  });
 });
 
 describe("renderSearchResults", () => {

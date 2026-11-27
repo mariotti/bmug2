@@ -599,9 +599,10 @@ export function buildUpdateAvailableNotice(info: UpdateInfo, binDir: string): HT
   ]);
 }
 
-// Detects the two "backup is scheduled but off-site replication won't
-// actually run" states and returns one banner per hit. Pure derivation
-// from already-fetched dashboard state - adds zero extra network/IPC.
+// Detects three "backup is scheduled but off-site replication won't
+// actually run on the schedule you expect" states and returns one
+// banner per hit. Pure derivation from already-fetched dashboard
+// state - adds zero extra network/IPC.
 //
 // State A (sources scheduled, replication off): user has automated
 // their backups but their data stays on this machine only. The exact
@@ -614,12 +615,20 @@ export function buildUpdateAvailableNotice(info: UpdateInfo, binDir: string): HT
 // backmeup.replicate.sh. User has to run HouseKeeping manually
 // forever, or it just... never happens. Also a confirmed footgun.
 //
-// Both banners click through to the Settings page where the user
-// fixes the gap. No dismiss link: the banner goes away when the
-// state goes away; that's the only "acknowledgment" that matters.
-// If a user deliberately wants local-only (no off-site, no
-// HouseKeeping), they can already configure that - the banner only
-// fires on an INCONSISTENT state, not on a coherent "off" choice.
+// State C (HouseKeeping fires BEFORE some scheduled sources): daily
+// HouseKeeping + daily source schedule where the source fires LATER
+// in the day. Today's source backup won't be replicated until
+// tomorrow's HouseKeeping - a ~23-hour replication lag the user
+// almost never intended. Real-world instance: HouseKeeping at 18:00
+// + Movining source at 19:00 - diagnosed 2026-11-22.
+//
+// All three banners click through to the Settings page where the
+// user fixes the gap. No dismiss link: the banner goes away when
+// the state goes away; that's the only "acknowledgment" that
+// matters. If a user deliberately wants local-only (no off-site,
+// no HouseKeeping), they can already configure that - the banners
+// only fire on an INCONSISTENT state, not on a coherent "off"
+// choice.
 export function buildConfigWarnings(
   sources: BackupSource[],
   housekeeping: Schedule | null,
@@ -654,6 +663,44 @@ export function buildConfigWarnings(
       el("div", { class: "untracked-notice config-warning" }, [
         el("p", {}, [
           "Off-site replication is set up, but HouseKeeping is not scheduled - nothing runs replication automatically. ",
+          goBtn,
+        ]),
+      ]),
+    );
+  }
+
+  // State C: HouseKeeping fires BEFORE some scheduled sources.
+  // Only triggers when both sides are DAILY schedules - comparing
+  // "at a time of day" against "every N minutes" is meaningless
+  // (interval-scheduled runs happen often enough that the next
+  // HouseKeeping is always close). Also gated on replication being
+  // ON - a user with no replication won't be surprised by a lag.
+  const lateSources = housekeepingScheduled && !replicationOff && isDaily(housekeeping)
+    ? (() => {
+        const hkMinutes = housekeeping.hour * 60 + housekeeping.minute;
+        return sources.filter((s) => {
+          if (!s.schedule || !isDaily(s.schedule)) return false;
+          const srcMinutes = s.schedule.hour * 60 + s.schedule.minute;
+          return srcMinutes > hkMinutes;
+        });
+      })()
+    : [];
+  if (lateSources.length > 0 && housekeeping && isDaily(housekeeping)) {
+    const goBtn = el("button", { type: "button" }, ["Edit HouseKeeping schedule"]);
+    goBtn.addEventListener("click", () => {
+      // Same destination as "Schedule HouseKeeping" above: Settings
+      // hosts the schedule editor for both HouseKeeping and sources.
+      void renderSettings(binDir);
+    });
+    const hkTime = formatSchedule(housekeeping);
+    const lateList = lateSources
+      .map((s) => `${s.name} (${formatSchedule(s.schedule!)})`)
+      .join(", ");
+    const plural = lateSources.length === 1 ? "backup fires" : "backups fire";
+    warnings.push(
+      el("div", { class: "untracked-notice config-warning" }, [
+        el("p", {}, [
+          `${hkTime} for HouseKeeping is BEFORE ${lateSources.length} scheduled ${plural} later in the day: ${lateList}. Those sources won't be replicated off-site until the NEXT HouseKeeping run (~23 hours later). Move HouseKeeping to a time AFTER every scheduled source backup. `,
           goBtn,
         ]),
       ]),
