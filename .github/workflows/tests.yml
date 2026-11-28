@@ -52,9 +52,10 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      shell: ${{ steps.filter.outputs.shell }}
-      mcp:   ${{ steps.filter.outputs.mcp }}
-      gui:   ${{ steps.filter.outputs.gui }}
+      shell:     ${{ steps.filter.outputs.shell }}
+      mcp:       ${{ steps.filter.outputs.mcp }}
+      gui:       ${{ steps.filter.outputs.gui }}
+      exif_scan: ${{ steps.filter.outputs.exif_scan }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -75,6 +76,9 @@ jobs:
               - '.github/workflows/**'
             gui:
               - 'gui/**'
+              - '.github/workflows/**'
+            exif_scan:
+              - 'exif-scan/**'
               - '.github/workflows/**'
 
   linux:
@@ -337,14 +341,49 @@ jobs:
           flags: rust
           fail_ci_if_error: false
 
-  # Sums the four CI suites' real test counts and force-pushes a single
+  exif-scan-linux:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.exif_scan == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.test-suite.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Rust lint (clippy, warnings-as-errors)
+        working-directory: exif-scan
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Run test suite
+        id: test-suite
+        working-directory: exif-scan
+        run: |
+          cargo test | tee /tmp/exif-scan-output.log
+          # Same ANSI-stripping + per-binary summing as the gui-linux rust step.
+          count=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/exif-scan-output.log | grep -oE "test result: ok\. [0-9]+ passed" | awk '{sum+=$4} END{print sum}')
+          [ -n "$count" ] && [ "$count" != "0" ] || { echo "Failed to parse exif-scan test count"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+  exif-scan-macos:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.exif_scan == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run test suite
+        working-directory: exif-scan
+        run: cargo test
+
+  # Sums the five CI suites' real test counts and force-pushes a single
   # orphan commit to the `badges` branch with a shields.io endpoint-badge
   # JSON. Runs only on push-to-main so PR branches don't flap the badge;
   # README.md's `tests` badge reads directly from this branch's raw URL.
   # Force-push keeps the branch at one commit forever (shields.io reads
   # the tip; past counts aren't meaningful on their own).
   update-test-count-badge:
-    needs: [linux, mcp-linux, gui-linux]
+    needs: [linux, mcp-linux, gui-linux, exif-scan-linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -356,17 +395,18 @@ jobs:
           PYTHON_COUNT: ${{ needs.mcp-linux.outputs.count }}
           TS_COUNT: ${{ needs.gui-linux.outputs.ts_count }}
           RUST_COUNT: ${{ needs.gui-linux.outputs.rust_count }}
+          EXIF_SCAN_COUNT: ${{ needs.exif-scan-linux.outputs.count }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -eo pipefail
-          for v in SHELL_COUNT PYTHON_COUNT TS_COUNT RUST_COUNT; do
+          for v in SHELL_COUNT PYTHON_COUNT TS_COUNT RUST_COUNT EXIF_SCAN_COUNT; do
             if [ -z "${!v}" ]; then
               echo "$v is empty - aborting rather than publishing a wrong total" >&2
               exit 1
             fi
           done
-          TOTAL=$((SHELL_COUNT + PYTHON_COUNT + TS_COUNT + RUST_COUNT))
+          TOTAL=$((SHELL_COUNT + PYTHON_COUNT + TS_COUNT + RUST_COUNT + EXIF_SCAN_COUNT))
           BADGE_JSON="{\"schemaVersion\":1,\"label\":\"tests\",\"message\":\"${TOTAL} passing\",\"color\":\"brightgreen\"}"
           echo "Publishing: $BADGE_JSON"
 
@@ -376,6 +416,6 @@ jobs:
           git init -q -b badges
           git -c user.email="noreply@github.com" -c user.name="bmug2 badge updater" add test-count.json
           git -c user.email="noreply@github.com" -c user.name="bmug2 badge updater" \
-            commit -q -m "update test count: ${TOTAL} (shell:${SHELL_COUNT}, python:${PYTHON_COUNT}, rust:${RUST_COUNT}, ts:${TS_COUNT})"
+            commit -q -m "update test count: ${TOTAL} (shell:${SHELL_COUNT}, python:${PYTHON_COUNT}, rust:${RUST_COUNT}, ts:${TS_COUNT}, exif-scan:${EXIF_SCAN_COUNT})"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           git push -f origin badges

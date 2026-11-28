@@ -29,6 +29,22 @@ updates:
           - "patch"
           - "minor"
 
+  # Rust / Cargo - exif-scan standalone binary (photo-exit Phase 1).
+  # Separate crate, separate Cargo.lock, so Dependabot needs its own
+  # directory entry. Small dep tree (kamadak-exif + walkdir + serde).
+  - package-ecosystem: "cargo"
+    directory: "/exif-scan"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      cargo-patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
   # Node / npm - vite + vitest + @tauri-apps/* plugins.
   - package-ecosystem: "npm"
     directory: "/gui"
