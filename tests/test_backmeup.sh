@@ -3683,6 +3683,123 @@ testGuiVersionStaysInSyncWithBmuVersion() {
 }
 
 #
+# photo-exit Phase 1 shell wrappers (bin/backmeup.photo-*.sh) - hermetic:
+# tests never invoke the real bmug2-exif-scan binary. A one-line fake
+# shell script stands in via BMUG2_EXIF_SCAN_BIN, emitting controlled
+# NDJSON so the wrappers' resolution + the awk aggregator can be exercised
+# independently of the Rust crate's build state.
+# ------------------------------------------------------------------
+
+photo_mktmp() {
+    # mktemp -d, cross-platform: GNU takes --suffix, BSD/macOS doesn't.
+    mktemp -d 2>/dev/null || mktemp -d -t 'bmu-photo'
+}
+
+photo_write_fake_bin() {
+    # $1: dest path, $2: here-doc body (NDJSON that the fake binary emits,
+    # one record per line, verbatim; $1 (the photo directory arg) is
+    # ignored by the fake - these tests don't care about real file walking).
+    cat > "$1" <<EOF
+#!/bin/sh
+cat <<NDJSON
+$2
+NDJSON
+EOF
+    chmod +x "$1"
+}
+
+testPhotoScanNoArgsShowsUsage() {
+    out=`"${BMU_BIN_SRC}/backmeup.photo-scan.sh" 2>&1`
+    rc=$?
+    assertEquals "photo-scan.sh must exit 2 with no args" 2 ${rc}
+    echo "${out}" | grep -q "usage:" || fail "photo-scan.sh must print usage to stderr with no args"
+}
+
+testPhotoScanHelpFlagExitsZero() {
+    out=`"${BMU_BIN_SRC}/backmeup.photo-scan.sh" --help 2>&1`
+    rc=$?
+    assertEquals "photo-scan.sh --help must exit 0" 0 ${rc}
+    echo "${out}" | grep -q "usage:" || fail "photo-scan.sh --help must print usage"
+}
+
+testPhotoScanMissingBinaryErrors() {
+    # Isolate every resolution path: copy the script into a clean tempdir
+    # so that the sibling-binary and dev-checkout-release-target fallbacks
+    # ("${script_dir}/bmug2-exif-scan" and
+    #  "${script_dir}/../exif-scan/target/release/bmug2-exif-scan") can't
+    # find anything, then shrink PATH so a PATH-lookup can't either, and
+    # clear BMUG2_EXIF_SCAN_BIN. Only then is "not found" the real outcome.
+    tdir=`photo_mktmp`
+    cp "${BMU_BIN_SRC}/backmeup.photo-scan.sh" "${tdir}/photo-scan.sh"
+    out=`BMUG2_EXIF_SCAN_BIN= PATH=/usr/bin "${tdir}/photo-scan.sh" /tmp 2>&1`
+    rc=$?
+    assertEquals "photo-scan.sh must exit 1 when it can't find the binary" 1 ${rc}
+    echo "${out}" | grep -q "bmug2-exif-scan not found" \
+        || fail "photo-scan.sh must name the missing binary in its error"
+    rm -rf "${tdir}"
+}
+
+testPhotoScanResolvesViaEnvVar() {
+    tdir=`photo_mktmp`
+    fake="${tdir}/fake-bmug2-exif-scan"
+    photo_write_fake_bin "${fake}" '{"path":"/a.jpg","size_bytes":1,"format":"JPEG","parse_status":"ok"}'
+    out=`BMUG2_EXIF_SCAN_BIN="${fake}" "${BMU_BIN_SRC}/backmeup.photo-scan.sh" /ignored 2>&1`
+    rc=$?
+    assertEquals "photo-scan.sh must exit 0 when the binary resolves via env" 0 ${rc}
+    echo "${out}" | grep -q '"path":"/a.jpg"' \
+        || fail "photo-scan.sh must pass through the binary's stdout verbatim"
+    rm -rf "${tdir}"
+}
+
+testPhotoReportAggregatesFormatsAndParseStatus() {
+    tdir=`photo_mktmp`
+    fake="${tdir}/fake-bmug2-exif-scan"
+    body='{"path":"/a.jpg","size_bytes":100,"format":"JPEG","exif":{"camera_make":"Apple","date_taken":"2024:03:15 10:00:00","gps_present":true},"parse_status":"ok"}
+{"path":"/b.heic","size_bytes":200,"format":"HEIC","exif":{"camera_make":"Apple","date_taken":"2024:01:01 08:00:00","gps_present":false},"parse_status":"ok"}
+{"path":"/c.jpg","size_bytes":50,"format":"JPEG","parse_status":"no_exif"}
+{"path":"/d.png","size_bytes":10,"format":"PNG","parse_status":"parse_error"}'
+    photo_write_fake_bin "${fake}" "${body}"
+    out=`BMUG2_EXIF_SCAN_BIN="${fake}" "${BMU_BIN_SRC}/backmeup.photo-report.sh" /ignored`
+    rc=$?
+    assertEquals "photo-report.sh must exit 0" 0 ${rc}
+    echo "${out}" | grep -q '"total_count":4' || fail "total_count: ${out}"
+    echo "${out}" | grep -q '"total_bytes":360' || fail "total_bytes: ${out}"
+    echo "${out}" | grep -q '"ok":2' || fail "by_parse_status.ok: ${out}"
+    echo "${out}" | grep -q '"no_exif":1' || fail "by_parse_status.no_exif: ${out}"
+    echo "${out}" | grep -q '"parse_error":1' || fail "by_parse_status.parse_error: ${out}"
+    echo "${out}" | grep -q '"JPEG":2' || fail "by_format.JPEG: ${out}"
+    echo "${out}" | grep -q '"HEIC":1' || fail "by_format.HEIC: ${out}"
+    echo "${out}" | grep -q '"PNG":1' || fail "by_format.PNG: ${out}"
+    echo "${out}" | grep -q '"Apple":2' || fail "cameras.Apple: ${out}"
+    echo "${out}" | grep -q '"gps_count":1' || fail "gps_count: ${out}"
+    echo "${out}" | grep -q '"earliest":"2024:01:01 08:00:00"' || fail "date_range.earliest: ${out}"
+    echo "${out}" | grep -q '"latest":"2024:03:15 10:00:00"' || fail "date_range.latest: ${out}"
+    echo "${out}" | grep -q '"with_date":2' || fail "date_range.with_date: ${out}"
+    echo "${out}" | grep -q '"without_date":2' || fail "date_range.without_date: ${out}"
+    echo "${out}" | grep -q '"/d.png"' || fail "parse_errors list missing /d.png: ${out}"
+    rm -rf "${tdir}"
+}
+
+testPhotoReportEmptyScanEmitsZerosAndNullDate() {
+    tdir=`photo_mktmp`
+    fake="${tdir}/fake-bmug2-exif-scan"
+    photo_write_fake_bin "${fake}" ""
+    out=`BMUG2_EXIF_SCAN_BIN="${fake}" "${BMU_BIN_SRC}/backmeup.photo-report.sh" /ignored`
+    assertEquals "empty scan must still report a valid JSON envelope" 0 $?
+    echo "${out}" | grep -q '"total_count":0' || fail "total_count must be 0: ${out}"
+    echo "${out}" | grep -q '"date_range":null' || fail "date_range must be null when nothing dated: ${out}"
+    echo "${out}" | grep -q '"parse_errors":\[\]' || fail "parse_errors must be an empty array: ${out}"
+    rm -rf "${tdir}"
+}
+
+testPhotoReportNoArgsShowsUsage() {
+    out=`"${BMU_BIN_SRC}/backmeup.photo-report.sh" 2>&1`
+    rc=$?
+    assertEquals "photo-report.sh must exit 2 with no args" 2 ${rc}
+    echo "${out}" | grep -q "usage:" || fail "photo-report.sh must print usage to stderr"
+}
+
+#
 # load shunit2
 # ------------
 . "${TESTS_PATH}/shunit2"
